@@ -8,7 +8,7 @@ sdk_version: 4.44.0
 app_file: app.py
 pinned: false
 license: apache-2.0
-short_description: Pakistan AML/CFT Intelligence & Regulatory Platform (SBP/FMU)
+short_description: AML/CFT Intelligence & SBP/FMU Compliance Platform
 ---
 
 # 🛡️ National AML/CFT Intelligence & Regulatory Platform
