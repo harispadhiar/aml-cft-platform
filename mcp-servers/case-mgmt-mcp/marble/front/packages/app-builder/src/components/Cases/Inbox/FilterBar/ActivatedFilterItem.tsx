@@ -1,0 +1,193 @@
+import { TagPreview } from '@app-builder/components/Tags/TagPreview';
+import { QueryEntry } from '@app-builder/hooks/useBase64Query';
+import type { qualification } from '@app-builder/models/cases';
+import type { Filters, filtersSchema } from '@app-builder/queries/cases/get-cases';
+import { useOrganizationTags } from '@app-builder/services/organization/organization-tags';
+import { useOrganizationUsers } from '@app-builder/services/organization/organization-users';
+import { formatDuration, useFormatDateTime } from '@app-builder/utils/format';
+import { useCallbackRef } from '@marble/shared';
+import { differenceInDays } from 'date-fns';
+import { MouseEvent, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import * as R from 'remeda';
+import { match, P } from 'ts-pattern';
+import { Avatar, MenuCommand } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+import { AssigneeFilterMenuItem } from './AssigneeFilterMenuItem';
+import { DateRangeFilterMenu } from './DateRangeFilterMenu';
+import { InboxFilterLabel } from './FilterLabel';
+import { QualificationLevelFilterMenuItem, QualificationLevelLabel } from './QualificationFilterMenuItem';
+import { TagsFilterMenuItem } from './TagsFilterMenuItem';
+
+const EDITABLE_FILTERS = [
+  'dateRange',
+  'assignee',
+  'tagId',
+  'qualification',
+] as const satisfies readonly (keyof Filters)[];
+
+type ActivatedFilterItemProps = {
+  filter: QueryEntry<typeof filtersSchema>;
+  onUpdate: (filters: Partial<Filters>) => void;
+  onClear: () => void;
+};
+
+export const ActivatedFilterItem = ({ filter, onUpdate, onClear }: ActivatedFilterItemProps) => {
+  const [open, setOpen] = useState(false);
+  const isEditable = (EDITABLE_FILTERS as readonly string[]).includes(filter[0]);
+  const handleClearClick = useCallbackRef((e: MouseEvent) => {
+    e.stopPropagation();
+    onClear();
+  });
+
+  const button = (
+    <span className="h-8 bg-purple-background-light border border-purple-border rounded-md p-sm text-default flex items-center gap-xs">
+      <span>
+        <DisplayFilterValue filter={filter} />
+      </span>
+      <button type="button" onClick={handleClearClick} className="cursor-pointer">
+        <Icon icon="cross" className="size-4" />
+      </button>
+    </span>
+  );
+
+  if (isEditable) {
+    return (
+      <MenuCommand.Menu open={open} onOpenChange={setOpen}>
+        <MenuCommand.Trigger>{button}</MenuCommand.Trigger>
+        <MenuCommand.Content sameWidth align="start" sideOffset={4} className="max-h-[600px]">
+          <MenuCommand.List>
+            <EditFilterContent filter={filter} onUpdate={onUpdate} />
+          </MenuCommand.List>
+        </MenuCommand.Content>
+      </MenuCommand.Menu>
+    );
+  }
+
+  return (
+    <span className="h-8 bg-purple-background-light border border-purple-border rounded-md p-sm text-default flex items-center gap-xs">
+      <span>
+        <DisplayFilterValue filter={filter} />
+      </span>
+      <button type="button" onClick={onClear} className="cursor-pointer">
+        <Icon icon="x" className="size-4" />
+      </button>
+    </span>
+  );
+};
+
+type DisplayFilterValueProps = { filter: QueryEntry<typeof filtersSchema> };
+
+const DisplayFilterValue = ({ filter }: DisplayFilterValueProps) => {
+  const { t, i18n } = useTranslation(['filters', 'cases']);
+  const formatDateTime = useFormatDateTime();
+
+  return match(filter)
+    .with(['name', P.string], ([name, value]) => (
+      <span>
+        <InboxFilterLabel name={name} />: {value}
+      </span>
+    ))
+    .with(['statuses', P.array(P.string)], ([name, value]) => (
+      <span>
+        <InboxFilterLabel name={name} />
+      </span>
+    ))
+    .with(['includeSnoozed', P.boolean], ([name]) => (
+      <span>
+        <InboxFilterLabel name={name} />
+      </span>
+    ))
+    .with(['excludeAssigned', P.boolean], ([name]) => (
+      <span>
+        <InboxFilterLabel name={name} />
+      </span>
+    ))
+    .with(['assignee', P.string], ([name, value]) => (
+      <span>
+        <InboxFilterLabel name={name} />: <AssigneeFilterValue value={value} />
+      </span>
+    ))
+    .with(['dateRange', P.shape({ type: 'static' })], ([name, value]) => {
+      const startDate = formatDateTime(value.startDate);
+      const endDate = formatDateTime(value.endDate);
+      const diff = differenceInDays(new Date(value.endDate), new Date(value.startDate));
+      const dateDisplay = diff <= 1 ? startDate : t('filters:date_range.range_value', { startDate, endDate });
+
+      return (
+        <span>
+          <InboxFilterLabel name={name} />: {dateDisplay}
+        </span>
+      );
+    })
+    .with(['dateRange', P.shape({ type: 'dynamic' })], ([name, value]) => {
+      const duration = formatDuration(value.fromNow, i18n.language);
+      const dateDisplay = t('filters:date_range.duration', { duration });
+
+      return (
+        <span>
+          <InboxFilterLabel name={name} />: {dateDisplay}
+        </span>
+      );
+    })
+    .with(['tagId', P.string], ([name, tagId]) => (
+      <span className="inline-flex items-center gap-xs">
+        <InboxFilterLabel name={name} />: <TagFilterValue tagId={tagId} />
+      </span>
+    ))
+    .with(['qualification', P.string], ([name, level]) => (
+      <span className="inline-flex items-center gap-xs">
+        <InboxFilterLabel name={name} />: <QualificationLevelLabel level={level as qualification} />
+      </span>
+    ))
+    .exhaustive();
+};
+
+const AssigneeFilterValue = ({ value }: { value: string }) => {
+  const { t } = useTranslation(['cases']);
+  const { orgUsers } = useOrganizationUsers();
+
+  const user = orgUsers.find((user) => user.userId === value);
+
+  return (
+    <span className="inline-flex items-center gap-xs">
+      <Avatar size="xs" firstName={user?.firstName} lastName={user?.lastName} />
+      {user ? (
+        <span>{`${R.capitalize(user.firstName)} ${R.capitalize(user.lastName)}`}</span>
+      ) : (
+        <span>{t('cases:case_detail.unknown_user')}</span>
+      )}
+    </span>
+  );
+};
+
+const TagFilterValue = ({ tagId }: { tagId: string }) => {
+  const { orgTags } = useOrganizationTags();
+  const tag = orgTags.find((t) => t.id === tagId);
+
+  return tag ? <TagPreview name={tag.name} /> : null;
+};
+
+type EditFilterContentProps = {
+  filter: QueryEntry<typeof filtersSchema>;
+  onUpdate: (filters: Partial<Filters>) => void;
+};
+
+const EditFilterContent = ({ filter, onUpdate }: EditFilterContentProps) => {
+  return match(filter)
+    .with(['assignee', P.string], ([name]) => (
+      <AssigneeFilterMenuItem onSelect={(userId) => onUpdate({ [name]: userId })} />
+    ))
+    .with(['dateRange', P.any], ([name]) => <DateRangeFilterMenu onSelect={(value) => onUpdate({ [name]: value })} />)
+    .with(['tagId', P.string], ([name]) => (
+      <TagsFilterMenuItem onSelect={(newTagId) => onUpdate({ [name]: newTagId })} />
+    ))
+    .with(['qualification', P.string], ([name]) => (
+      <QualificationLevelFilterMenuItem onSelect={(level) => onUpdate({ [name]: level })} />
+    ))
+    .with(['name', P.string], ([name, value]) => null)
+    .with(['statuses', P.array(P.string)], ([name, value]) => null)
+    .with(['includeSnoozed', P.boolean], ([name]) => null)
+    .with(['excludeAssigned', P.boolean], ([name]) => null)
+    .exhaustive();
+};

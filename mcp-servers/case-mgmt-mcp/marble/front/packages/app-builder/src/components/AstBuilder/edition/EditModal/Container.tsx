@@ -1,0 +1,45 @@
+import { type EditableAstNode } from '@app-builder/models/astNode/builder-ast-node';
+import { useCallbackRef } from '@marble/shared';
+import { type ReactElement, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
+import { cn, Modal } from 'ui-design-system';
+
+import { AstBuilderNodeSharpFactory } from '../node-store';
+import { type OperandEditModalProps } from './EditModal';
+
+export type OperandEditModalContainerProps = Omit<OperandEditModalProps, 'node'> & {
+  title: ReactElement | string;
+  children: ReactNode;
+  size?: 'small' | 'medium' | 'large';
+  className?: string;
+  saveDisabled?: boolean;
+};
+export function OperandEditModalContainer({ className, ...props }: OperandEditModalContainerProps) {
+  const { t } = useTranslation(['common']);
+  const nodeSharp = AstBuilderNodeSharpFactory.useSharp();
+  const handleOpenChange = useCallbackRef((open: boolean) => {
+    if (!open) {
+      props.onCancel();
+    }
+  });
+  const handleImplicitClose = useCallbackRef((event: Event) => {
+    event.preventDefault();
+  });
+
+  return (
+    <Modal.Root open onOpenChange={handleOpenChange}>
+      <Modal.Content size={props.size} onInteractOutside={handleImplicitClose} onEscapeKeyDown={handleImplicitClose}>
+        <Modal.Title>{props.title}</Modal.Title>
+        <div className={cn('flex flex-col gap-md p-md', className)}>{props.children}</div>
+        <Modal.Footer>
+          <Modal.FooterButton isCloseButton label={t('common:cancel')} />
+          <Modal.FooterButton
+            label={props.saveLabel ?? t('common:save')}
+            onClick={() => props.onSave(nodeSharp.value.node as EditableAstNode)}
+            disabled={props.saveDisabled}
+          />
+        </Modal.Footer>
+      </Modal.Content>
+    </Modal.Root>
+  );
+}

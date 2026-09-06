@@ -1,0 +1,52 @@
+import { useTranslation } from 'react-i18next';
+import { CtaV2ClassName, cn, Typo } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+
+interface UpsellCardProps {
+  title: string;
+  description: string;
+  benefits?: string[];
+  className?: string;
+}
+
+export function UpsellCard({ title, description, benefits = [], className }: UpsellCardProps) {
+  const { t } = useTranslation(['common']);
+
+  return (
+    <div
+      className={cn(
+        'bg-surface-card border-purple-border flex flex-col items-center gap-md rounded-lg border-2 border-dashed p-lg text-center',
+        className,
+      )}
+    >
+      <div className="bg-purple-background-light text-purple-primary flex size-12 items-center justify-center rounded-full">
+        <Icon icon="lock" className="size-6" />
+      </div>
+
+      <div className="flex flex-col items-center gap-xs">
+        <Typo variant="subtitle1">{title}</Typo>
+        <p className="text-s text-grey-secondary max-w-md">{description}</p>
+      </div>
+
+      {benefits.length > 0 ? (
+        <ul className="text-s text-grey-primary flex flex-col items-start gap-xs">
+          {benefits.map((benefit) => (
+            <li key={benefit} className="flex items-center gap-xs">
+              <Icon icon="tick" className="text-purple-primary size-4 shrink-0" />
+              <span>{benefit}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <a
+        className={CtaV2ClassName({ variant: 'primary', size: 'large', color: 'primary' })}
+        href="https://checkmarble.com/upgrade"
+        target="_blank"
+        rel="noreferrer"
+      >
+        {t('common:upgrade')}
+      </a>
+    </div>
+  );
+}

@@ -1,0 +1,58 @@
+package mocks
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/mock"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/repositories"
+)
+
+type ScenarioRepository struct {
+	mock.Mock
+}
+
+func (s *ScenarioRepository) GetScenarioById(ctx context.Context,
+	exec repositories.Executor, scenarioId string, screeningProvider models.ScreeningProvider,
+) (models.Scenario, error) {
+	args := s.Called(ctx, exec, scenarioId, screeningProvider)
+	return args.Get(0).(models.Scenario), args.Error(1)
+}
+
+func (s *ScenarioRepository) ListScenariosOfOrganization(ctx context.Context,
+	exec repositories.Executor, organizationId uuid.UUID, screeningProvider models.ScreeningProvider,
+) ([]models.Scenario, error) {
+	args := s.Called(ctx, exec, organizationId, screeningProvider)
+	return args.Get(0).([]models.Scenario), args.Error(1)
+}
+
+func (s *ScenarioRepository) ListAllScenarios(ctx context.Context, exec repositories.Executor) ([]models.Scenario, error) {
+	args := s.Called(exec)
+	return args.Get(0).([]models.Scenario), args.Error(1)
+}
+
+func (s *ScenarioRepository) CreateScenario(ctx context.Context, exec repositories.Executor,
+	organizationId uuid.UUID, scenario models.CreateScenarioInput, newScenarioId string,
+) error {
+	args := s.Called(exec, organizationId, scenario, newScenarioId)
+	return args.Error(0)
+}
+
+func (s *ScenarioRepository) UpdateScenario(ctx context.Context, exec repositories.Executor, scenario models.UpdateScenarioInput) error {
+	args := s.Called(exec, scenario)
+	return args.Error(0)
+}
+
+func (s *ScenarioRepository) ListScenarioLatestRuleVersions(ctx context.Context,
+	exec repositories.Executor, scenarioId string,
+) ([]models.ScenarioRuleLatestVersion, error) {
+	args := s.Called(ctx, exec, scenarioId)
+
+	if args.Error(1) != nil {
+		return nil, args.Error(1)
+	}
+
+	return args.Get(0).([]models.ScenarioRuleLatestVersion), nil
+}

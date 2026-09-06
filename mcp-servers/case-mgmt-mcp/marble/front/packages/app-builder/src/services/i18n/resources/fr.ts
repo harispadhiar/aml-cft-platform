@@ -1,0 +1,43 @@
+import account from '@app-builder/locales/fr/account.json';
+import analytics from '@app-builder/locales/fr/analytics.json';
+import api from '@app-builder/locales/fr/api.json';
+import auth from '@app-builder/locales/fr/auth.json';
+import cases from '@app-builder/locales/fr/cases.json';
+import client360 from '@app-builder/locales/fr/client360.json';
+import common from '@app-builder/locales/fr/common.json';
+import continuousScreening from '@app-builder/locales/fr/continuous-screening.json';
+import data from '@app-builder/locales/fr/data.json';
+import decisions from '@app-builder/locales/fr/decisions.json';
+import filters from '@app-builder/locales/fr/filters.json';
+import lists from '@app-builder/locales/fr/lists.json';
+import navigation from '@app-builder/locales/fr/navigation.json';
+import scenarios from '@app-builder/locales/fr/scenarios.json';
+import screeningTopics from '@app-builder/locales/fr/screening-topics.json';
+import screenings from '@app-builder/locales/fr/screenings.json';
+import settings from '@app-builder/locales/fr/settings.json';
+import upload from '@app-builder/locales/fr/upload.json';
+import userScoring from '@app-builder/locales/fr/user-scoring.json';
+import workflows from '@app-builder/locales/fr/workflows.json';
+
+export const fr = {
+  account,
+  analytics,
+  api,
+  cases,
+  client360,
+  common,
+  continuousScreening,
+  data,
+  decisions,
+  filters,
+  navigation,
+  lists,
+  auth,
+  scenarios,
+  screenings,
+  screeningTopics,
+  settings,
+  upload,
+  'user-scoring': userScoring,
+  workflows,
+};

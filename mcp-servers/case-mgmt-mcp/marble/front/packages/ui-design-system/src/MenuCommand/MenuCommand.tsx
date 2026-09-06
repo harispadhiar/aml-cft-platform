@@ -1,0 +1,480 @@
+import { useCallbackRef } from '@marble/shared';
+import * as HoverCard from '@radix-ui/react-hover-card';
+import * as Popover from '@radix-ui/react-popover';
+import { cva, type VariantProps } from 'class-variance-authority';
+import { Command } from 'cmdk';
+import * as React from 'react';
+import { createSharpFactory } from 'sharpstate';
+import { Icon } from 'ui-icons';
+
+import { inputClassName, inputIconClassName, inputPaddingsClassName } from '../Input/Input';
+import { cn } from '../utils';
+
+export type MenuCommandFilterMode = 'default' | 'exact';
+
+function exactSubstringFilter(value: string, search: string, keywords?: string[]): number {
+  const s = search.toLowerCase();
+  if (value.toLowerCase().includes(s)) return 1;
+  if (keywords?.some((k) => k.toLowerCase().includes(s))) return 1;
+  return 0;
+}
+
+const MenuCommandSharpFactory = createSharpFactory({
+  name: 'MenuCommand',
+  initializer: () => ({
+    search: '',
+    filterMode: 'default' as MenuCommandFilterMode,
+  }),
+}).withActions({
+  setSearch(api, value: string) {
+    api.value.search = value;
+  },
+  setFilterMode(api, mode: MenuCommandFilterMode) {
+    api.value.filterMode = mode;
+  },
+});
+
+type MenuCommandContextValue = {
+  hover: boolean;
+  persistOnSelect: boolean;
+  onSelect: (persisted?: boolean) => void;
+  hasCombobox: boolean;
+  listeners: (() => void)[];
+};
+export const InternalMenuSharpFactory = createSharpFactory({
+  name: 'InternalMenu',
+  initializer: (initialState: {
+    hover: boolean;
+    persistOnSelect: boolean;
+    onSelect: (persisted?: boolean) => void;
+  }): MenuCommandContextValue => {
+    return { ...initialState, hasCombobox: false, listeners: [] };
+  },
+}).withActions({
+  closeAllSubmenus(api) {
+    api.value.listeners.forEach((listener) => {
+      listener();
+    });
+  },
+  addListener(api, listener: () => void) {
+    api.value.listeners.push(listener);
+    return () => {
+      api.value.listeners = api.value.listeners.filter((l) => l !== listener);
+    };
+  },
+});
+
+type RootProps = Omit<React.ComponentProps<typeof Popover.Root>, 'className'> & {
+  hover?: boolean;
+  persistOnSelect?: boolean;
+};
+/**
+ * A Menu command, it can be used as a select, a menu, can have a search bar and be nested
+ *
+ * @example
+ *  <MenuCommand.Menu>
+ *    <MenuCommand.Trigger />
+ *    <MenuCommand.Content>
+ *      <MenuCommand.Combobox />
+ *      <MenuCommand.List>
+ *        <MenuCommand.Item />
+ *        <MenuCommand.Group heading?={<SomeReactElement />}>
+ *          <MenuCommand.Item />
+ *        </MenuCommand.Group>
+ *        <MenuCommand.Separator />
+ *        <MenuCommand.SubMenu trigger={<SomeReactElement />}>
+ *          <MenuCommand.List>
+ *            <MenuCommand.Item />
+ *          </MenuCommand.List>
+ *        </MenuCommand.SubMenu>
+ *      <MenuCommand.List>
+ *    </MenuCommand.Content>
+ *  </MenuCommand.Menu>
+ */
+function Menu(props: RootProps) {
+  const menuSharp = MenuCommandSharpFactory.createSharp();
+
+  return (
+    <MenuCommandSharpFactory.Provider value={menuSharp}>
+      <Root {...props} />
+    </MenuCommandSharpFactory.Provider>
+  );
+}
+
+function Root({ hover = false, persistOnSelect, ...props }: RootProps) {
+  const onOpenChange = props.onOpenChange;
+
+  const parentInternalSharp = InternalMenuSharpFactory.useOptionalSharp();
+  const shouldPersistOnSelect = persistOnSelect ?? parentInternalSharp?.value.persistOnSelect ?? false;
+
+  const internalSharp = InternalMenuSharpFactory.createSharp({
+    hover,
+    persistOnSelect: shouldPersistOnSelect,
+    onSelect: (persisted: boolean = false) => {
+      const shouldPersistMenu = shouldPersistOnSelect || persisted;
+      if (!shouldPersistMenu) {
+        onOpenChange?.(false);
+      }
+      parentInternalSharp?.value.onSelect(shouldPersistMenu);
+    },
+  });
+  const RootEl = internalSharp.value.hover ? HoverCard.Root : Popover.Root;
+
+  return (
+    <InternalMenuSharpFactory.Provider value={internalSharp}>
+      <RootEl openDelay={75} closeDelay={75} {...props} />
+    </InternalMenuSharpFactory.Provider>
+  );
+}
+
+type SubMenuProps = Omit<RootProps, 'open' | 'onOpenChange'> & {
+  value?: string;
+  className?: string;
+  trigger: React.ReactNode;
+  forceMount?: boolean;
+  arrow?: boolean;
+  disabled?: boolean;
+  persistOnSelect?: boolean;
+  withCombobox?: boolean;
+};
+
+function SubMenu({
+  children,
+  trigger,
+  forceMount,
+  className,
+  arrow,
+  hover = true,
+  disabled = false,
+  value,
+  ...props
+}: SubMenuProps) {
+  const [open, setOpenImperative] = React.useState(false);
+  const internalSharp = InternalMenuSharpFactory.useSharp();
+  const setOpen = (open: boolean) => {
+    if (!hover && !open) {
+      return;
+    }
+    setOpenImperative(open);
+  };
+  const listener = useCallbackRef(() => {
+    setOpenImperative(false);
+  });
+
+  React.useEffect(() => {
+    return internalSharp.actions.addListener(listener);
+  }, []);
+
+  return (
+    <Command.Group forceMount={forceMount}>
+      <Root {...props} hover={hover} open={open} onOpenChange={setOpen}>
+        <Trigger>
+          <Item
+            value={value}
+            disabled={disabled}
+            className={cn('group/menu-item flex w-full items-center justify-between')}
+            onSelect={() => {
+              if (!hover) {
+                internalSharp.actions.closeAllSubmenus();
+              }
+              if (!open) {
+                setOpenImperative(true);
+              }
+            }}
+          >
+            {trigger}
+            {arrow !== undefined && arrow === false ? null : (
+              <Icon
+                aria-hidden="true"
+                icon="arrow-right"
+                className="group-data-[state=open]/menu-item:text-purple-primary ms-auto size-5 shrink-0 rtl:rotate-180"
+              />
+            )}
+          </Item>
+        </Trigger>
+        <Content side="right" align="start" sideOffset={12} className={cn('pointer-events-auto', className)}>
+          {children}
+        </Content>
+      </Root>
+    </Command.Group>
+  );
+}
+
+/**
+ * The trigger to open/close the menu
+ * MenuCommand.Trigger child must be forwardRef
+ *
+ */
+function Trigger({ children }: React.PropsWithChildren) {
+  const internalSharp = InternalMenuSharpFactory.useSharp();
+  const TriggerEl = internalSharp.value.hover ? HoverCard.Trigger : Popover.Trigger;
+
+  const triggerOverrideSharp = InternalMenuSharpFactory.createSharp({
+    ...internalSharp.value,
+    onSelect() {
+      // noop on trigger
+    },
+  });
+
+  const triggerChild = React.isValidElement<{ className?: string }>(children)
+    ? React.cloneElement(children, {
+        className: cn('group', children.props.className),
+      })
+    : children;
+
+  return (
+    <InternalMenuSharpFactory.Provider value={triggerOverrideSharp}>
+      <TriggerEl asChild>{triggerChild}</TriggerEl>
+    </InternalMenuSharpFactory.Provider>
+  );
+}
+
+type ButtonProps = React.DetailedHTMLProps<React.ButtonHTMLAttributes<HTMLButtonElement>, HTMLButtonElement> & {
+  hasError?: boolean;
+  noArrow?: boolean;
+  readOnly?: boolean;
+  size?: 'small' | 'medium' | 'large';
+};
+const SelectButton = React.forwardRef<HTMLButtonElement, ButtonProps>(function SelectButton(
+  { children, className, hasError = false, noArrow, readOnly, size = 'large', ...props },
+  ref,
+) {
+  return (
+    <div {...(readOnly ? { inert: readOnly ? 'true' : 'false' } : {})} className="relative">
+      <button
+        ref={ref}
+        type="button"
+        className={cn(
+          'flex items-center',
+          inputClassName({ size }),
+          inputPaddingsClassName({ size, hasEndIcon: true }),
+          'data-[read-only]:pointer-events-none data-[state=open]:border-purple-primary',
+          className,
+        )}
+        {...(readOnly ? { 'data-read-only': readOnly } : {})}
+        {...props}
+      >
+        {children}
+      </button>
+      {!noArrow && !readOnly ? (
+        <Icon
+          className={cn('pointer-events-none', inputIconClassName({ inputSize: size, placement: 'end' }))}
+          icon="caret-down"
+        />
+      ) : null}
+    </div>
+  );
+});
+
+function MenuArrow() {
+  return (
+    <Icon
+      icon="caret-down"
+      className="group-radix-state-open:rotate-180 size-4 shrink-0 transition-transform duration-200"
+    />
+  );
+}
+
+const contentClassname = cva('flex z-50 text-s group/menu-command-content', {
+  variants: {
+    hover: {
+      true: 'max-h-[min(var(--radix-hover-card-content-available-height),500px)]',
+      false: 'max-h-[min(var(--radix-popover-content-available-height),500px)]',
+    },
+  },
+  defaultVariants: {
+    hover: false,
+  },
+});
+
+const commandClassname = cva(
+  [
+    'flex flex-col z-50 w-full flex-1 overflow-y-auto',
+    'bg-surface-card border-grey-border rounded-md border shadow-md outline-hidden',
+    'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+    'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
+    'data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2',
+    'data-[side=top]:slide-in-from-bottom-2 data-[side=right]:slide-in-from-left-2',
+  ],
+  {
+    variants: {
+      sameWidth: {
+        true: 'min-w-(--radix-popover-trigger-width)',
+        false: '',
+      },
+    },
+    defaultVariants: {
+      sameWidth: false,
+    },
+  },
+);
+type ContentProps = React.ComponentProps<typeof Popover.Content> &
+  VariantProps<typeof commandClassname> & {
+    size?: 'small' | 'default';
+  };
+function Content({ children, className, sameWidth, collisionPadding, size = 'default', ...props }: ContentProps) {
+  const internalSharp = InternalMenuSharpFactory.useSharp();
+  const menuState = MenuCommandSharpFactory.useSharp();
+  const Portal = internalSharp.value.hover ? HoverCard.Portal : Popover.Portal;
+  const ContentEl = internalSharp.value.hover ? HoverCard.Content : Popover.Content;
+
+  const filter = menuState.value.filterMode === 'exact' ? exactSubstringFilter : undefined;
+
+  return (
+    <Portal>
+      <ContentEl
+        className={cn(contentClassname({ hover: internalSharp.value.hover }), className)}
+        collisionPadding={collisionPadding ?? 10}
+        onWheel={(e) => {
+          e.stopPropagation();
+        }}
+        data-size={size}
+        {...props}
+      >
+        <Command className={cn(commandClassname({ sameWidth }))} filter={filter}>
+          {children}
+          <InsertKeyboardNav />
+        </Command>
+      </ContentEl>
+    </Portal>
+  );
+}
+
+function InsertKeyboardNav() {
+  const internalSharp = InternalMenuSharpFactory.useSharp();
+  const [hasCombobox, setHasCombobox] = React.useState<boolean | undefined>(undefined);
+
+  React.useEffect(() => {
+    setHasCombobox(internalSharp.value.hasCombobox);
+  }, [internalSharp]);
+
+  if (hasCombobox === undefined || hasCombobox) return null;
+  return <KeyboardNav />;
+}
+
+type ComboboxProps = Omit<React.ComponentProps<typeof Command.Input>, 'value'> & {
+  iconClasses?: string;
+  filterMode?: MenuCommandFilterMode;
+};
+function Combobox({ className, onValueChange, iconClasses, filterMode = 'default', ...props }: ComboboxProps) {
+  const internalSharp = InternalMenuSharpFactory.useSharp();
+  const menuState = MenuCommandSharpFactory.useSharp();
+  const setSearch = useCallbackRef((value: string) => {
+    menuState.actions.setSearch(value);
+    onValueChange?.(value);
+  });
+
+  React.useEffect(() => {
+    menuState.actions.setFilterMode(filterMode);
+  }, [filterMode, menuState]);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  // Autofocus the input on render to enable the keyboard nav
+  React.useEffect(() => {
+    internalSharp.value.hasCombobox = true;
+    inputRef.current?.focus();
+  }, [internalSharp]);
+
+  return (
+    <div className={cn('relative m-sm mb-0 h-10', className)}>
+      <Command.Input
+        ref={inputRef}
+        className={cn(inputClassName(), 'ps-xl')}
+        value={menuState.value.search}
+        onValueChange={setSearch}
+        {...props}
+      />
+      <div className="text-grey-secondary peer-focus:text-grey-primary pointer-events-none absolute inset-y-0 start-0 flex items-center ps-sm">
+        <Icon icon="search" className={cn('size-5', iconClasses)} />
+      </div>
+    </div>
+  );
+}
+
+const KeyboardNav = () => {
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  // Autofocus the input on render to enable the keyboard nav
+  React.useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  return <Command.Input ref={inputRef} className="fixed left-[-10000px]" />;
+};
+
+type ItemProps = Omit<React.ComponentProps<typeof Command.Item>, 'asChild'> & {
+  selected?: boolean;
+};
+const HeadlessItem = React.forwardRef<React.ElementRef<typeof Command.Item>, ItemProps>(function HeadlessItem(
+  { onSelect, ...props },
+  ref,
+) {
+  const internalSharp = InternalMenuSharpFactory.useSharp();
+  const menuOnSelect = React.useCallback(
+    (value: string) => {
+      onSelect?.(value);
+      internalSharp.value.onSelect();
+    },
+    [onSelect, internalSharp],
+  );
+
+  return <Command.Item ref={ref} onSelect={menuOnSelect} {...props} />;
+});
+const Item = React.forwardRef<React.ElementRef<typeof Command.Item>, ItemProps>(function Item(
+  { className, selected = false, ...props },
+  ref,
+) {
+  return (
+    <HeadlessItem
+      ref={ref}
+      className={cn(
+        [
+          'aria-selected:bg-purple-background-light data-[state=open]:bg-purple-background-light aria-disabled:text-grey-disabled outline-hidden',
+          'flex h-10 scroll-mb-sm scroll-mt-2xl flex-row items-center justify-between gap-sm rounded-xs p-sm',
+        ],
+        { '': selected, 'cursor-pointer': props.onSelect && !props.disabled },
+        className,
+      )}
+      {...props}
+    />
+  );
+});
+
+const Separator = React.forwardRef<
+  React.ElementRef<typeof Command.Separator>,
+  React.ComponentPropsWithoutRef<typeof Command.Separator>
+>(({ className, ...props }, ref) => (
+  <Command.Separator ref={ref} className={cn('bg-grey-border -mx-sm my-sm h-px', className)} {...props} />
+));
+Separator.displayName = Command.Separator.displayName;
+
+type ListProps = Omit<React.ComponentProps<typeof Command.List>, 'asChild'> & {};
+function List({ className, ...props }: ListProps) {
+  return (
+    <Command.List
+      className={cn(
+        'flex-1 overflow-y-auto overflow-x-hidden p-sm group-[[data-size="small"]]/menu-command-content:p-xs',
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+export const MenuCommand = {
+  Arrow: MenuArrow,
+  Anchor: Popover.Anchor,
+  Combobox,
+  Content,
+  Group: Command.Group,
+  HeadlessItem,
+  Item,
+  List,
+  Menu,
+  SubMenu,
+  Trigger,
+  SelectButton,
+  Separator,
+  State: MenuCommandSharpFactory,
+  Empty: Command.Empty,
+};

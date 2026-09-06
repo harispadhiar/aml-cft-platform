@@ -1,0 +1,464 @@
+package worker_jobs
+
+import (
+	"context"
+	"fmt"
+	"math"
+	"math/rand/v2"
+	"net/netip"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/models/analytics"
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/checkmarble/marble-backend/repositories"
+	"github.com/checkmarble/marble-backend/usecases/decision_phantom"
+	"github.com/checkmarble/marble-backend/usecases/evaluate_scenario"
+	"github.com/checkmarble/marble-backend/usecases/executor_factory"
+	"github.com/checkmarble/marble-backend/usecases/scenarios"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/cockroachdb/errors"
+	"github.com/google/uuid"
+	"github.com/riverqueue/river"
+	"github.com/twpayne/go-geom"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+)
+
+type webhookEventsUsecase interface {
+	CreateWebhookEvent(
+		ctx context.Context,
+		tx repositories.Transaction,
+		input models.WebhookEventCreate,
+	) error
+}
+
+type asyncDecisionWorkerRepository interface {
+	GetScenarioIteration(ctx context.Context, exec repositories.Executor, scenarioIterationId string,
+		useCache bool) (models.ScenarioIteration, error)
+	UpdateDecisionToCreateStatus(
+		ctx context.Context,
+		exec repositories.Executor,
+		id string,
+		status models.DecisionToCreateStatus,
+	) error
+	GetDecisionToCreate(
+		ctx context.Context,
+		tx repositories.Executor,
+		decisionToCreateId string,
+		forUpdate ...bool,
+	) (models.DecisionToCreate, error)
+	ListDecisionsToCreate(
+		ctx context.Context,
+		exec repositories.Executor,
+		filters models.ListDecisionsToCreateFilters,
+		limit *int,
+	) ([]models.DecisionToCreate, error)
+	CountCompletedDecisionsByStatus(
+		ctx context.Context,
+		exec repositories.Executor,
+		ScheduledExecutionId string,
+	) (models.DecisionToCreateCountMetadata, error)
+	GetScheduledExecution(ctx context.Context, exec repositories.Executor, id string) (models.ScheduledExecution, error)
+	UpdateScheduledExecutionStatus(
+		ctx context.Context,
+		exec repositories.Executor,
+		updateScheduledEx models.UpdateScheduledExecutionStatusInput,
+	) (err error)
+	ListWorkflowsForScenario(ctx context.Context, exec repositories.Executor, scenarioId uuid.UUID) ([]models.Workflow, error)
+	GetAnalyticsSettings(ctx context.Context, exec repositories.Executor, orgId uuid.UUID) (map[string]analytics.Settings, error)
+}
+
+type ScenarioEvaluator interface {
+	EvalScenario(ctx context.Context, params evaluate_scenario.ScenarioEvaluationParameters) (
+		triggerPassed bool, se models.ScenarioExecution, err error)
+	GetDataAccessor(params evaluate_scenario.ScenarioEvaluationParameters) evaluate_scenario.DataAccessor
+}
+
+type decisionWorkerScreeningWriter interface {
+	InsertScreening(
+		ctx context.Context,
+		exec repositories.Executor,
+		sc models.ScreeningWithMatches,
+	) error
+}
+
+type AsyncDecisionWorker struct {
+	river.WorkerDefaults[models.AsyncDecisionArgs]
+
+	repository                 asyncDecisionWorkerRepository
+	executorFactory            executor_factory.ExecutorFactory
+	dataModelRepository        repositories.DataModelRepository
+	ingestedDataReadRepository repositories.IngestedDataReadRepository
+	decisionRepository         repositories.DecisionRepository
+	transactionFactory         executor_factory.TransactionFactory
+	offloadedReader            repositories.OffloadedReadWriter
+	webhookEventsSender        webhookEventsUsecase
+	scenarioFetcher            scenarios.ScenarioFetcher
+	phantomDecision            decision_phantom.PhantomDecisionUsecase
+	scenarioEvaluator          ScenarioEvaluator
+	screeningRepository        decisionWorkerScreeningWriter
+	taskQueueRepository        repositories.TaskQueueRepository
+}
+
+func NewAsyncDecisionWorker(
+	repository asyncDecisionWorkerRepository,
+	executorFactory executor_factory.ExecutorFactory,
+	dataModelRepository repositories.DataModelRepository,
+	ingestedDataReadRepository repositories.IngestedDataReadRepository,
+	decisionRepository repositories.DecisionRepository,
+	transactionFactory executor_factory.TransactionFactory,
+	offloadedReader repositories.OffloadedReadWriter,
+	webhookEventsSender webhookEventsUsecase,
+	scenarioFetcher scenarios.ScenarioFetcher,
+	phantom decision_phantom.PhantomDecisionUsecase,
+	scenarioEvaluator ScenarioEvaluator,
+	screeningRepository decisionWorkerScreeningWriter,
+	taskQueueRepository repositories.TaskQueueRepository,
+) AsyncDecisionWorker {
+	return AsyncDecisionWorker{
+		repository:                 repository,
+		executorFactory:            executorFactory,
+		dataModelRepository:        dataModelRepository,
+		ingestedDataReadRepository: ingestedDataReadRepository,
+		decisionRepository:         decisionRepository,
+		transactionFactory:         transactionFactory,
+		webhookEventsSender:        webhookEventsSender,
+		scenarioFetcher:            scenarioFetcher,
+		phantomDecision:            phantom,
+		scenarioEvaluator:          scenarioEvaluator,
+		screeningRepository:        screeningRepository,
+		taskQueueRepository:        taskQueueRepository,
+	}
+}
+
+func (w *AsyncDecisionWorker) Work(ctx context.Context, job *river.Job[models.AsyncDecisionArgs]) error {
+	args := job.Args
+
+	var testRunCallback func()
+	err := w.transactionFactory.Transaction(ctx, func(tx repositories.Transaction) error {
+		var err error
+		testRunCallback, err = w.handleDecision(ctx, args, tx)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if testRunCallback != nil {
+		testRunCallback()
+	}
+
+	return nil
+}
+
+func (w *AsyncDecisionWorker) Timeout(job *river.Job[models.AsyncDecisionArgs]) time.Duration {
+	return 10 * time.Second
+}
+
+func (w *AsyncDecisionWorker) handleDecision(
+	ctx context.Context,
+	args models.AsyncDecisionArgs,
+	tx repositories.Transaction,
+) (testRunCallback func(), err error) {
+	decisionToCreate, err := w.repository.GetDecisionToCreate(ctx, tx, args.DecisionToCreateId, true)
+	if err != nil {
+		return nil, err
+	}
+	if slices.Contains([]models.DecisionToCreateStatus{
+		models.DecisionToCreateStatusCreated,
+		models.DecisionToCreateStatusTriggerConditionMismatch,
+	}, decisionToCreate.Status) {
+		return nil, nil
+	}
+
+	decisionCreated, testRunCallback, err := w.createSingleDecisionForObjectId(ctx, args, tx)
+	if err != nil {
+		statusErr := w.repository.UpdateDecisionToCreateStatus(
+			ctx,
+			tx,
+			args.DecisionToCreateId,
+			models.DecisionToCreateStatusFailed,
+		)
+		return nil, errors.Join(err, statusErr)
+	}
+
+	if decisionCreated {
+		err = w.repository.UpdateDecisionToCreateStatus(ctx, tx, args.DecisionToCreateId, models.DecisionToCreateStatusCreated)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		err = w.repository.UpdateDecisionToCreateStatus(
+			ctx, tx, args.DecisionToCreateId, models.DecisionToCreateStatusTriggerConditionMismatch)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	err = w.possiblyUpdateScheduledExecNumbers(ctx, tx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	return testRunCallback, nil
+}
+
+func (w *AsyncDecisionWorker) createSingleDecisionForObjectId(
+	ctx context.Context,
+	args models.AsyncDecisionArgs,
+	tx repositories.Transaction,
+) (decisionCreated bool, testRunCallback func(), err error) {
+	decisionStart := time.Now()
+	tracer := utils.OpenTelemetryTracerFromContext(ctx)
+	ctx, span := tracer.Start(
+		ctx,
+		"AsyncDecisionWorker.createSingleDecisionForObjectId",
+		trace.WithAttributes(
+			attribute.String("scheduled_execution_id", args.ScenarioIterationId),
+			attribute.String("object_id", args.ObjectId),
+			attribute.String("scenario_iteration_id", args.ScenarioIterationId),
+		))
+	defer span.End()
+
+	scheduledExecution, err := w.repository.GetScheduledExecution(ctx, tx, args.ScheduledExecutionId)
+	if err != nil {
+		return false, nil, err
+	}
+	if scheduledExecution.Status != models.ScheduledExecutionProcessing {
+		return false, nil, nil
+	}
+
+	scenarioAndIteration, err := w.scenarioFetcher.FetchScenarioAndIteration(ctx, tx, args.ScenarioIterationId)
+	if err != nil {
+		return false, nil, err
+	}
+	scenario := scenarioAndIteration.Scenario
+
+	dataModel, err := w.dataModelRepository.GetDataModel(ctx, tx, scenario.OrganizationId, false, true)
+	if err != nil {
+		return false, nil, err
+	}
+	tables := dataModel.Tables
+	table, ok := tables[scenario.TriggerObjectType]
+	if !ok {
+		return false, nil, fmt.Errorf(
+			"trigger object type %s not found in data model: %w",
+			scenario.TriggerObjectType, models.NotFoundError)
+	}
+
+	pivotsMeta, err := w.dataModelRepository.ListPivots(ctx, tx, scenario.OrganizationId, nil, true, false)
+	if err != nil {
+		return false, nil, err
+	}
+	pivots := models.FindPivotsForTable(pivotsMeta, scenario.TriggerObjectType, dataModel)
+
+	// list objects to score
+	db, err := w.executorFactory.NewClientDbExecutor(ctx, scenario.OrganizationId)
+	if err != nil {
+		return false, nil, err
+	}
+	objectMap, err := w.ingestedDataReadRepository.QueryIngestedObject(ctx, db, table, args.ObjectId)
+	if err != nil {
+		return false, nil, errors.Wrap(err, "error while querying ingested objects in AsyncDecisionWorker.createSingleDecisionForObjectId")
+	} else if len(objectMap) == 0 {
+		utils.LogAndReportSentryError(ctx, errors.Newf("object %s not found in table %s", args.ObjectId, table.Name))
+		return false, nil, nil
+	}
+
+	// Scheduled executions are special, they are retrieved from the database whereas
+	// all the process was made for JSON input. We need to untype all special
+	// types (geolocations, IP address, metadata fields).
+	for idx := range objectMap {
+		for k, v := range objectMap[idx].Data {
+			if strings.Contains(k, ".metadata") {
+				delete(objectMap[idx].Data, k)
+				continue
+			}
+
+			switch typed := v.(type) {
+			case *geom.Point:
+				objectMap[idx].Data[k] = fmt.Sprintf("%f,%f", typed.Y(), typed.X())
+			case netip.Prefix:
+				objectMap[idx].Data[k] = typed.Addr().String()
+			}
+		}
+	}
+
+	object := models.ClientObject{TableName: table.Name, Data: objectMap[0].Data}
+
+	evaluationParameters := evaluate_scenario.ScenarioEvaluationParameters{
+		Scenario:          scenario,
+		TargetIterationId: &args.ScenarioIterationId,
+		ClientObject:      object,
+		DataModel:         dataModel,
+		Pivots:            pivots,
+	}
+
+	// Note: Statistics on test runs when using batch scenarios may still be slightly off, because the batch execution does a partial
+	// precomputation of the filters from the trigger condition, based on the live version of the scenario.
+	// The cleaner solution would be to do a parallel execution in batch of the test run, but even then it would be extremely tiresome to
+	// protect against all edge cases if part of one or the other job fails to run for unexpected reasons.
+	// We probably want to live with this for the time being.
+	executeTestRun := func(se *models.ScenarioExecution) {
+		evaluationParameters.TargetIterationId = nil
+		if se != nil {
+			evaluationParameters.CachedScreenings = pure_utils.MapSliceToMap(
+				se.ScreeningExecutions,
+				func(scm models.ScreeningWithMatches) (string, models.ScreeningWithMatches) {
+					return se.ScenarioIterationId.String(), scm
+				},
+			)
+		}
+		phantomInput := models.CreatePhantomDecisionInput{
+			OrganizationId: scenario.OrganizationId,
+			Scenario:       scenario,
+			ClientObject:   object,
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		logger := utils.LoggerFromContext(ctx).With("phantom_decisions_with_scenario_id", phantomInput.Scenario.Id)
+		_, _, errPhantom := w.phantomDecision.CreatePhantomDecision(ctx, phantomInput, evaluationParameters)
+		if errPhantom != nil {
+			logger.ErrorContext(ctx, fmt.Sprintf("Error when creating phantom decisions with scenario id %s: %s",
+				phantomInput.Scenario.Id, errPhantom.Error()))
+		}
+	}
+
+	triggerPassed, scenarioExecution, err := w.scenarioEvaluator.EvalScenario(ctx, evaluationParameters)
+	if err != nil {
+		return false, nil, errors.Wrapf(err, "error evaluating scenario in AsyncDecisionWorker %s", scenario.Id)
+	}
+	if !triggerPassed {
+		if err := w.repository.UpdateDecisionToCreateStatus(
+			ctx,
+			tx,
+			args.DecisionToCreateId,
+			models.DecisionToCreateStatusTriggerConditionMismatch,
+		); err != nil {
+			return false, nil, err
+		}
+
+		return false, func() { executeTestRun(nil) }, nil
+	}
+
+	decision := models.AdaptScenarExecToDecision(scenarioExecution, object, &args.ScheduledExecutionId)
+	storageStart := time.Now()
+
+	err = w.decisionRepository.StoreDecision(
+		ctx,
+		tx,
+		w.offloadedReader,
+		decision,
+		scenario.OrganizationId,
+		decision.DecisionId.String(),
+		w.scenarioEvaluator.GetDataAccessor(evaluationParameters).GetAnalyticsFields(ctx, tx, w.repository, evaluationParameters),
+	)
+	if err != nil {
+		return false, nil, errors.Wrapf(err, "error storing decision in AsyncDecisionWorker %s", scenario.Id)
+	}
+
+	if scenarioExecution.ExecutionMetrics != nil {
+		storageDuration := time.Since(storageStart)
+		decisionDuration := time.Since(decisionStart)
+
+		scenarioExecution.ExecutionMetrics.Steps[evaluate_scenario.LogStorageDurationKey] = storageDuration.Milliseconds()
+
+		utils.LoggerFromContext(ctx).InfoContext(ctx,
+			fmt.Sprintf("created decision (async) %s in %dms", decision.DecisionId, decisionDuration.Milliseconds()),
+			"org_id", scenario.OrganizationId,
+			"decision_id", decision.DecisionId,
+			"scenario_id", scenario.Id,
+			"score", scenarioExecution.Score,
+			"outcome", scenarioExecution.Outcome,
+			"duration", decisionDuration.Milliseconds(),
+			"rules", scenarioExecution.ExecutionMetrics.Rules,
+			"steps", scenarioExecution.ExecutionMetrics.Steps)
+	}
+
+	for _, sce := range decision.ScreeningExecutions {
+		matchesToInsert, offloadErr := w.offloadedReader.OffloadScreeningMatches(ctx, sce)
+		if offloadErr != nil {
+			return false, nil, errors.Wrapf(offloadErr,
+				"could not offload screening match payloads in createSingleDecisionForObjectId")
+		}
+		sce.Matches = matchesToInsert
+
+		err := w.screeningRepository.InsertScreening(ctx, tx, sce)
+		if err != nil {
+			return false, nil, errors.Wrapf(err,
+				"error storing screening execution in createSingleDecisionForObjectId")
+		}
+	}
+
+	err = w.webhookEventsSender.CreateWebhookEvent(ctx, tx, models.WebhookEventCreate{
+		OrganizationId: decision.OrganizationId,
+		EventContent:   models.NewWebhookEventDecisionCreated(decision),
+	})
+	if err != nil {
+		return false, nil, err
+	}
+
+	err = w.taskQueueRepository.EnqueueDecisionWorkflowTask(ctx, tx,
+		decision.OrganizationId, decision.DecisionId.String())
+	if err != nil {
+		return false, nil, err
+	}
+
+	err = w.repository.UpdateDecisionToCreateStatus(ctx, tx, args.DecisionToCreateId, models.DecisionToCreateStatusCreated)
+	if err != nil {
+		return false, nil, err
+	}
+
+	return true, func() { executeTestRun(&scenarioExecution) }, nil
+}
+
+func (w *AsyncDecisionWorker) possiblyUpdateScheduledExecNumbers(
+	ctx context.Context,
+	tx repositories.Transaction,
+	args models.AsyncDecisionArgs,
+) error {
+	if sample, err := w.sampleUpdateNumbers(ctx, args.ScheduledExecutionId); err != nil {
+		return err
+	} else if !sample {
+		return nil
+	}
+
+	counts, err := w.repository.CountCompletedDecisionsByStatus(ctx, tx, args.ScheduledExecutionId)
+	if err != nil {
+		return err
+	}
+
+	err = w.repository.UpdateScheduledExecutionStatus(
+		ctx,
+		tx,
+		models.UpdateScheduledExecutionStatusInput{
+			Id:                         args.ScheduledExecutionId,
+			NumberOfCreatedDecisions:   &counts.Created,
+			NumberOfEvaluatedDecisions: &counts.SuccessfullyEvaluated,
+			Status:                     models.ScheduledExecutionProcessing,
+		},
+	)
+	return err
+}
+
+func (w *AsyncDecisionWorker) sampleUpdateNumbers(ctx context.Context, scheduledExecutionId string) (isSampled bool, err error) {
+	// naive random heuristic. We want to avoid updating the numbers too often, but we also want to avoid having the numbers be too stale.
+	execution, err := w.repository.GetScheduledExecution(ctx, w.executorFactory.NewExecutor(), scheduledExecutionId)
+	if err != nil {
+		return false, err
+	}
+	var everyN int
+	if execution.NumberOfPlannedDecisions == nil || *execution.NumberOfPlannedDecisions < 100 {
+		everyN = 1
+	} else {
+		// every 32 decisions for 1000 planned, every 100 for 10k planned, every 1000 for 1M planned...
+		everyN = int(math.Sqrt(float64(*execution.NumberOfPlannedDecisions)))
+	}
+
+	if rand.Int64N(int64(everyN)) == 0 {
+		return true, nil
+	}
+	return false, nil
+}

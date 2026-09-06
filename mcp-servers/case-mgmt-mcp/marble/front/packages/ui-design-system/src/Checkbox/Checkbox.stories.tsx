@@ -1,0 +1,88 @@
+import * as Label from '@radix-ui/react-label';
+import { type Meta, type StoryFn } from '@storybook/react';
+import { useState } from 'react';
+
+import { Checkbox } from './Checkbox';
+
+const Story: Meta<typeof Checkbox> = {
+  title: 'Checkbox',
+  component: Checkbox,
+  args: { disabled: false, size: 'regular' },
+  argTypes: {
+    disabled: { control: 'boolean' },
+    size: { control: 'radio', options: ['regular', 'small'] },
+    checked: {
+      control: 'radio',
+      options: [false, true, 'indeterminate'],
+    },
+  },
+};
+export default Story;
+
+export const Default: StoryFn<typeof Checkbox> = (args) => <Checkbox {...args} />;
+
+export const WithLabel: StoryFn<typeof Checkbox> = (args) => (
+  <form>
+    <div className="flex flex-row gap-sm">
+      <Checkbox {...args} id="c1" />
+      <Label.Root htmlFor="c1">Accept terms and conditions.</Label.Root>
+    </div>
+  </form>
+);
+
+// Kept as a distinct story because it exercises custom indeterminate-state logic
+// (a Map of fruits with a parent checkbox that derives true/false/indeterminate
+// from the children) — not expressible as plain args.
+const fruits = ['apple', 'banana', 'blueberry', 'grapes', 'pineapple'];
+
+export const WithIntermediate: StoryFn<typeof Checkbox> = () => {
+  const [checkedFruits, setCheckedFruits] = useState(new Map(fruits.map((fruit) => [fruit, false])));
+  const allChecked = Array.from(checkedFruits.values()).every((val) => val === true)
+    ? true
+    : Array.from(checkedFruits.values()).every((val) => val === false)
+      ? false
+      : 'indeterminate';
+
+  return (
+    <form>
+      <fieldset className="border-grey-disabled flex w-fit flex-col gap-md rounded-sm border p-md">
+        <legend className="text-grey-secondary p-sm">Fruits</legend>
+        <div className="flex flex-row gap-sm">
+          <Checkbox
+            id="c1"
+            checked={allChecked}
+            onCheckedChange={(checked) => {
+              if (checked === 'indeterminate') return;
+              setCheckedFruits((checkedFruits) => {
+                checkedFruits.forEach((_, key) => {
+                  checkedFruits.set(key, checked === true);
+                });
+                return new Map(checkedFruits);
+              });
+            }}
+          />
+          <Label.Root htmlFor="c1">All fruits</Label.Root>
+        </div>
+        <ul className="flex flex-col gap-sm rounded-sm border p-sm">
+          {fruits.map((fruit) => (
+            <li key={fruit}>
+              <div className="flex flex-row gap-sm">
+                <Checkbox
+                  id={fruit}
+                  checked={checkedFruits.get(fruit)}
+                  onCheckedChange={(checked) => {
+                    setCheckedFruits((checkedFruits) => {
+                      checkedFruits.set(fruit, checked === true);
+                      return new Map(checkedFruits);
+                    });
+                  }}
+                />
+                <Label.Root htmlFor={fruit}>{fruit}</Label.Root>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </fieldset>
+    </form>
+  );
+};

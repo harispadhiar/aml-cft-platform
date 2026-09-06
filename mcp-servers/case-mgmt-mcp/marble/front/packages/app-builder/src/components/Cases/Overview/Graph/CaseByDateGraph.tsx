@@ -1,0 +1,154 @@
+import { Spinner } from '@app-builder/components/Spinner';
+import { CaseStatusByDateResponse } from '@app-builder/models/analytics/cases-status-by-date';
+import { useCaseStatusByDate } from '@app-builder/queries/cases/case-status-by-date';
+import { useFormatDateTime, useFormatLanguage } from '@app-builder/utils/format';
+import { ResponsiveBar } from '@nivo/bar';
+import { Fragment, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { match } from 'ts-pattern';
+import { Button } from 'ui-design-system';
+import { BAR_BORDER_RADIUS, BAR_BORDER_WIDTH, buildBarGradient, nivoTheme } from '../../Analytics/chart-theme';
+import { CaseStatusBadgeV2 } from '../../CaseStatus';
+import { getYAxisTicksValues, graphCaseStatuses, graphStatusesColors } from '../constants';
+
+export const CaseByDateGraph = () => {
+  const { t } = useTranslation(['cases', 'common']);
+  const caseStatusByDateQuery = useCaseStatusByDate();
+  const formatDateTime = useFormatDateTime();
+  const language = useFormatLanguage();
+  const [hovering, setHovering] = useState<string | null>(null);
+
+  return (
+    <div className="h-100 bg-surface-card rounded-lg p-md flex flex-col gap-sm">
+      <span className="font-medium text-s">{t('cases:overview.graph.cases_by_status.title')}</span>
+      <div className="border border-grey-border rounded-lg p-sm bg-surface-card h-full flex flex-col gap-xs">
+        {match(caseStatusByDateQuery)
+          .with({ isPending: true }, () => (
+            <div className="grid place-items-center h-full">
+              <Spinner className="size-12" />
+            </div>
+          ))
+          .with({ isError: true }, () => (
+            <div className="grid place-items-center h-full">
+              <div className="flex flex-col items-center gap-sm">
+                <span className="text-s text-grey-60 text-center">{t('common:generic_fetch_data_error')}</span>
+                <Button variant="secondary" onClick={() => caseStatusByDateQuery.refetch()}>
+                  {t('common:retry')}
+                </Button>
+              </div>
+            </div>
+          ))
+          .with({ isSuccess: true }, (query) => {
+            if (!query.data) return null;
+
+            const yAxisTicksValues = getYAxisTicksValues(query.data);
+            const maxValue = yAxisTicksValues[yAxisTicksValues.length - 1];
+
+            return (
+              <>
+                <span className="text-xs text-grey-60">{t('cases:overview.graph.count')}</span>
+                <div className="flex-1">
+                  <ResponsiveBar<CaseStatusByDateResponse>
+                    enableLabel={false}
+                    data={query.data}
+                    keys={graphCaseStatuses}
+                    indexBy="date"
+                    valueScale={{ type: 'linear', min: 0, max: maxValue }}
+                    gridYValues={yAxisTicksValues}
+                    axisLeft={{
+                      legend: t('cases:overview.graph.count'),
+                      legendOffset: -70,
+                      tickValues: yAxisTicksValues,
+                      format: (value: number) => {
+                        return Intl.NumberFormat(language, { notation: 'compact' }).format(value);
+                      },
+                    }}
+                    axisBottom={{
+                      tickValues: query.data
+                        .filter((_, i, arr) => i === 0 || i === arr.length - 1 || i === Math.ceil(arr.length / 2))
+                        .map((d) => d.date),
+                      format: (value: string) => {
+                        return formatDateTime(value, {
+                          month: 'short',
+                          day: 'numeric',
+                        });
+                      },
+                    }}
+                    margin={{ top: 5, right: 5, bottom: 54, left: 50 }}
+                    borderRadius={BAR_BORDER_RADIUS}
+                    borderWidth={BAR_BORDER_WIDTH}
+                    borderColor={{ from: 'color' }}
+                    defs={[
+                      ...graphCaseStatuses.map((status) =>
+                        buildBarGradient(graphStatusesColors[status], `grad-${status}`),
+                      ),
+                      {
+                        id: 'unhoverOpacity',
+                        type: 'linearGradient',
+                        colors: [
+                          { offset: 0, color: 'inherit', opacity: 0.5 },
+                          { offset: 100, color: 'inherit', opacity: 0.5 },
+                        ],
+                      },
+                    ]}
+                    fill={[
+                      ...graphCaseStatuses.map((status) => ({
+                        match: { id: status },
+                        id: `grad-${status}`,
+                      })),
+                      ...(hovering !== null
+                        ? [
+                            {
+                              match: (n: { data: { indexValue: string | number } }) => n.data.indexValue !== hovering,
+                              id: 'unhoverOpacity',
+                            },
+                          ]
+                        : []),
+                    ]}
+                    colorBy="id"
+                    colors={({ id }) => graphStatusesColors[id as keyof typeof graphStatusesColors]}
+                    padding={0.3}
+                    layout="vertical"
+                    onMouseEnter={(d) => setHovering(d.indexValue as string)}
+                    onMouseLeave={() => setHovering(null)}
+                    legends={[
+                      {
+                        dataFrom: 'keys',
+                        anchor: 'bottom',
+                        direction: 'row',
+                        itemWidth: 100,
+                        itemHeight: 25,
+                        translateY: 54,
+                        symbolShape: 'circle',
+                        symbolSize: 10,
+                        data: graphCaseStatuses.map((status) => ({
+                          id: status,
+                          label: t(`cases:case.status.${status}`),
+                          color: graphStatusesColors[status],
+                        })),
+                      },
+                    ]}
+                    tooltip={({ data }) => (
+                      <div className="flex flex-col gap-sm w-auto max-w-max bg-surface-card p-sm rounded-lg border border-grey-border shadow-sm whitespace-nowrap">
+                        <div className="text-s text-grey-60">{formatDateTime(data.date, { dateStyle: 'medium' })}</div>
+                        <div className="grid grid-cols-[calc(var(--spacing)_*_10)_1fr] gap-xs">
+                          {graphCaseStatuses.map((caseStatus) => (
+                            <Fragment key={caseStatus}>
+                              <div>{data[caseStatus]}</div>
+                              <CaseStatusBadgeV2 status={caseStatus} variant="semi-full" />
+                            </Fragment>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    theme={nivoTheme}
+                  />
+                </div>
+              </>
+            );
+          })
+          .exhaustive()}
+      </div>
+    </div>
+  );
+};

@@ -1,0 +1,277 @@
+package usecases
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/repositories"
+	"github.com/checkmarble/marble-backend/usecases/executor_factory"
+	"github.com/checkmarble/marble-backend/usecases/security"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/cockroachdb/errors"
+	"github.com/google/uuid"
+)
+
+type ScenarioFetcher interface {
+	FetchScenarioAndIteration(
+		ctx context.Context,
+		exec repositories.Executor,
+		scenarioIterationId string,
+	) (models.ScenarioAndIteration, error)
+}
+
+type ScenarioPublisher interface {
+	PublishOrUnpublishIteration(
+		ctx context.Context,
+		exec repositories.Transaction,
+		scenarioAndIteration models.ScenarioAndIteration,
+		publicationAction models.PublicationAction,
+	) ([]models.ScenarioPublication, error)
+	SaveScenarioPreparationAction(ctx context.Context, exec repositories.Executor,
+		orgId uuid.UUID,
+		scenarioId, iterationId string) error
+}
+
+type clientDbIndexEditor interface {
+	GetIndexesToCreate(ctx context.Context, organizationId uuid.UUID, scenarioIterationId string) (
+		toCreate []models.ConcreteIndex, numPending int, err error,
+	)
+	CreateIndexesAsync(ctx context.Context, organizationId uuid.UUID, indexes []models.ConcreteIndex) error
+	CreateIndexesAsyncForScenarioWithCallback(
+		ctx context.Context,
+		organizationId uuid.UUID,
+		indexes []models.ConcreteIndex,
+		onSuccess models.OnCreateIndexesSuccess) error
+	ListAllUniqueIndexes(ctx context.Context, organizationId uuid.UUID) ([]models.UnicityIndex, error)
+	CreateUniqueIndex(ctx context.Context, exec repositories.Executor, organizationId uuid.UUID, index models.UnicityIndex) error
+	CreateUniqueIndexAsync(ctx context.Context, organizationId uuid.UUID, index models.UnicityIndex) error
+	DeleteUniqueIndex(ctx context.Context, organizationId uuid.UUID, index models.UnicityIndex) error
+	GetRequiredIndices(ctx context.Context, organizationId uuid.UUID) (
+		required []models.AggregateQueryFamily, err error)
+}
+
+type PublicationUsecaseFeatureAccessReader interface {
+	GetOrganizationFeatureAccess(
+		ctx context.Context,
+		organizationId uuid.UUID,
+		userId *models.UserId,
+	) (models.OrganizationFeatureAccess, error)
+}
+
+type ScreeningRequirementChecker interface {
+	IsConfigured(context.Context, models.ScreeningProvider) (bool, error)
+}
+
+type ScenarioPublicationUsecase struct {
+	transactionFactory             executor_factory.TransactionFactory
+	executorFactory                executor_factory.ExecutorFactory
+	scenarioPublicationsRepository repositories.ScenarioPublicationRepository
+	taskQueueRepository            repositories.TaskQueueRepository
+	enforceSecurity                security.EnforceSecurityScenario
+	scenarioFetcher                ScenarioFetcher
+	scenarioPublisher              ScenarioPublisher
+	clientDbIndexEditor            clientDbIndexEditor
+	featureAccessReader            PublicationUsecaseFeatureAccessReader
+	screeningRequirements          ScreeningRequirementChecker
+	organizationRepository         ScreeningOrganizationRepository
+}
+
+func NewScenarioPublicationUsecase(
+	transactionFactory executor_factory.TransactionFactory,
+	executorFactory executor_factory.ExecutorFactory,
+	scenarioPublicationsRepository repositories.ScenarioPublicationRepository,
+	taskQueueRepository repositories.TaskQueueRepository,
+	enforceSecurity security.EnforceSecurityScenario,
+	scenarioFetcher ScenarioFetcher,
+	scenarioPublisher ScenarioPublisher,
+	clientDbIndexEditor clientDbIndexEditor,
+	featureAccessReader PublicationUsecaseFeatureAccessReader,
+	screeningRequirements ScreeningRequirementChecker,
+	organizationRepository ScreeningOrganizationRepository,
+) *ScenarioPublicationUsecase {
+	return &ScenarioPublicationUsecase{
+		transactionFactory:             transactionFactory,
+		executorFactory:                executorFactory,
+		scenarioPublicationsRepository: scenarioPublicationsRepository,
+		taskQueueRepository:            taskQueueRepository,
+		enforceSecurity:                enforceSecurity,
+		scenarioFetcher:                scenarioFetcher,
+		scenarioPublisher:              scenarioPublisher,
+		clientDbIndexEditor:            clientDbIndexEditor,
+		featureAccessReader:            featureAccessReader,
+		screeningRequirements:          screeningRequirements,
+		organizationRepository:         organizationRepository,
+	}
+}
+
+func (usecase *ScenarioPublicationUsecase) GetScenarioPublication(
+	ctx context.Context,
+	scenarioPublicationID string,
+) (models.ScenarioPublication, error) {
+	scenarioPublication, err := usecase.scenarioPublicationsRepository.GetScenarioPublicationById(
+		ctx, usecase.executorFactory.NewExecutor(), scenarioPublicationID)
+	if err != nil {
+		return models.ScenarioPublication{}, err
+	}
+
+	// Enforce permissions
+	if err := usecase.enforceSecurity.ReadScenarioPublication(scenarioPublication); err != nil {
+		return models.ScenarioPublication{}, err
+	}
+	return scenarioPublication, nil
+}
+
+func (usecase *ScenarioPublicationUsecase) ListScenarioPublications(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	filters models.ListScenarioPublicationsFilters,
+) ([]models.ScenarioPublication, error) {
+	// Enforce permissions
+	if err := usecase.enforceSecurity.ListScenarios(organizationId); err != nil {
+		return nil, err
+	}
+
+	return usecase.scenarioPublicationsRepository.ListScenarioPublicationsOfOrganization(ctx,
+		usecase.executorFactory.NewExecutor(), organizationId, filters)
+}
+
+func (usecase *ScenarioPublicationUsecase) ExecuteScenarioPublicationAction(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	input models.PublishScenarioIterationInput,
+) ([]models.ScenarioPublication, error) {
+	indexesToCreate, _, err := usecase.clientDbIndexEditor.GetIndexesToCreate(
+		ctx,
+		organizationId,
+		input.ScenarioIterationId,
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "Error while fetching indexes to create in ExecuteScenarioPublicationAction")
+	}
+	if len(indexesToCreate) > 0 && input.PublicationAction == models.Publish {
+		return nil, errors.Wrap(
+			models.ErrScenarioIterationRequiresPreparation,
+			fmt.Sprintf("Cannot publish the scenario iteration: it requires data preparation to be run first for %d indexes", len(indexesToCreate)),
+		)
+	}
+
+	return executor_factory.TransactionReturnValue(
+		ctx,
+		usecase.transactionFactory,
+		func(tx repositories.Transaction,
+		) ([]models.ScenarioPublication, error) {
+			org, err := usecase.organizationRepository.GetOrganizationById(ctx, tx, organizationId)
+			if err != nil {
+				return nil, err
+			}
+
+			scenarioAndIteration, err := usecase.scenarioFetcher.FetchScenarioAndIteration(ctx, tx, input.ScenarioIterationId)
+			if err != nil {
+				return nil, err
+			}
+			if len(scenarioAndIteration.Iteration.ScreeningConfigs) > 0 {
+				featureAccess, err := usecase.featureAccessReader.GetOrganizationFeatureAccess(ctx, organizationId, nil)
+				if err != nil {
+					return nil, err
+				}
+				if !featureAccess.Sanctions.IsAllowed() {
+					return nil, errors.Wrapf(models.ForbiddenError,
+						"screening feature access is missing: status is %s", featureAccess.Sanctions)
+				}
+
+				screeningProvider := org.GetScreeningProviderFor(models.ScreeningFeatureTransactionMonitoring)
+
+				isConfigured, err := usecase.screeningRequirements.IsConfigured(ctx, screeningProvider)
+				if err != nil {
+					return nil, errors.Wrapf(err,
+						"could not check whether screening was provided configured for %s", screeningProvider)
+				}
+				if !isConfigured {
+					return nil, errors.New("screening is not configured, cannot publish scenario")
+				}
+			}
+
+			if err := usecase.enforceSecurity.PublishScenario(scenarioAndIteration.Scenario); err != nil {
+				return nil, err
+			}
+
+			return usecase.scenarioPublisher.PublishOrUnpublishIteration(
+				ctx,
+				tx,
+				scenarioAndIteration,
+				input.PublicationAction,
+			)
+		})
+}
+
+func (usecase *ScenarioPublicationUsecase) GetPublicationPreparationStatus(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	scenarioIterationId string,
+) (status models.PublicationPreparationStatus, err error) {
+	logger := utils.LoggerFromContext(ctx)
+
+	indexesToCreate, numPending, err := usecase.clientDbIndexEditor.GetIndexesToCreate(ctx,
+		organizationId, scenarioIterationId)
+	if err != nil {
+		return status, errors.Wrap(err, "Error while fetching indexes to create in GetPublicationPreparationStatus")
+	}
+
+	if len(indexesToCreate) == 0 {
+		status.PreparationStatus = models.PreparationStatusReadyToActivate
+	} else {
+		logger.InfoContext(ctx, fmt.Sprintf("Found %d indexes to create in GetPublicationPreparationStatus: %+v\n", len(indexesToCreate), indexesToCreate))
+		status.PreparationStatus = models.PreparationStatusRequired
+	}
+
+	if numPending == 0 {
+		status.PreparationServiceStatus = models.PreparationServiceStatusAvailable
+	} else {
+		status.PreparationServiceStatus = models.PreparationServiceStatusOccupied
+	}
+
+	return
+}
+
+func (usecase *ScenarioPublicationUsecase) StartPublicationPreparation(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	scenarioIterationId string,
+) error {
+	exec := usecase.executorFactory.NewExecutor()
+
+	scenarioAndIteration, err := usecase.scenarioFetcher.FetchScenarioAndIteration(ctx, exec, scenarioIterationId)
+	if err != nil {
+		return err
+	}
+
+	indexesToCreate, numPending, err := usecase.clientDbIndexEditor.GetIndexesToCreate(ctx,
+		organizationId, scenarioIterationId)
+	if err != nil {
+		return errors.Wrap(err, "Error while fetching indexes to create in StartPublicationPreparation")
+	}
+
+	if len(indexesToCreate) == 0 {
+		return nil
+	}
+
+	if numPending > 0 {
+		return models.ErrDataPreparationServiceUnavailable
+	}
+
+	return usecase.transactionFactory.Transaction(ctx, func(tx repositories.Transaction) error {
+		if err := usecase.scenarioPublisher.SaveScenarioPreparationAction(ctx, tx,
+			organizationId, scenarioAndIteration.Scenario.Id, scenarioIterationId); err != nil {
+			return err
+		}
+
+		if err := usecase.taskQueueRepository.EnqueueCreateIndexTask(ctx,
+			tx,
+			organizationId, indexesToCreate); err != nil {
+			return err
+		}
+
+		return nil
+	})
+}

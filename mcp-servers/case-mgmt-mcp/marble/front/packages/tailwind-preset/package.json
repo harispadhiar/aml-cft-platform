@@ -1,0 +1,21 @@
+{
+  "name": "tailwind-preset",
+  "version": "1.0.0",
+  "description": "Shared config that group all specific design tokens for Marble",
+  "sideEffect": false,
+  "type": "module",
+  "scripts": {
+    "lint": "biome lint",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@tailwindcss/container-queries": "^0.1.1",
+    "tailwindcss": "4.3.2",
+    "tailwindcss-animate": "^1.0.7",
+    "tailwindcss-radix": "^4.0.2"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "tw-animate-css": "^1.3.7"
+  }
+}

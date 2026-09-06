@@ -1,0 +1,154 @@
+{
+  "fmu_schema_version": "SBP-FMU-v2.1",
+  "report_type": "STR",
+  "filing_reference": "STR-SCHEMA-TEST-001-20260906",
+  "filing_timestamp": "2026-09-06T10:42:51.510927+00:00",
+  "reporting_entity": {
+    "name": "Pilot Bank Pakistan",
+    "sbp_code": "SBP-PILOT-001",
+    "branch": "Head Office, Karachi"
+  },
+  "subject": {
+    "customer_id": "CUST-000001",
+    "risk_tier": "High",
+    "triggered_rules": [
+      "nacta_match",
+      "structuring"
+    ]
+  },
+  "transaction_summary": {
+    "pattern": "10 deposits of PKR 950,000 within 48 hours.",
+    "screening_hit": "True Positive NACTA match."
+  },
+  "narrative": "The subject made 10 deposits of PKR 950,000 within 48 hours. A True Positive NACTA match was identified. Reported per SBP AML/CFT Regulations 2020 Clause 3 and FATF Recommendation 10.",
+  "human_approval_chain": [
+    {
+      "gate": "G01",
+      "actor": "System",
+      "role": "AUTOMATION",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.509762+00:00"
+    },
+    {
+      "gate": "G02",
+      "actor": "System",
+      "role": "AUTOMATION",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.509823+00:00"
+    },
+    {
+      "gate": "G03",
+      "actor": "Analyst",
+      "role": "Analyst",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.509849+00:00"
+    },
+    {
+      "gate": "G04",
+      "actor": "System",
+      "role": "AUTOMATION",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.509862+00:00"
+    },
+    {
+      "gate": "G05",
+      "actor": "System",
+      "role": "AUTOMATION",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.509873+00:00"
+    },
+    {
+      "gate": "G06",
+      "actor": "Analyst",
+      "role": "Analyst",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.509886+00:00"
+    },
+    {
+      "gate": "G07",
+      "actor": "Analyst",
+      "role": "Analyst",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.509903+00:00"
+    },
+    {
+      "gate": "G08",
+      "actor": "Analyst",
+      "role": "Analyst",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.509914+00:00"
+    },
+    {
+      "gate": "G09",
+      "actor": "MLRO",
+      "role": "MLRO",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.509928+00:00"
+    },
+    {
+      "gate": "G10",
+      "actor": "Analyst",
+      "role": "Analyst",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.509940+00:00"
+    },
+    {
+      "gate": "G11",
+      "actor": "Analyst",
+      "role": "Analyst",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.509950+00:00"
+    },
+    {
+      "gate": "G12",
+      "actor": "MLRO",
+      "role": "MLRO",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.509963+00:00"
+    },
+    {
+      "gate": "G13",
+      "actor": "Analyst",
+      "role": "Analyst",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.509973+00:00"
+    },
+    {
+      "gate": "G14",
+      "actor": "Analyst",
+      "role": "Analyst",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.509985+00:00"
+    },
+    {
+      "gate": "G15",
+      "actor": "MLRO",
+      "role": "MLRO",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.509997+00:00"
+    },
+    {
+      "gate": "G16",
+      "actor": "MLRO",
+      "role": "MLRO",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.510009+00:00"
+    },
+    {
+      "gate": "G17",
+      "actor": "System",
+      "role": "AUTOMATION",
+      "action": "ADVANCE",
+      "timestamp": "2026-09-06T10:42:51.510019+00:00"
+    }
+  ],
+  "ai_model_metadata": {
+    "narrative_model": "aml-cft-lora-v1",
+    "prompt_template": "sar_narrative_v2",
+    "rag_citations": [
+      "SBP AML/CFT Regulations 2020 Clause 3",
+      "FATF Recommendation 10"
+    ],
+    "human_reviewed": true
+  }
+}

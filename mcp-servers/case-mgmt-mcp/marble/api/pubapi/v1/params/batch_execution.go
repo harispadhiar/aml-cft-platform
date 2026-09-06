@@ -1,0 +1,26 @@
+package params
+
+import (
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/pubapi/types"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/google/uuid"
+)
+
+type ListBatchExecutionsParams struct {
+	types.PaginationParams
+
+	ScenarioId *string `form:"scenario_id" binding:"omitzero,uuid"`
+}
+
+func (p ListBatchExecutionsParams) ToFilters(orgId uuid.UUID) models.ListScheduledExecutionsFilters {
+	filters := models.ListScheduledExecutionsFilters{
+		OrganizationId: orgId,
+	}
+
+	if !utils.NilOrZero(p.ScenarioId) {
+		filters.ScenarioId = *p.ScenarioId
+	}
+
+	return filters
+}

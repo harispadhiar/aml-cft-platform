@@ -1,0 +1,68 @@
+name: E2E tests
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.1
+      - name: Cache Bun
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+            packages/*/node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.tool-versions'
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - run: bun run -F tests test:install
+      # Cache the production build output. The key hashes everything that can affect
+      # the build: all of packages/app-builder/**, the src/ of every package it depends
+      # on, the lockfile, and the runtime version. The globs are intentionally broad —
+      # the cache mostly helps re-runs of the same commit (flake retries), so
+      # over-invalidation is cheap and "I added a new build input" is unlikely to drift.
+      # If you add a NEW dependent package, add its src/ to the hashFiles list below.
+      - name: Cache app build output
+        id: cache-output
+        uses: actions/cache@v5
+        with:
+          path: packages/app-builder/.output
+          key: ${{ runner.os }}-output-${{ hashFiles('packages/app-builder/**', 'packages/shared/src/**', 'packages/ui-design-system/src/**', 'packages/ui-icons/src/**', 'packages/marble-api/src/**', 'packages/tailwind-preset/src/**', 'packages/typescript-utils/src/**', '!**/node_modules/**', '!**/.output/**', 'bun.lock', '.tool-versions') }}
+      - name: Pre-pull test container images (and build if cache miss)
+        run: |
+          docker pull postgis/postgis:17-3.6-alpine &
+          docker pull europe-west1-docker.pkg.dev/marble-infra/marble/firebase-emulator:latest &
+          docker pull europe-west1-docker.pkg.dev/marble-infra/marble/marble-backend:latest &
+          if [ "${{ steps.cache-output.outputs.cache-hit }}" != "true" ]; then
+            bun run -F app-builder build
+          fi
+          wait
+      - name: Run E2E tests
+        run: bun run -F tests test:run:prod
+      - uses: actions/upload-artifact@v6
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: |
+            packages/tests/playwright-report/
+            packages/tests/trace.zip
+          retention-days: 1

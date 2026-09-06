@@ -1,0 +1,132 @@
+package token
+
+import (
+	"context"
+	"encoding/hex"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/checkmarble/marble-backend/mocks"
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/utils"
+)
+
+func TestValidator_Validate_APIKey(t *testing.T) {
+	key := "api_key"
+	// hash of "api_key"
+	keyHash, err := hex.DecodeString("2e9bc6c94a4cbdfe2a31d2df79103a5eb3702eaf5d7018d47a774e9540a8ec29")
+	assert.NoError(t, err)
+
+	apiKey := models.ApiKey{
+		Id:             "api_key_id",
+		OrganizationId: utils.TextToUUID("organization_id"),
+		Prefix:         "abc",
+		Role:           models.ADMIN,
+	}
+
+	organization := models.Organization{
+		Id:   utils.TextToUUID("organization_id"),
+		Name: "organization",
+	}
+
+	creds := models.Credentials{
+		OrganizationId: utils.TextToUUID("organization_id"),
+		Role:           models.ADMIN,
+		ActorIdentity: models.Identity{
+			ApiKeyId:   "api_key_id",
+			ApiKeyName: "Api key abc*** of organization",
+		},
+	}
+
+	ctx := context.Background()
+
+	t.Run("nominal", func(t *testing.T) {
+		mockKeyAndOrganizationGetter := new(mocks.Database)
+		mockKeyAndOrganizationGetter.On("GetApiKeyByHash", ctx, keyHash).
+			Return(apiKey, nil)
+		mockKeyAndOrganizationGetter.On("GetOrganizationByID", ctx, apiKey.OrganizationId).
+			Return(organization, nil)
+
+		v := Validator{
+			getter: mockKeyAndOrganizationGetter,
+		}
+
+		credentials, err := v.ValidateTokenOrKey(ctx, "", key)
+		assert.NoError(t, err)
+		assert.Equal(t, creds, credentials)
+		mockKeyAndOrganizationGetter.AssertExpectations(t)
+	})
+
+	t.Run("GetApiKeyByHash error", func(t *testing.T) {
+		mockKeyAndOrganizationGetter := new(mocks.Database)
+		mockKeyAndOrganizationGetter.On("GetApiKeyByHash", ctx, keyHash).
+			Return(models.ApiKey{}, assert.AnError)
+
+		v := Validator{
+			getter: mockKeyAndOrganizationGetter,
+		}
+
+		_, err := v.ValidateTokenOrKey(ctx, "", key)
+		assert.Error(t, err)
+		mockKeyAndOrganizationGetter.AssertExpectations(t)
+	})
+
+	t.Run("nominal", func(t *testing.T) {
+		mockKeyAndOrganizationGetter := new(mocks.Database)
+		mockKeyAndOrganizationGetter.On("GetApiKeyByHash", ctx, keyHash).
+			Return(apiKey, nil)
+		mockKeyAndOrganizationGetter.On("GetOrganizationByID", ctx, apiKey.OrganizationId).
+			Return(models.Organization{}, assert.AnError)
+
+		v := Validator{
+			getter: mockKeyAndOrganizationGetter,
+		}
+
+		_, err := v.ValidateTokenOrKey(ctx, "", key)
+		assert.Error(t, err)
+		mockKeyAndOrganizationGetter.AssertExpectations(t)
+	})
+}
+
+func TestValidator_Validate_Token(t *testing.T) {
+	token := "token"
+
+	t.Run("nominal", func(t *testing.T) {
+		creds := models.Credentials{
+			OrganizationId: utils.TextToUUID("organization_id"),
+			Role:           models.ADMIN,
+			ActorIdentity: models.Identity{
+				UserId: "user_id",
+				Email:  "user@email.com",
+			},
+		}
+
+		mockValidator := new(mocks.JWTEncoderValidator)
+		mockValidator.On("ValidateMarbleToken", token).
+			Return(creds, nil)
+
+		v := Validator{
+			validator: mockValidator,
+		}
+
+		credentials, err := v.ValidateTokenOrKey(context.Background(), token, "")
+		assert.NoError(t, err)
+		assert.Equal(t, creds, credentials)
+		mockValidator.AssertExpectations(t)
+	})
+
+	t.Run("ValidateMarbleToken error", func(t *testing.T) {
+		mockValidator := new(mocks.JWTEncoderValidator)
+		mockValidator.On("ValidateMarbleToken", token).
+			Return(models.Credentials{}, assert.AnError)
+
+		v := Validator{
+			validator: mockValidator,
+		}
+
+		_, err := v.ValidateTokenOrKey(context.Background(), token, "")
+		assert.Error(t, err)
+		mockValidator.AssertExpectations(t)
+	})
+}

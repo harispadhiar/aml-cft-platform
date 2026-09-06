@@ -1,0 +1,795 @@
+/apikeys:
+  get:
+    tags:
+      - ApiKeys
+    summary: List api keys associated with the current organization (present in the JWT)
+    operationId: listApiKeys
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: The apikeys corresponding to the current organization (present in the JWT)
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - api_keys
+              properties:
+                api_keys:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ApiKeyDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+  post:
+    tags:
+      - ApiKeys
+    summary: Create an api key
+    operationId: createApiKey
+    security:
+      - bearerAuth: []
+    requestBody:
+      description: 'Describe the api key to create'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CreateApiKeyBody'
+      required: true
+    responses:
+      '200':
+        description: The created api key
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - api_key
+              properties:
+                api_key:
+                  $ref: '#/components/schemas/CreatedApiKeyDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+/apikeys/{apiKeyId}:
+  delete:
+    tags:
+      - ApiKeys
+    summary: Delete an api key
+    operationId: deleteApiKey
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: apiKeyId
+        description: ID of the api key that need to be deleted
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '204':
+        description: The api key has been deleted
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+/users:
+  get:
+    tags:
+      - Admin
+      - Users
+    summary: List all users present in the database
+    operationId: listUsers
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: The list of users present in the database
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - users
+              properties:
+                users:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/UserDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+  post:
+    tags:
+      - Admin
+      - Users
+    summary: Create a user
+    operationId: createUser
+    security:
+      - bearerAuth: []
+    requestBody:
+      description: Describe the user to create
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CreateUser'
+      required: true
+    responses:
+      '200':
+        description: The created user
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user
+              properties:
+                user:
+                  $ref: '#/components/schemas/UserDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+/users/{userId}:
+  get:
+    tags:
+      - Admin
+      - Users
+    summary: Get a user by id
+    operationId: getUser
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: userId
+        description: ID of the user that need to be fetched
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '200':
+        description: The user corresponding to the provided `userId`
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user
+              properties:
+                user:
+                  $ref: '#/components/schemas/UserDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+  delete:
+    tags:
+      - Admin
+      - Users
+    summary: Delete a user by id
+    operationId: deleteUser
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: userId
+        description: ID of the user that need to be deleted
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '204':
+        description: The user has been deleted
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+  patch:
+    tags:
+      - Admin
+      - Users
+    summary: Update a user
+    operationId: updateUser
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: userId
+        description: ID of the user that need to be updated
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      description: Describe the user to update
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UpdateUser'
+      required: true
+    responses:
+      '200':
+        description: The updated user
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user
+              properties:
+                user:
+                  $ref: '#/components/schemas/UserDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+/organizations:
+  get:
+    tags:
+      - Admin
+      - Organizations
+    summary: List all organizations present in the database
+    operationId: listOrganizations
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: The list of organizations present in the database
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - organizations
+              properties:
+                organizations:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/OrganizationDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+  post:
+    tags:
+      - Admin
+      - Organizations
+    summary: Create an organization
+    operationId: createOrganization
+    security:
+      - bearerAuth: []
+    requestBody:
+      description: Describe the organization to create
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CreateOrganizationBodyDto'
+      required: true
+    responses:
+      '200':
+        description: The created organization
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - organization
+              properties:
+                organization:
+                  $ref: '#/components/schemas/OrganizationDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+/organizations/{organizationId}:
+  get:
+    tags:
+      - Admin
+      - Organizations
+    summary: Get an organization by id
+    operationId: getOrganization
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: organizationId
+        description: ID of the organization that need to be fetched
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '200':
+        description: The organization corresponding to the provided `organizationId`
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - organization
+              properties:
+                organization:
+                  $ref: '#/components/schemas/OrganizationDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+  patch:
+    tags:
+      - Admin
+      - Organizations
+    summary: Update an organization by id
+    operationId: updateOrganization
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: organizationId
+        description: ID of the organization that need to be updated
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      description: Describe the organization to update
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UpdateOrganizationBodyDto'
+      required: true
+    responses:
+      '200':
+        description: The updated organization
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - organization
+              properties:
+                organization:
+                  $ref: '#/components/schemas/OrganizationDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+  delete:
+    tags:
+      - Admin
+      - Organizations
+    summary: Delete an organization by id
+    operationId: deleteOrganization
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: organizationId
+        description: ID of the organization that need to be deleted
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '204':
+        description: The organization has been deleted
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+/organizations/{organizationId}/subnets:
+  put:
+    tags:
+      - Admin
+      - Organizations
+    summary: Update organization subnets
+    operationId: updateOrganizationSubnets
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: organizationId
+        description: ID of the organization
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      description: Object containing the list of subnets to allow
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OrganizationSubnetsDto'
+      required: true
+    responses:
+      '200':
+        description: The list of users of the organization
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: string
+      '400':
+        $ref: 'components.yml#/responses/400'
+      '422':
+        $ref: 'components.yml#/responses/422'
+/organizations/{organizationId}/users:
+  get:
+    tags:
+      - Admin
+      - Organizations
+    summary: List all users of an organization
+    operationId: listOrganizationUsers
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: organizationId
+        description: ID of the organization
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: with_tfa
+        description: Enrich each user with their two-factor authentication status (fetched from the identity provider)
+        in: query
+        required: false
+        schema:
+          type: boolean
+    responses:
+      '200':
+        description: The list of users of the organization
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - users
+              properties:
+                users:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/UserDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+
+/admin/audit-events:
+  get:
+    tags:
+      - Admin
+    summary: List audit events
+    operationId: listAuditEvents
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: from
+        description: Date range start
+        in: query
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        description: Date range end
+        in: query
+        schema:
+          type: string
+          format: date-time
+      - name: user_id
+        description: ID of a user to display audit events for
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: api_key_id
+        description: ID of an API key to display audit events for
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: table
+        description: Object type to display audit events for
+        in: query
+        schema:
+          type: string
+          format: date-time
+      - name: entity_id
+        description: Object ID to display audit events for
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        description: Number of item to return
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      - name: after
+        description: The ID after which to continue paginating
+        in: query
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '200':
+        description: List of audit events matching the filters
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [has_next_page, events]
+              properties:
+                has_next_page:
+                  type: boolean
+                events:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/AuditEventDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+
+components:
+  schemas:
+    OrganizationDto:
+      type: object
+      required:
+        - id
+        - name
+        - sanction_threshold
+        - sanction_limit
+        - allowed_networks
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: (Immutable) name of the organization
+        default_scenario_timezone:
+          type: string
+          description: Timezone (IANA format) used by default for scenarios of this organization, when interpreting timestamps as datetimes.
+        sanctions_threshold:
+          type: number
+          description: Threshold for screenings
+        sanctions_limit:
+          type: number
+          description: Limit for screenings
+        auto_assign_queue_limit:
+          type: number
+          description: Maximum number of assignable cases for a user
+        allowed_networks:
+          type: array
+          items:
+            type: string
+        sentry_replay_enabled:
+          type: boolean
+          description: Whether Sentry session replay is enabled for this organization
+        screening_providers:
+          type: object
+          properties:
+            transaction_monitoring:
+              type: string
+              enum: [opensanctions, lexisnexis]
+            continuous_monitoring:
+              type: string
+              enum: [opensanctions, lexisnexis]
+            manual_search:
+              type: string
+              enum: [opensanctions, lexisnexis]
+    CreateOrganizationBodyDto:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+    UpdateOrganizationBodyDto:
+      type: object
+      properties:
+        default_scenario_timezone:
+          type: string
+        sanctions_threshold:
+          type: number
+        sanctions_limit:
+          type: number
+        auto_assign_queue_limit:
+          type: number
+        screening_providers:
+          type: object
+          properties:
+            transaction_monitoring:
+              type: string
+              enum: [opensanctions, lexisnexis]
+            continuous_monitoring:
+              type: string
+              enum: [opensanctions, lexisnexis]
+            manual_search:
+              type: string
+              enum: [opensanctions, lexisnexis]
+    OrganizationSubnetsDto:
+      type: object
+      properties:
+        subnets:
+          description: List of CIDR subnets (x.x.x.x/yy)
+          type: array
+          items:
+            type: string
+    UserDto:
+      type: object
+      required:
+        - user_id
+        - email
+        - first_name
+        - last_name
+        - role
+        - organization_id
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        first_name:
+          type: string
+        last_name:
+          type: string
+        role:
+          type: string
+        organization_id:
+          type: string
+          format: uuid
+        tfa_enabled:
+          type: boolean
+          description: Whether the user has at least one MFA factor enrolled. Only present when requested with `with_tfa=true`.
+    CreateUser:
+      type: object
+      required:
+        - email
+        - role
+        - organization_id
+        - first_name
+        - last_name
+      properties:
+        email:
+          type: string
+        role:
+          type: string
+        organization_id:
+          type: string
+          format: uuid
+        first_name:
+          type: string
+        last_name:
+          type: string
+    UpdateUser:
+      type: object
+      required:
+        - email
+        - role
+        - organization_id
+        - first_name
+        - last_name
+      properties:
+        email:
+          type: string
+        role:
+          type: string
+        organization_id:
+          type: string
+          format: uuid
+        first_name:
+          type: string
+        last_name:
+          type: string
+    ApiKeyDto:
+      type: object
+      required:
+        - id
+        - description
+        - organization_id
+        - prefix
+        - role
+      properties:
+        id:
+          type: string
+        description:
+          type: string
+        organization_id:
+          type: string
+          format: uuid
+        prefix:
+          type: string
+          description: 3 first characters of the API key
+        role:
+          type: string
+    CreateApiKeyBody:
+      type: object
+      required:
+        - description
+        - role
+      properties:
+        description:
+          type: string
+        role:
+          type: string
+    CreatedApiKeyDto:
+      allOf:
+        - $ref: '#/components/schemas/ApiKeyDto'
+        - type: object
+          required:
+            - key
+          properties:
+            key:
+              type: string
+    AuditEventDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        actor:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [user, api_key]
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+        operation:
+          type: string
+          enum: [INSERT, UPDATE, DELETE]
+        table:
+          type: string
+        entity_id:
+          type: string
+          format: uuid
+        old_data:
+          description: Arbitrary JSON representing the old entity
+          type: object
+          additionalProperties: true
+        new_data:
+          description: Arbitrary JSON representing the new entity
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time

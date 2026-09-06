@@ -1,0 +1,977 @@
+package repositories
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/Masterminds/squirrel"
+	"github.com/cockroachdb/errors"
+	"github.com/google/uuid"
+	"github.com/hashicorp/golang-lru/v2/expirable"
+	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/checkmarble/marble-backend/repositories/dbmodels"
+	"github.com/checkmarble/marble-backend/utils"
+)
+
+type DataModelRepository interface {
+	GetDataModel(ctx context.Context, exec Executor, organizationID uuid.UUID, fetchEnumValues bool,
+		useCache bool) (models.DataModel, error)
+	CreateDataModelTable(
+		ctx context.Context,
+		exec Executor,
+		organizationID uuid.UUID,
+		tableId string,
+		input models.CreateTableInput,
+	) error
+	UpdateDataModelTable(
+		ctx context.Context,
+		exec Executor,
+		tableID string,
+		description *string,
+		ftmEntity pure_utils.Null[models.FollowTheMoneyEntity],
+		alias pure_utils.Null[string],
+		semanticType pure_utils.Null[models.SemanticType],
+		captionField pure_utils.Null[string],
+		primaryOrderingField pure_utils.Null[string],
+		metadata *json.RawMessage,
+	) error
+	GetDataModelTable(ctx context.Context, exec Executor, tableID string) (models.TableMetadata, error)
+	CreateDataModelField(ctx context.Context, exec Executor, organizationId uuid.UUID, fieldId string, field models.CreateFieldInput) error
+	UpdateDataModelField(
+		ctx context.Context,
+		exec Executor,
+		field string,
+		input models.UpdateFieldInput,
+	) error
+	CreateDataModelLink(
+		ctx context.Context,
+		exec Executor,
+		id string,
+		link models.DataModelLinkCreateInput,
+	) error
+	GetLinks(ctx context.Context, exec Executor, organizationId uuid.UUID) ([]models.LinkToSingle, error)
+	DeleteDataModel(ctx context.Context, exec Executor, organizationID uuid.UUID) error
+	GetDataModelField(ctx context.Context, exec Executor, fieldId string) (models.FieldMetadata, error)
+	BatchInsertEnumValues(ctx context.Context, exec Executor, enumValues models.EnumValues, table models.Table) error
+
+	CreatePivot(ctx context.Context, exec Executor, id string, pivot models.CreatePivotInput) error
+	ListPivots(ctx context.Context, exec Executor, organizationId uuid.UUID, tableId *string,
+		useCache bool, includeDeleted bool) ([]models.PivotMetadata, error)
+	GetPivot(ctx context.Context, exec Executor, pivotId string) (models.PivotMetadata, error)
+	SoftDeletePivot(ctx context.Context, exec Executor, id string) error
+	RestorePivot(ctx context.Context, exec Executor, id string) error
+
+	GetDataModelOptionsForTable(ctx context.Context, exec Executor, tableId string) (*models.DataModelOptions, error)
+	UpsertDataModelOptions(ctx context.Context, exec Executor,
+		req models.UpdateDataModelOptionsRequest) (models.DataModelOptions, error)
+
+	ArchiveDataModelTable(ctx context.Context, exec Executor, table models.TableMetadata) error
+	DeleteDataModelTable(ctx context.Context, exec Executor, table models.TableMetadata) error
+	ArchiveDataModelField(ctx context.Context, exec Executor, table models.TableMetadata, field models.FieldMetadata) error
+	DeleteDataModelField(ctx context.Context, exec Executor, table models.TableMetadata, field models.FieldMetadata) error
+	DeleteDataModelLink(ctx context.Context, exec Executor, id string) error
+	DeleteDataModelPivot(ctx context.Context, exec Executor, id string) error
+}
+
+var (
+	dataModelCacheEnum   = expirable.NewLRU[string, models.DataModel](50, nil, utils.GlobalCacheDuration())
+	dataModelCacheNoEnum = expirable.NewLRU[string, models.DataModel](50, nil, utils.GlobalCacheDuration())
+	dataModelPivotsCache = expirable.NewLRU[string, []models.PivotMetadata](50, nil, utils.GlobalCacheDuration())
+)
+
+func (repo MarbleDbRepository) GetDataModel(
+	ctx context.Context,
+	exec Executor,
+	organizationID uuid.UUID,
+	fetchEnumValues bool,
+	useCache bool,
+) (models.DataModel, error) {
+	cacheKey := exec.Cache(ctx).Key("data-model", strconv.FormatBool(fetchEnumValues))
+
+	if dataModel, err := RedisLoadModel[models.DataModel](ctx, exec.Cache(ctx), cacheKey); err == nil {
+		return dataModel, nil
+	}
+
+	var cache *expirable.LRU[string, models.DataModel]
+	if fetchEnumValues {
+		cache = dataModelCacheEnum
+	} else {
+		cache = dataModelCacheNoEnum
+	}
+	if useCache && repo.withCache {
+		if dm, ok := cache.Get(organizationID.String()); ok {
+			return dm, nil
+		}
+	}
+
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.DataModel{}, err
+	}
+
+	fields, err := repo.getTablesAndFields(ctx, exec, organizationID)
+	if err != nil {
+		return models.DataModel{}, err
+	}
+
+	links, err := repo.GetLinks(ctx, exec, organizationID)
+	if err != nil {
+		return models.DataModel{}, err
+	}
+
+	dataModel := models.DataModel{
+		Tables: make(map[string]models.Table),
+	}
+
+	for _, field := range fields {
+		var values []any
+		if field.FieldIsEnum && fetchEnumValues {
+			values, err = repo.GetEnumValues(ctx, exec, field.FieldID)
+			if err != nil {
+				return models.DataModel{}, err
+			}
+		}
+
+		var ftmProperty *models.FollowTheMoneyProperty
+		if field.FieldFTMProperty != nil {
+			property := models.FollowTheMoneyPropertyFrom(*field.FieldFTMProperty)
+			ftmProperty = &property
+		}
+
+		_, ok := dataModel.Tables[field.TableName]
+		if !ok {
+			var ftmEntity *models.FollowTheMoneyEntity
+			if field.TableFTMEntity != nil {
+				entity := models.FollowTheMoneyEntityFrom(*field.TableFTMEntity)
+				ftmEntity = &entity
+			}
+			dataModel.Tables[field.TableName] = models.Table{
+				ID:                   field.TableID,
+				Name:                 field.TableName,
+				Description:          field.TableDescription,
+				Fields:               map[string]models.Field{},
+				LinksToSingle:        make(map[string]models.LinkToSingle),
+				FTMEntity:            ftmEntity,
+				Alias:                field.TableAlias,
+				SemanticType:         models.SemanticType(field.TableSemanticType),
+				CaptionField:         field.TableCaptionField,
+				PrimaryOrderingField: field.TablePrimaryOrderingField,
+				Metadata:             field.TableMetadata,
+			}
+		}
+		dataModel.Tables[field.TableName].Fields[field.FieldName] = models.Field{
+			ID:           field.FieldID,
+			DataType:     models.DataTypeFrom(field.FieldType),
+			Description:  field.FieldDescription,
+			Alias:        field.FieldAlias,
+			SemanticType: models.FieldSemanticType(field.FieldSemanticType),
+			Name:         field.FieldName,
+			Nullable:     field.FieldNullable,
+			IsEnum:       field.FieldIsEnum,
+			TableId:      field.TableID,
+			Values:       values,
+			FTMProperty:  ftmProperty,
+			Metadata:     field.FieldMetadata,
+		}
+	}
+
+	for _, link := range links {
+		dataModel.Tables[link.ChildTableName].LinksToSingle[link.Name] = link
+	}
+
+	if useCache && repo.withCache {
+		cache.Add(organizationID.String(), dataModel)
+	}
+
+	if err := exec.Cache(ctx).SaveModel(ctx, exec, cacheKey, dataModel, time.Minute); err != nil {
+		return dataModel, err
+	}
+
+	return dataModel, nil
+}
+
+func (repo MarbleDbRepository) CreateDataModelTable(
+	ctx context.Context,
+	exec Executor,
+	organizationId uuid.UUID,
+	tableID string,
+	input models.CreateTableInput,
+) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	query := `
+		INSERT INTO data_model_tables (id, organization_id, name, description, alias, semantic_type, ftm_entity, metadata, primary_ordering_field)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+
+	_, err := exec.Exec(ctx, query, tableID, organizationId, input.Name, input.Description, input.Alias,
+		string(input.SemanticType), input.FTMEntity, input.Metadata, input.PrimaryOrderingField)
+	if err != nil {
+		if IsUniqueViolationError(err) {
+			return models.ConflictError
+		}
+		return err
+	}
+
+	return repo.DeleteDataModelCache(ctx, exec)
+}
+
+func (repo MarbleDbRepository) GetDataModelTable(ctx context.Context, exec Executor, tableID string) (models.TableMetadata, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.TableMetadata{}, err
+	}
+
+	return SqlToModel(
+		ctx,
+		exec,
+		NewQueryBuilder().
+			Select(dbmodels.SelectDataModelTableColumns...).
+			From(dbmodels.TableDataModelTables).
+			Where(squirrel.Eq{"id": tableID}),
+		dbmodels.AdaptTableMetadata,
+	)
+}
+
+func (repo MarbleDbRepository) UpdateDataModelTable(
+	ctx context.Context,
+	exec Executor,
+	tableID string,
+	description *string,
+	ftmEntity pure_utils.Null[models.FollowTheMoneyEntity],
+	alias pure_utils.Null[string],
+	semanticType pure_utils.Null[models.SemanticType],
+	captionField pure_utils.Null[string],
+	primaryOrderingField pure_utils.Null[string],
+	metadata *json.RawMessage,
+) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	updated := false
+
+	query := NewQueryBuilder().
+		Update(dbmodels.TableDataModelTables)
+
+	if description != nil {
+		updated = true
+		query = query.Set("description", *description)
+	}
+
+	if ftmEntity.Set {
+		updated = true
+		query = query.Set("ftm_entity", ftmEntity.Ptr())
+	}
+	if alias.Set {
+		updated = true
+		query = query.Set("alias", alias.Value())
+	}
+	if semanticType.Set {
+		updated = true
+		query = query.Set("semantic_type", semanticType.Value())
+	}
+	if captionField.Set {
+		updated = true
+		query = query.Set("caption_field", captionField.Value())
+	}
+	if primaryOrderingField.Set {
+		updated = true
+		query = query.Set("primary_ordering_field", primaryOrderingField.Value())
+	}
+	if metadata != nil {
+		updated = true
+		query = query.Set("metadata", *metadata)
+	}
+
+	if !updated {
+		return nil
+	}
+
+	query = query.Where(squirrel.Eq{"id": tableID})
+	err := ExecBuilder(
+		ctx,
+		exec,
+		query,
+	)
+	if err != nil {
+		return err
+	}
+
+	return repo.DeleteDataModelCache(ctx, exec)
+}
+
+func (repo MarbleDbRepository) CreateDataModelField(
+	ctx context.Context,
+	exec Executor,
+	organizationId uuid.UUID,
+	fieldId string,
+	field models.CreateFieldInput,
+) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	query := `
+		INSERT INTO data_model_fields (id, table_id, name, type, nullable, description, alias, semantic_type, is_enum, ftm_property, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		RETURNING id`
+
+	_, err := exec.Exec(ctx,
+		query,
+		fieldId,
+		field.TableId,
+		field.Name,
+		field.DataType.String(),
+		field.Nullable,
+		field.Description,
+		field.Alias,
+		string(field.SemanticType),
+		field.IsEnum,
+		field.FTMProperty,
+		field.Metadata,
+	)
+	if IsUniqueViolationError(err) {
+		return models.ConflictError
+	}
+	if err != nil {
+		return err
+	}
+
+	// Minimalist attempt at cache invalidation. Because there may be several instances of Marble running at the same time, requests
+	// may still get a stale cached response.
+	dataModelCacheEnum.Remove(organizationId.String())
+	dataModelCacheNoEnum.Remove(organizationId.String())
+
+	return repo.DeleteDataModelCache(ctx, exec)
+}
+
+func (repo MarbleDbRepository) UpdateDataModelField(
+	ctx context.Context,
+	exec Executor,
+	fieldID string,
+	input models.UpdateFieldInput,
+) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+	nbUpdates := 0
+	query := NewQueryBuilder().
+		Update(dbmodels.TableDataModelFields).
+		Where(squirrel.Eq{"id": fieldID})
+
+	if input.Description != nil {
+		query = query.Set("description", *input.Description)
+		nbUpdates++
+	}
+	if input.IsEnum != nil {
+		query = query.Set("is_enum", *input.IsEnum)
+		nbUpdates++
+	}
+	if input.IsNullable != nil {
+		query = query.Set("nullable", *input.IsNullable)
+		nbUpdates++
+	}
+	if input.FTMProperty.Set {
+		query = query.Set("ftm_property", input.FTMProperty.Ptr())
+		nbUpdates++
+	}
+	if input.Alias != nil {
+		query = query.Set("alias", *input.Alias)
+		nbUpdates++
+	}
+	if input.SemanticType.Set {
+		query = query.Set("semantic_type", input.SemanticType.Ptr())
+		nbUpdates++
+	}
+	if input.Metadata != nil {
+		query = query.Set("metadata", *input.Metadata)
+		nbUpdates++
+	}
+
+	if nbUpdates == 0 {
+		return nil
+	}
+	err := ExecBuilder(
+		ctx,
+		exec,
+		query,
+	)
+	if err != nil {
+		return err
+	}
+
+	return repo.DeleteDataModelCache(ctx, exec)
+}
+
+func (repo MarbleDbRepository) CreateDataModelLink(ctx context.Context, exec Executor, id string, link models.DataModelLinkCreateInput) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	err := ExecBuilder(
+		ctx,
+		exec,
+		NewQueryBuilder().
+			Insert("data_model_links").
+			Columns(
+				"id",
+				"organization_id",
+				"name",
+				"parent_table_id",
+				"parent_field_id",
+				"child_table_id",
+				"child_field_id",
+			).
+			Values(
+				id,
+				link.OrganizationID,
+				strings.ToLower(link.Name),
+				link.ParentTableID,
+				link.ParentFieldID,
+				link.ChildTableID,
+				link.ChildFieldID,
+			),
+	)
+	if err != nil {
+		if IsUniqueViolationError(err) {
+			return models.ConflictError
+		}
+		return err
+	}
+
+	return repo.DeleteDataModelCache(ctx, exec)
+}
+
+func (repo MarbleDbRepository) getTablesAndFields(ctx context.Context, exec Executor,
+	organizationID uuid.UUID,
+) ([]dbmodels.DbDataModelTableJoinField, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return nil, err
+	}
+
+	query, args, err := NewQueryBuilder().
+		Select(dbmodels.SelectDataModelTableJoinFieldColumns...).
+		From(dbmodels.TableDataModelTables).
+		Join(fmt.Sprintf("%s ON data_model_fields.archived is false and (data_model_tables.id = data_model_fields.table_id)", dbmodels.TableDataModelFields)).
+		Where(squirrel.Eq{"organization_id": organizationID}).
+		ToSql()
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := exec.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	fields, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (
+		dbmodels.DbDataModelTableJoinField, error,
+	) {
+		var dbModel dbmodels.DbDataModelTableJoinField
+		if err := rows.Scan(
+			&dbModel.TableID,
+			&dbModel.OrganizationID,
+			&dbModel.TableName,
+			&dbModel.TableDescription,
+			&dbModel.TableFTMEntity,
+			&dbModel.TableAlias,
+			&dbModel.TableSemanticType,
+			&dbModel.TableCaptionField,
+			&dbModel.TablePrimaryOrderingField,
+			&dbModel.TableMetadata,
+			&dbModel.FieldID,
+			&dbModel.FieldName,
+			&dbModel.FieldType,
+			&dbModel.FieldNullable,
+			&dbModel.FieldDescription,
+			&dbModel.FieldAlias,
+			&dbModel.FieldSemanticType,
+			&dbModel.FieldIsEnum,
+			&dbModel.FieldFTMProperty,
+			&dbModel.FieldMetadata,
+			&dbModel.FieldArchived,
+		); err != nil {
+			return dbmodels.DbDataModelTableJoinField{}, err
+		}
+		return dbModel, nil
+	})
+	return fields, err
+}
+
+func (repo MarbleDbRepository) GetLinks(ctx context.Context, exec Executor, organizationID uuid.UUID) ([]models.LinkToSingle, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return nil, err
+	}
+
+	query := `
+	SELECT
+		links.id,
+		links.organization_id,
+		links.name,
+		parent_table.name,
+		parent_table.id,
+		parent_field.name,
+		parent_field.id,
+		child_table.name,
+		child_table.id,
+		child_field.name,
+		child_field.id,
+		EXISTS (
+			SELECT 1 FROM data_model_pivots p
+			WHERE p.organization_id = links.organization_id
+			AND links.id = ANY(p.path_link_ids)
+			AND p.deleted_at IS NULL
+		) AS is_belongs_to
+	FROM data_model_links AS links
+    	JOIN data_model_tables AS parent_table ON (links.parent_table_id = parent_table.id)
+    	JOIN data_model_fields AS parent_field ON (links.parent_field_id = parent_field.id)
+    	JOIN data_model_tables AS child_table ON (links.child_table_id = child_table.id)
+    	JOIN data_model_fields AS child_field ON (links.child_field_id = child_field.id)
+    	WHERE links.organization_id = $1`
+
+	rows, err := exec.Query(ctx, query, organizationID)
+	if err != nil {
+		return nil, err
+	}
+
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (models.LinkToSingle, error) {
+		var dbLinks dbmodels.DbDataModelLink
+		if err := rows.Scan(
+			&dbLinks.Id,
+			&dbLinks.OrganizationId,
+			&dbLinks.Name,
+			&dbLinks.ParentTableName,
+			&dbLinks.ParentTableId,
+			&dbLinks.ParentFieldName,
+			&dbLinks.ParentFieldId,
+			&dbLinks.ChildTableName,
+			&dbLinks.ChildTableId,
+			&dbLinks.ChildFieldName,
+			&dbLinks.ChildFieldId,
+			&dbLinks.IsBelongsTo,
+		); err != nil {
+			return models.LinkToSingle{}, err
+		}
+		return dbmodels.AdaptLinkToSingle(dbLinks), err
+	})
+}
+
+func (repo MarbleDbRepository) DeleteDataModel(ctx context.Context, exec Executor, organizationID uuid.UUID) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	return ExecBuilder(
+		ctx,
+		exec,
+		NewQueryBuilder().
+			Delete(dbmodels.TableDataModelTables).
+			Where(squirrel.Eq{"organization_id": organizationID}),
+	)
+}
+
+func (repo MarbleDbRepository) GetEnumValues(ctx context.Context, exec Executor, fieldID string) ([]any, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return nil, err
+	}
+
+	query, args, err := NewQueryBuilder().
+		Select("text_value", "float_value").
+		From("data_model_enum_values").
+		Where(squirrel.Eq{"field_id": fieldID}).
+		Where("(text_value IS NOT NULL OR float_value IS NOT NULL)").
+		Limit(100).
+		ToSql()
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := exec.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	values, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (any, error) {
+		var valueString, valueFloat any
+		if err := rows.Scan(&valueString, &valueFloat); err != nil {
+			return "", err
+		}
+		// presumably if there is a row, one of the values should be non-nil
+		if valueString != nil {
+			return valueString, nil
+		}
+		return valueFloat, err
+	})
+	return values, nil
+}
+
+func (repo MarbleDbRepository) GetDataModelField(ctx context.Context, exec Executor, fieldId string) (models.FieldMetadata, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.FieldMetadata{}, err
+	}
+
+	query := `
+		SELECT
+			data_model_fields.description,
+			data_model_fields.alias,
+			data_model_fields.semantic_type,
+			data_model_fields.is_enum,
+			data_model_fields.name,
+			data_model_fields.nullable,
+			data_model_fields.table_id,
+			data_model_fields.type,
+			data_model_fields.ftm_property,
+			data_model_fields.metadata,
+			data_model_fields.archived
+		FROM data_model_fields
+		WHERE id = $1 and archived is false
+	`
+
+	row := exec.QueryRow(ctx, query, fieldId)
+
+	var field models.FieldMetadata
+	var dataType string
+	var ftmProperty *string
+	var semanticType string
+	if err := row.Scan(
+		&field.Description,
+		&field.Alias,
+		&semanticType,
+		&field.IsEnum,
+		&field.Name,
+		&field.Nullable,
+		&field.TableId,
+		&dataType,
+		&ftmProperty,
+		&field.Metadata,
+		&field.Archived,
+	); errors.Is(err, pgx.ErrNoRows) {
+		return models.FieldMetadata{}, fmt.Errorf("error in GetDataModelField: %w", models.NotFoundError)
+	} else if err != nil {
+		return models.FieldMetadata{}, err
+	}
+	field.ID = fieldId
+	field.DataType = models.DataTypeFrom(dataType)
+	field.SemanticType = models.FieldSemanticType(semanticType)
+	if ftmProperty != nil {
+		property := models.FollowTheMoneyPropertyFrom(*ftmProperty)
+		field.FTMProperty = &property
+	}
+
+	return field, nil
+}
+
+// ///////////////////////////////
+// Data table pivot methods
+// ///////////////////////////////
+
+func (repo MarbleDbRepository) CreatePivot(
+	ctx context.Context,
+	exec Executor,
+	id string,
+	pivot models.CreatePivotInput,
+) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	err := ExecBuilder(
+		ctx,
+		exec,
+		NewQueryBuilder().
+			Insert(dbmodels.TABLE_DATA_MODEL_PIVOTS).
+			Columns("id", "organization_id", "base_table_id", "field_id", "path_link_ids").
+			Values(id, pivot.OrganizationId, pivot.BaseTableId, pivot.FieldId, pivot.PathLinkIds),
+	)
+	if err != nil {
+		if IsUniqueViolationError(err) {
+			return errors.Wrap(
+				models.ConflictError,
+				fmt.Sprintf("Conflict on creating pivot for table %s in repository CreatePivot", pivot.BaseTableId),
+			)
+		}
+		return err
+	}
+
+	return repo.DeleteDataModelCache(ctx, exec)
+}
+
+// ListPivots returns pivots that have not been soft-deleted, unless includeDeleted is
+// set. Including soft-deleted pivots is required when resolving pivots referenced by
+// historical decisions, which may point to a pivot that has since been deleted.
+func (repo MarbleDbRepository) ListPivots(
+	ctx context.Context,
+	exec Executor,
+	organizationId uuid.UUID,
+	tableId *string,
+	useCache bool,
+	includeDeleted bool,
+) ([]models.PivotMetadata, error) {
+	cacheKey := organizationId.String()
+	if tableId != nil {
+		cacheKey = organizationId.String() + *tableId
+	}
+	if includeDeleted {
+		cacheKey += "|withDeleted"
+	}
+
+	if useCache && repo.withCache {
+		if pivots, ok := dataModelPivotsCache.Get(cacheKey); ok {
+			return pivots, nil
+		}
+	}
+
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return nil, err
+	}
+
+	query := NewQueryBuilder().
+		Select(dbmodels.SelectPivotColumns...).
+		From(dbmodels.TABLE_DATA_MODEL_PIVOTS).
+		Where(squirrel.Eq{"organization_id": organizationId}).
+		OrderBy("created_at DESC")
+
+	if tableId != nil {
+		query = query.Where(squirrel.Eq{"base_table_id": *tableId})
+	}
+	if !includeDeleted {
+		query = query.Where(squirrel.Eq{"deleted_at": nil})
+	}
+
+	pivots, err := SqlToListOfModels(ctx, exec, query, dbmodels.AdaptPivotMetadata)
+	if err != nil {
+		return nil, err
+	}
+
+	dataModelPivotsCache.Add(cacheKey, pivots)
+
+	return pivots, nil
+}
+
+func (repo MarbleDbRepository) GetPivot(ctx context.Context, exec Executor, pivotId string) (models.PivotMetadata, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.PivotMetadata{}, err
+	}
+
+	return SqlToModel(
+		ctx,
+		exec,
+		NewQueryBuilder().
+			Select(dbmodels.SelectPivotColumns...).
+			From(dbmodels.TABLE_DATA_MODEL_PIVOTS).
+			Where(squirrel.Eq{"id": pivotId}),
+		dbmodels.AdaptPivotMetadata,
+	)
+}
+
+func (repo MarbleDbRepository) BatchInsertEnumValues(ctx context.Context, exec Executor, enumValues models.EnumValues, table models.Table) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	// This has to be done in 2 queries because there cannot be multiple ON CONFLICT clauses per query
+	textQuery := NewQueryBuilder().
+		Insert("data_model_enum_values").
+		Columns("field_id", "text_value").
+		Suffix("ON CONFLICT ON CONSTRAINT unique_data_model_enum_text_values_field_id_value DO NOTHING")
+
+	floatQuery := NewQueryBuilder().
+		Insert("data_model_enum_values").
+		Columns("field_id", "float_value").
+		Suffix("ON CONFLICT ON CONSTRAINT unique_data_model_enum_float_values_field_id_value DO NOTHING")
+
+	// Hack to avoid empty query, which would cause an execution error
+	var shouldInsertTextValues bool
+	var shouldInsertFloatValues bool
+
+	for fieldName, values := range enumValues {
+		fieldId := table.Fields[fieldName].ID
+		dataType := table.Fields[fieldName].DataType
+
+		for value := range values {
+			switch dataType {
+			case models.String:
+				textQuery = textQuery.Values(fieldId, value)
+				shouldInsertTextValues = true
+			case models.Float:
+				floatQuery = floatQuery.Values(fieldId, value)
+				shouldInsertFloatValues = true
+			}
+		}
+	}
+
+	if shouldInsertTextValues {
+		err := ExecBuilder(ctx, exec, textQuery)
+		if err != nil {
+			return err
+		}
+	}
+	if shouldInsertFloatValues {
+		err := ExecBuilder(ctx, exec, floatQuery)
+		if err != nil {
+			return err
+		}
+	}
+
+	return repo.DeleteDataModelCache(ctx, exec)
+}
+
+func (repo MarbleDbRepository) ArchiveDataModelTable(ctx context.Context, exec Executor, table models.TableMetadata) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	query := NewQueryBuilder().
+		Update(dbmodels.TableDataModelTables).
+		Set("archived", true).
+		Where("id = ?", table.ID)
+
+	if err := ExecBuilder(ctx, exec, query); err != nil {
+		return err
+	}
+
+	return repo.DeleteDataModelCache(ctx, exec)
+}
+
+func (repo MarbleDbRepository) DeleteDataModelTable(ctx context.Context, exec Executor, table models.TableMetadata) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	query := NewQueryBuilder().
+		Delete(dbmodels.TableDataModelTables).
+		Where("id = ?", table.ID)
+
+	if err := ExecBuilder(ctx, exec, query); err != nil {
+		return err
+	}
+
+	return repo.DeleteDataModelCache(ctx, exec)
+}
+
+func (repo MarbleDbRepository) ArchiveDataModelField(ctx context.Context, exec Executor,
+	table models.TableMetadata, field models.FieldMetadata,
+) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	query := NewQueryBuilder().
+		Update(dbmodels.TableDataModelFields).
+		Set("archived", true).
+		Where("table_id = ? and id = ?", table.ID, field.ID)
+
+	if err := ExecBuilder(ctx, exec, query); err != nil {
+		return err
+	}
+
+	return repo.DeleteDataModelCache(ctx, exec)
+}
+
+func (repo MarbleDbRepository) DeleteDataModelField(ctx context.Context, exec Executor,
+	table models.TableMetadata, field models.FieldMetadata,
+) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	query := NewQueryBuilder().
+		Delete(dbmodels.TableDataModelFields).
+		Where("table_id = ? and id = ?", table.ID, field.ID)
+
+	if err := ExecBuilder(ctx, exec, query); err != nil {
+		return err
+	}
+
+	return repo.DeleteDataModelCache(ctx, exec)
+}
+
+func (repo MarbleDbRepository) DeleteDataModelLink(ctx context.Context, exec Executor, id string) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	query := NewQueryBuilder().
+		Delete("data_model_links").
+		Where("id = ?", id)
+
+	if err := ExecBuilder(ctx, exec, query); err != nil {
+		return err
+	}
+
+	return repo.DeleteDataModelCache(ctx, exec)
+}
+
+// DeleteDataModelPivot hard-deletes a pivot row. It must only be used when nothing can
+// reference the pivot anymore (e.g. the whole table is being deleted, or the pivot was
+// just created in the same transaction). User-facing deletion flows must use
+// SoftDeletePivot instead, because decisions keep referencing their pivot_id.
+func (repo MarbleDbRepository) DeleteDataModelPivot(ctx context.Context, exec Executor, id string) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	query := NewQueryBuilder().
+		Delete("data_model_pivots").
+		Where("id = ?", id)
+
+	if err := ExecBuilder(ctx, exec, query); err != nil {
+		return err
+	}
+
+	return repo.DeleteDataModelCache(ctx, exec)
+}
+
+func (repo MarbleDbRepository) SoftDeletePivot(ctx context.Context, exec Executor, id string) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	query := NewQueryBuilder().
+		Update(dbmodels.TABLE_DATA_MODEL_PIVOTS).
+		Set("deleted_at", squirrel.Expr("now()")).
+		Where(squirrel.Eq{"id": id})
+
+	if err := ExecBuilder(ctx, exec, query); err != nil {
+		return err
+	}
+
+	return repo.DeleteDataModelCache(ctx, exec)
+}
+
+func (repo MarbleDbRepository) RestorePivot(ctx context.Context, exec Executor, id string) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	query := NewQueryBuilder().
+		Update(dbmodels.TABLE_DATA_MODEL_PIVOTS).
+		Set("deleted_at", nil).
+		Where(squirrel.Eq{"id": id})
+
+	if err := ExecBuilder(ctx, exec, query); err != nil {
+		return err
+	}
+
+	return repo.DeleteDataModelCache(ctx, exec)
+}
+
+func (repo MarbleDbRepository) DeleteDataModelCache(ctx context.Context, exec Executor) error {
+	return exec.Cache(ctx).Exec(func(c *redis.Client) error {
+		if err := c.Del(ctx, exec.Cache(ctx).Key("data-model", "true")).Err(); err != nil {
+			return err
+		}
+		if err := c.Del(ctx, exec.Cache(ctx).Key("data-model", "false")).Err(); err != nil {
+			return err
+		}
+		return nil
+	})
+}

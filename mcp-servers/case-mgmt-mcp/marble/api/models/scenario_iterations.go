@@ -1,0 +1,389 @@
+package models
+
+import (
+	"maps"
+	"slices"
+	"time"
+
+	"github.com/checkmarble/marble-backend/models/ast"
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/google/uuid"
+	"github.com/hashicorp/go-set/v2"
+)
+
+type ScenarioIteration struct {
+	Id                            string
+	OrganizationId                uuid.UUID
+	ScenarioId                    string
+	Version                       *int
+	CreatedAt                     time.Time
+	UpdatedAt                     time.Time
+	TriggerConditionAstExpression *ast.Node
+	Rules                         []Rule
+	ScreeningConfigs              []ScreeningConfig
+	ScoreReviewThreshold          *int
+	ScoreBlockAndReviewThreshold  *int
+	ScoreDeclineThreshold         *int
+	Schedule                      string
+	Archived                      bool
+}
+
+func (si ScenarioIteration) ToMetadata() ScenarioIterationMetadata {
+	return ScenarioIterationMetadata{
+		Id:             si.Id,
+		OrganizationId: si.OrganizationId,
+		ScenarioId:     si.ScenarioId,
+		Version:        si.Version,
+		CreatedAt:      si.CreatedAt,
+		UpdatedAt:      si.UpdatedAt,
+		Archived:       si.Archived,
+	}
+}
+
+type ScenarioIterationMetadata struct {
+	Id             string
+	OrganizationId uuid.UUID
+	ScenarioId     string
+	Version        *int
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	Archived       bool
+}
+
+type GetScenarioIterationFilters struct {
+	ScenarioId uuid.UUID
+}
+
+type CreateScenarioIterationInput struct {
+	ScenarioId string
+	Body       CreateScenarioIterationBody
+}
+
+type CreateScenarioIterationBody struct {
+	TriggerConditionAstExpression *ast.Node
+	Rules                         []CreateRuleInput
+	ScoreReviewThreshold          *int
+	ScoreBlockAndReviewThreshold  *int
+	ScoreDeclineThreshold         *int
+	Schedule                      string
+}
+
+type UpdateScenarioIterationInput struct {
+	Id   string
+	Body UpdateScenarioIterationBody
+}
+
+type UpdateScenarioIterationBody struct {
+	TriggerConditionAstExpression *ast.Node
+	ScoreReviewThreshold          *int
+	ScoreBlockAndReviewThreshold  *int
+	ScoreDeclineThreshold         *int
+	Schedule                      *string
+}
+
+type ScreeningConfig struct {
+	Id                       string
+	StableId                 string
+	ScenarioIterationId      string
+	Name                     string
+	Description              string
+	RuleGroup                *string
+	Provider                 ScreeningProvider
+	Datasets                 []string
+	Filters                  ScreeningConfigFilters
+	TriggerRule              *ast.Node
+	EntityType               string
+	Query                    map[string]ast.Node
+	Threshold                *int
+	ForcedOutcome            Outcome
+	CounterpartyIdExpression *ast.Node
+	Preprocessing            ScreeningConfigPreprocessing
+	ConfigVersion            string
+	Weights                  map[string]float64
+}
+
+type ScreeningConfigFilters struct {
+	Global       *ScreeningConfigFilter `json:"global,omitempty"`
+	Sanctions    *ScreeningConfigFilter `json:"sanctions,omitempty"`
+	Peps         *ScreeningConfigFilter `json:"peps,omitempty"`
+	AdverseMedia *ScreeningConfigFilter `json:"adverse_media,omitempty"`
+	Other        *ScreeningConfigFilter `json:"other,omitempty"`
+	Custom       *ScreeningConfigFilter `json:"custom,omitempty"`
+}
+
+type ResolvedScreeningConfigFilters struct {
+	Global       ScreeningConfigFilter
+	Sanctions    ScreeningConfigFilter
+	Peps         ScreeningConfigFilter
+	AdverseMedia ScreeningConfigFilter
+	Other        ScreeningConfigFilter
+	Custom       ScreeningConfigFilter
+}
+
+func (scf *ScreeningConfigFilters) IsEmpty() bool {
+	if scf == nil {
+		return true
+	}
+
+	return scf.Global == nil && scf.Sanctions == nil && scf.Peps == nil && scf.AdverseMedia == nil && scf.Other == nil && scf.Custom == nil
+}
+
+func (scf ResolvedScreeningConfigFilters) NoFilters() bool {
+	return !scf.Sanctions.IsEnabled() &&
+		!scf.Peps.IsEnabled() &&
+		!scf.AdverseMedia.IsEnabled() &&
+		!scf.Other.IsEnabled() &&
+		!scf.Custom.IsEnabled()
+}
+
+func (scf ResolvedScreeningConfigFilters) WithRootTopics() map[string]ScreeningConfigFilter {
+	return map[string]ScreeningConfigFilter{
+		"global":        scf.Global,
+		"sanctions":     scf.Sanctions,
+		"pep":           scf.Peps,
+		"adverse_media": scf.AdverseMedia,
+		"other":         scf.Other,
+		"custom":        scf.Custom,
+	}
+}
+
+func (scf ResolvedScreeningConfigFilters) Equal(other ResolvedScreeningConfigFilters) bool {
+	lhsFilter := scf.WithRootTopics()
+	rhsFilter := other.WithRootTopics()
+
+	for k, lhs := range lhsFilter {
+		rhs := rhsFilter[k]
+
+		if lhs.Enabled != rhs.Enabled {
+			return false
+		}
+		if !pure_utils.ContainsSameElements(lhs.Datasets, rhs.Datasets) {
+			return false
+		}
+		if len(lhs.Topics) != len(rhs.Topics) {
+			return false
+		}
+		for lhsK, lhsV := range lhs.Topics {
+			rhsV, ok := rhs.Topics[lhsK]
+			if !ok {
+				return false
+			}
+			if !pure_utils.ContainsSameElements(lhsV, rhsV) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+func (scf ResolvedScreeningConfigFilters) ToLegacyDatasets() []string {
+	datasets := make([]string, 0)
+	datasets = append(datasets, scf.Sanctions.Datasets...)
+	datasets = append(datasets, scf.Peps.Datasets...)
+	datasets = append(datasets, scf.AdverseMedia.Datasets...)
+	datasets = append(datasets, scf.Other.Datasets...)
+	datasets = append(datasets, scf.Custom.Datasets...)
+
+	return datasets
+}
+
+func (scf *ScreeningConfigFilters) Resolve() ResolvedScreeningConfigFilters {
+	if scf == nil {
+		return ResolvedScreeningConfigFilters{
+			Global:       ScreeningConfigFilter{},
+			Sanctions:    ScreeningConfigFilter{},
+			Peps:         ScreeningConfigFilter{},
+			AdverseMedia: ScreeningConfigFilter{},
+			Other:        ScreeningConfigFilter{},
+			Custom:       ScreeningConfigFilter{},
+		}
+	}
+
+	return ResolvedScreeningConfigFilters{
+		Global: func() ScreeningConfigFilter {
+			if scf.Global == nil {
+				return ScreeningConfigFilter{}
+			}
+			return *scf.Global
+		}(),
+		Sanctions: func() ScreeningConfigFilter {
+			if scf.Sanctions == nil {
+				return ScreeningConfigFilter{}
+			}
+			return *scf.Sanctions
+		}(),
+		Peps: func() ScreeningConfigFilter {
+			if scf.Peps == nil {
+				return ScreeningConfigFilter{}
+			}
+			return *scf.Peps
+		}(),
+		AdverseMedia: func() ScreeningConfigFilter {
+			if scf.AdverseMedia == nil {
+				return ScreeningConfigFilter{}
+			}
+			return *scf.AdverseMedia
+		}(),
+		Other: func() ScreeningConfigFilter {
+			if scf.Other == nil {
+				return ScreeningConfigFilter{}
+			}
+			return *scf.Other
+		}(),
+		Custom: func() ScreeningConfigFilter {
+			if scf.Custom == nil {
+				return ScreeningConfigFilter{}
+			}
+			return *scf.Custom
+		}(),
+	}
+}
+
+type ScreeningConfigFilter struct {
+	Enabled  bool                `json:"enabled"`
+	Datasets []string            `json:"datasets,omitempty"`
+	Topics   map[string][]string `json:"topics,omitempty"`
+}
+
+func (scf *ScreeningConfigFilter) IsEnabled() bool {
+	if scf == nil {
+		return true
+	}
+
+	return scf.Enabled
+}
+
+type ScreeningConfigPreprocessing struct {
+	UseNer                  bool   `json:"use_ner,omitempty"`
+	NerIgnoreClassification bool   `json:"ner_ignore_classification,omitempty"`
+	SkipIfUnder             int    `json:"skip_if_under,omitempty"`
+	RemoveNumbers           bool   `json:"remove_numbers,omitempty"`
+	IgnoreListId            string `json:"ignore_list_id,omitempty"`
+}
+
+func (cfg ScreeningConfigPreprocessing) equal(other ScreeningConfigPreprocessing) bool {
+	if cfg.UseNer != other.UseNer {
+		return false
+	}
+	if cfg.SkipIfUnder != other.SkipIfUnder {
+		return false
+	}
+	if cfg.RemoveNumbers != other.RemoveNumbers {
+		return false
+	}
+	if cfg.IgnoreListId != other.IgnoreListId {
+		return false
+	}
+	return true
+}
+
+func (scc ScreeningConfig) HasSameQuery(other ScreeningConfig) bool {
+	if scc.Provider != other.Provider {
+		return false
+	}
+
+	if scc.StableId != other.StableId {
+		return false
+	}
+
+	if !pure_utils.ContainsSameElements(scc.Datasets, other.Datasets) {
+		return false
+	}
+
+	if !scc.Filters.Resolve().Equal(other.Filters.Resolve()) {
+		return false
+	}
+
+	if scc.EntityType != other.EntityType {
+		return false
+	}
+
+	if (scc.Threshold == nil && other.Threshold != nil) ||
+		(scc.Threshold != nil && other.Threshold == nil) {
+		return false
+	}
+	if scc.Threshold != nil && other.Threshold != nil {
+		if scc.Threshold != other.Threshold {
+			return false
+		}
+	}
+
+	if (scc.TriggerRule == nil && other.TriggerRule != nil) ||
+		(scc.TriggerRule != nil && other.TriggerRule == nil) {
+		return false
+	}
+	if scc.TriggerRule != nil && other.TriggerRule != nil {
+		if scc.TriggerRule.Hash() != other.TriggerRule.Hash() {
+			return false
+		}
+	}
+
+	if (scc.CounterpartyIdExpression == nil && other.CounterpartyIdExpression != nil) ||
+		(scc.CounterpartyIdExpression != nil && other.CounterpartyIdExpression == nil) {
+		return false
+	}
+	if scc.CounterpartyIdExpression != nil && other.CounterpartyIdExpression != nil {
+		if scc.CounterpartyIdExpression.Hash() != other.CounterpartyIdExpression.Hash() {
+			return false
+		}
+	}
+
+	if !scc.Preprocessing.equal(other.Preprocessing) {
+		return false
+	}
+
+	// If the queries do not target the same fields, we are not equal
+	if !set.From(slices.Collect(maps.Keys(other.Query))).Equal(
+		set.From(slices.Collect(maps.Keys(scc.Query)))) {
+		return false
+	}
+
+	for field, query := range scc.Query {
+		otherQuery := other.Query[field]
+
+		if query.Hash() != otherQuery.Hash() {
+			return false
+		}
+	}
+
+	return scc.ForcedOutcome == other.ForcedOutcome
+}
+
+type ScreeningOutcome struct {
+	ForceOutcome  Outcome
+	ScoreModifier int
+}
+
+type UpdateScreeningConfigInput struct {
+	Id                       string
+	StableId                 *string
+	Name                     *string
+	Description              *string
+	RuleGroup                *string
+	Provider                 *ScreeningProvider
+	Datasets                 []string
+	Filters                  *ScreeningConfigFilters
+	Threshold                *int
+	TriggerRule              *ast.Node
+	EntityType               *string
+	Query                    map[string]ast.Node
+	CounterpartyIdExpression *ast.Node
+	ForcedOutcome            *Outcome
+	Preprocessing            *ScreeningConfigPreprocessing
+	ConfigVersion            string
+	Weights                  map[string]float64
+}
+
+type RulesAndScreenings struct {
+	ScenarioIterationId      uuid.UUID
+	ScenarioId               uuid.UUID
+	RuleId                   uuid.UUID
+	Name                     string
+	Version                  *int
+	TriggerAst               *ast.Node
+	RuleAst                  *ast.Node
+	ScreeningTriggerAst      *ast.Node
+	ScreeningCounterpartyAst *ast.Node
+	ScreeningAst             map[string]ast.Node
+}

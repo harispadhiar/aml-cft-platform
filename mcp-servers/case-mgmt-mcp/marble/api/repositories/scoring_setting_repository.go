@@ -1,0 +1,63 @@
+package repositories
+
+import (
+	"context"
+
+	"github.com/Masterminds/squirrel"
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/checkmarble/marble-backend/repositories/dbmodels"
+	"github.com/google/uuid"
+)
+
+func (repo *MarbleDbRepository) GetScoringSettings(
+	ctx context.Context,
+	exec Executor,
+	orgId uuid.UUID,
+) (*models.ScoringSettings, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return nil, err
+	}
+
+	query := NewQueryBuilder().
+		Select(dbmodels.SelectScoringSettingsColumns...).
+		From(dbmodels.TABLE_SCORING_SETTINGS).
+		Where("org_id = ?", orgId)
+
+	return SqlToOptionalModel(ctx, exec, query, dbmodels.AdaptScoringSetting)
+}
+
+func (repo *MarbleDbRepository) UpdateScoringSettings(
+	ctx context.Context,
+	exec Executor,
+	settings models.ScoringSettings,
+) (models.ScoringSettings, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.ScoringSettings{}, err
+	}
+
+	query := NewQueryBuilder().
+		Insert(dbmodels.TABLE_SCORING_SETTINGS).
+		Columns(
+			"id",
+			"org_id",
+			"max_risk_level",
+			"created_at",
+			"updated_at",
+		).
+		Values(
+			pure_utils.NewId(),
+			settings.OrgId,
+			settings.MaxRiskLevel,
+			squirrel.Expr("now()"),
+			squirrel.Expr("now()"),
+		).
+		Suffix(`
+			on conflict (org_id) do update set
+				max_risk_level = excluded.max_risk_level,
+				updated_at = now()
+		`).
+		Suffix("returning *")
+
+	return SqlToModel(ctx, exec, query, dbmodels.AdaptScoringSetting)
+}

@@ -1,0 +1,90 @@
+import { Callout } from '@app-builder/components/Callout';
+import {
+  isScreeningError,
+  isScreeningReviewCompleted,
+  type Screening,
+  ScreeningSuccess,
+} from '@app-builder/models/screening';
+import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { filter } from 'remeda';
+import { match } from 'ts-pattern';
+import { Button } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+import { MatchCard } from './MatchCard';
+import { RefineSearchModal } from './RefineSearchModal';
+import { ScreeningErrors } from './ScreeningErrors';
+import { screeningsI18n } from './screenings-i18n';
+
+export type ScreeningReviewSectionProps = {
+  screening: Screening;
+  onRefineSuccess: (screeningId: string) => void;
+};
+
+export function ScreeningReviewSection({ screening, onRefineSuccess }: ScreeningReviewSectionProps) {
+  const { t } = useTranslation(screeningsI18n);
+  const [isRefining, setIsRefining] = useState(false);
+  const matchesToReviewCount = filter(screening.matches, (m) => m.status === 'pending').length;
+  const hasError = isScreeningError(screening);
+  const isRefinable = !isScreeningReviewCompleted(screening);
+
+  return (
+    <div className="flex h-fit flex-2 flex-col gap-lg">
+      <div className="flex flex-col gap-md">
+        <div className="flex items-center gap-sm">
+          <span className="text-m font-semibold">{t('screenings:potential_matches')}</span>
+          <span className="text-grey-secondary text-s">
+            {t('screenings:callout.needs_review', {
+              toReview: matchesToReviewCount,
+              totalMatches: screening.matches.length,
+            })}
+          </span>
+          {isRefinable ? (
+            <Button className="ms-auto" variant="secondary" onClick={() => setIsRefining(true)}>
+              <Icon icon="restart-alt" className="size-5" />
+              {t('screenings:refine_search')}
+            </Button>
+          ) : null}
+        </div>
+        {match(screening)
+          .when(isScreeningError, (sc) => <ScreeningErrors screening={sc} />)
+          .when(
+            (sc) => sc.status === 'in_review' && sc.partial,
+            (sc: ScreeningSuccess) => (
+              <div className="text-s bg-red-background text-red-primary flex items-center gap-sm rounded-sm p-sm">
+                <Icon icon="error" className="size-5 shrink-0" />
+                {t('screenings:callout.needs_refine', {
+                  matchCount: sc.request.limit,
+                })}
+              </div>
+            ),
+          )
+          .when(
+            (sc) => sc.status === 'in_review',
+            () => <Callout bordered>{t('screenings:callout.review')}</Callout>,
+          )
+          .otherwise(() => null)}
+      </div>
+      <div className="flex flex-col gap-sm">
+        {screening.matches.map((screeningMatch) => (
+          <MatchCard
+            key={screeningMatch.id}
+            screening={screening}
+            match={screeningMatch}
+            unreviewable={hasError}
+            defaultOpen={screening.matches.length === 1}
+          />
+        ))}
+      </div>
+      {isRefining ? (
+        <RefineSearchModal
+          screeningId={screening.id}
+          screening={screening}
+          open={isRefining}
+          onClose={() => setIsRefining(false)}
+          onRefineSuccess={onRefineSuccess}
+        />
+      ) : null}
+    </div>
+  );
+}

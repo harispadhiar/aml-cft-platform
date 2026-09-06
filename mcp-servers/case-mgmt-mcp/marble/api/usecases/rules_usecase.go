@@ -1,0 +1,253 @@
+package usecases
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/checkmarble/marble-backend/repositories"
+	"github.com/checkmarble/marble-backend/usecases/executor_factory"
+	"github.com/checkmarble/marble-backend/usecases/scenarios"
+	"github.com/checkmarble/marble-backend/usecases/security"
+	"github.com/checkmarble/marble-backend/usecases/tracking"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/google/uuid"
+	"github.com/pkg/errors"
+)
+
+type RuleUsecaseRepository interface {
+	GetRuleById(ctx context.Context, exec repositories.Executor, ruleId string) (models.Rule, error)
+	ListRulesByIterationId(ctx context.Context, exec repositories.Executor, iterationId string) ([]models.Rule, error)
+	ListRulesMetadataByIterationId(ctx context.Context, exec repositories.Executor, iterationId string) ([]models.RuleMetadata, error)
+	RulesExecutionStats(
+		ctx context.Context,
+		exec repositories.Transaction,
+		organizationId uuid.UUID,
+		iterationId string,
+		begin, end time.Time,
+	) ([]models.RuleExecutionStat, error)
+	PhanomRulesExecutionStats(
+		ctx context.Context,
+		exec repositories.Transaction,
+		organizationId uuid.UUID,
+		iterationId string,
+		begin, end time.Time,
+	) ([]models.RuleExecutionStat, error)
+	ScreeningExecutionStats(
+		ctx context.Context,
+		exec repositories.Executor,
+		organizationId uuid.UUID,
+		iterationId string,
+		begin, end time.Time,
+		base string, // "decisions" or "phantom_decisions"
+	) ([]models.RuleExecutionStat, error)
+	UpdateRule(ctx context.Context, exec repositories.Executor, rule models.UpdateRuleInput) error
+	DeleteRule(ctx context.Context, exec repositories.Executor, ruleID string) error
+	CreateRules(ctx context.Context, exec repositories.Executor, rules []models.CreateRuleInput) ([]models.Rule, error)
+	CreateRule(ctx context.Context, exec repositories.Executor, rule models.CreateRuleInput) (models.Rule, error)
+	GetSummarizedRuleExecutionStatForTestRun(ctx context.Context,
+		exec repositories.Executor, testRunId string,
+	) ([]models.RuleExecutionStat, error)
+}
+
+type RuleUsecase struct {
+	enforceSecurity           security.EnforceSecurityScenario
+	enforceSecurityTestRun    security.EnforceSecurityTestRun
+	repository                RuleUsecaseRepository
+	scenarioFetcher           scenarios.ScenarioFetcher
+	transactionFactory        executor_factory.TransactionFactory
+	executorFactory           executor_factory.ExecutorFactory
+	scenarioTestRunRepository repositories.ScenarioTestRunRepository
+}
+
+func (usecase *RuleUsecase) ListRules(ctx context.Context, iterationId uuid.UUID) ([]models.Rule, error) {
+	return executor_factory.TransactionReturnValue(ctx,
+		usecase.transactionFactory,
+		func(tx repositories.Transaction) ([]models.Rule, error) {
+			scenarioAndIteration, err := usecase.scenarioFetcher.FetchScenarioAndIteration(ctx, tx, iterationId.String())
+			if err != nil {
+				return nil, err
+			}
+			if err := usecase.enforceSecurity.ReadScenarioIteration(
+				scenarioAndIteration.Iteration.ToMetadata()); err != nil {
+				return nil, err
+			}
+			return usecase.repository.ListRulesByIterationId(ctx, tx, iterationId.String())
+		})
+}
+
+func (usecase *RuleUsecase) ListRulesMetadata(ctx context.Context, iterationId uuid.UUID) ([]models.RuleMetadata, error) {
+	return executor_factory.TransactionReturnValue(ctx,
+		usecase.transactionFactory,
+		func(tx repositories.Transaction) ([]models.RuleMetadata, error) {
+			scenarioAndIteration, err := usecase.scenarioFetcher.FetchScenarioAndIteration(ctx, tx, iterationId.String())
+			if err != nil {
+				return nil, err
+			}
+			if err := usecase.enforceSecurity.ReadScenarioIteration(
+				scenarioAndIteration.Iteration.ToMetadata()); err != nil {
+				return nil, err
+			}
+			return usecase.repository.ListRulesMetadataByIterationId(ctx, tx, iterationId.String())
+		})
+}
+
+// TODO: definitely not in the right place...
+func (usecase *RuleUsecase) TestRunStatsByRuleExecution(ctx context.Context, testrunId string) ([]models.RuleExecutionStat, error) {
+	var result []models.RuleExecutionStat
+	err := usecase.transactionFactory.Transaction(ctx, func(tx repositories.Transaction) error {
+		testrun, err := usecase.scenarioTestRunRepository.GetTestRunByID(ctx, tx, testrunId)
+		if err != nil {
+			return err
+		}
+
+		if err := usecase.enforceSecurityTestRun.ReadTestRun(testrun.OrganizationId); err != nil {
+			return err
+		}
+
+		stats, err := usecase.repository.GetSummarizedRuleExecutionStatForTestRun(ctx, tx, testrun.Id)
+		if err != nil {
+			return err
+		}
+
+		result = stats
+
+		return nil
+	})
+	return result, err
+}
+
+func (usecase *RuleUsecase) CreateRule(ctx context.Context, ruleInput models.CreateRuleInput) (models.Rule, error) {
+	rule, err := executor_factory.TransactionReturnValue(ctx,
+		usecase.transactionFactory,
+		func(tx repositories.Transaction) (models.Rule, error) {
+			scenarioAndIteration, err := usecase.scenarioFetcher.FetchScenarioAndIteration(ctx, tx, ruleInput.ScenarioIterationId)
+			if err != nil {
+				return models.Rule{}, err
+			}
+			if err := usecase.enforceSecurity.CreateRule(scenarioAndIteration.Iteration); err != nil {
+				return models.Rule{}, err
+			}
+			// check if iteration is draft
+			if scenarioAndIteration.Iteration.Version != nil {
+				return models.Rule{}, errors.Wrap(
+					models.ErrScenarioIterationNotDraft,
+					fmt.Sprintf("can't update rule as iteration %s is not in draft", scenarioAndIteration.Iteration.Id))
+			}
+
+			ruleInput.Id = pure_utils.NewId().String()
+			_, err = usecase.repository.CreateRule(ctx, tx, ruleInput)
+			if err != nil {
+				return models.Rule{}, err
+			}
+			return usecase.repository.GetRuleById(ctx, tx, ruleInput.Id)
+		})
+	if err != nil {
+		return models.Rule{}, err
+	}
+
+	tracking.TrackEvent(ctx, models.AnalyticsRuleCreated, map[string]interface{}{
+		"rule_id": ruleInput.Id,
+	})
+
+	return rule, nil
+}
+
+func (usecase *RuleUsecase) GetRule(ctx context.Context, ruleId string) (models.Rule, error) {
+	return executor_factory.TransactionReturnValue(ctx,
+		usecase.transactionFactory,
+		func(tx repositories.Transaction) (models.Rule, error) {
+			rule, err := usecase.repository.GetRuleById(ctx, tx, ruleId)
+			if err != nil {
+				return models.Rule{}, err
+			}
+
+			scenarioAndIteration, err := usecase.scenarioFetcher.FetchScenarioAndIteration(ctx, tx, rule.ScenarioIterationId)
+			if err != nil {
+				return models.Rule{}, err
+			}
+			if err := usecase.enforceSecurity.ReadScenarioIteration(
+				scenarioAndIteration.Iteration.ToMetadata()); err != nil {
+				return models.Rule{}, err
+			}
+			return rule, nil
+		})
+}
+
+func (usecase *RuleUsecase) UpdateRule(ctx context.Context, updateRule models.UpdateRuleInput) (updatedRule models.Rule, err error) {
+	err = usecase.transactionFactory.Transaction(ctx, func(tx repositories.Transaction) error {
+		rule, err := usecase.repository.GetRuleById(ctx, tx, updateRule.Id)
+		if err != nil {
+			return err
+		}
+		scenarioAndIteration, err := usecase.scenarioFetcher.FetchScenarioAndIteration(ctx, tx, rule.ScenarioIterationId)
+		if err != nil {
+			return err
+		}
+		if err := usecase.enforceSecurity.CreateRule(scenarioAndIteration.Iteration); err != nil {
+			return err
+		}
+		// check if iteration is draft
+		if scenarioAndIteration.Iteration.Version != nil {
+			return errors.Wrap(
+				models.ErrScenarioIterationNotDraft,
+				fmt.Sprintf("can't update rule as iteration %s is not in draft", scenarioAndIteration.Iteration.Id),
+			)
+		}
+
+		// If formula changed, clear AI description since it's no longer valid
+		if updateRule.FormulaAstExpression != nil &&
+			!rule.HasSameFormula(models.Rule{FormulaAstExpression: updateRule.FormulaAstExpression}) {
+			updateRule.AiDescription = utils.Ptr("")
+		}
+
+		err = usecase.repository.UpdateRule(ctx, tx, updateRule)
+		if err != nil {
+			return err
+		}
+
+		updatedRule, err = usecase.repository.GetRuleById(ctx, tx, updateRule.Id)
+		return err
+	})
+	if err != nil {
+		return models.Rule{}, err
+	}
+
+	tracking.TrackEvent(ctx, models.AnalyticsRuleUpdated, map[string]interface{}{
+		"rule_id": updateRule.Id,
+	})
+
+	return updatedRule, err
+}
+
+func (usecase *RuleUsecase) DeleteRule(ctx context.Context, ruleId string) error {
+	err := usecase.transactionFactory.Transaction(ctx, func(tx repositories.Transaction) error {
+		rule, err := usecase.repository.GetRuleById(ctx, tx, ruleId)
+		if err != nil {
+			return err
+		}
+
+		scenarioAndIteration, err := usecase.scenarioFetcher.FetchScenarioAndIteration(ctx, tx, rule.ScenarioIterationId)
+		if err != nil {
+			return err
+		}
+		if scenarioAndIteration.Iteration.Version != nil {
+			return fmt.Errorf("can't delete rule as iteration %s is not in draft", scenarioAndIteration.Iteration.Id)
+		}
+		if err := usecase.enforceSecurity.CreateRule(scenarioAndIteration.Iteration); err != nil {
+			return err
+		}
+		return usecase.repository.DeleteRule(ctx, tx, ruleId)
+	})
+	if err != nil {
+		return err
+	}
+
+	tracking.TrackEvent(ctx, models.AnalyticsRuleDeleted, map[string]interface{}{
+		"rule_id": ruleId,
+	})
+
+	return nil
+}

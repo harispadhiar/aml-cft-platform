@@ -1,0 +1,43 @@
+import { cva, VariantProps } from 'class-variance-authority';
+import { ComponentProps, forwardRef } from 'react';
+import { cn } from '../utils';
+
+export const tagClassName = cva('inline-flex items-center justify-center border text-nowrap gap-xs', {
+  variants: {
+    size: {
+      small: 'h-6 px-sm rounded-full text-small',
+      medium: 'h-8 px-sm rounded-sm text-default font-medium',
+      big: 'h-10 px-sm rounded-sm text-default font-medium',
+    },
+    color: {
+      purple: 'text-purple-primary border-purple-primary',
+      blue: 'text-blue-58 border-blue-58',
+      green: 'text-green-primary border-green-primary',
+      yellow: 'text-yellow-primary border-yellow-primary',
+      orange: 'text-orange-primary border-orange-primary',
+      red: 'text-red-primary border-red-primary',
+      grey: 'text-grey-placeholder border-grey-border',
+      white: 'text-grey-primary border-grey-border',
+    },
+    appearance: {
+      default: null,
+      monospace: 'font-mono font-normal bg-surface-card rounded-sm',
+    },
+  },
+  defaultVariants: {
+    color: 'purple',
+    size: 'small',
+    appearance: 'default',
+  },
+});
+
+export type TagProps = ComponentProps<'span'> & VariantProps<typeof tagClassName>;
+
+export const Tag = forwardRef<HTMLSpanElement, TagProps>(function Tag(
+  { size, color, appearance, className, ...props },
+  ref,
+) {
+  return <span ref={ref} className={cn(tagClassName({ size, color, appearance }), className)} {...props} />;
+});
+
+export default Tag;

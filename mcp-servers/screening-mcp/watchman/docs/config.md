@@ -1,0 +1,410 @@
+---
+layout: page
+title: Configuration
+hide_hero: true
+show_sidebar: false
+menubar: docs-menu
+---
+
+## Configuration
+
+> For documentation on older releases of Watchman (v0.31.x series), please visit the [older docs website](https://github.com/moov-io/watchman/tree/v0.31.3/docs) in our GitHub repository.
+
+ 1. [File](#file)
+    1. [Environment Variables](#environment-variables)
+ 1. [Download](#download)
+ 1. [Search](#search)
+ 1. [Geocoding](#geocoding)
+ 1. [Postal Pool](#postalpool) (libpostal integration)
+ 1. [MCP](#mcp)
+ 1. [Included Lists](#included-lists)
+
+#### Search Configuration
+
+1. [TF-IDF Configuration](#tf-idf-configuration)
+1. [Cross Script Embeddings Configuration](#cross-script-embeddings-configuration)
+1. [Similarity Configuration](#similarity-configuration) (`SEARCH_MAX_IN_FLIGHT`, Jaro-Winkler flags, etc.)
+
+#### Source List Configuration
+
+1. [European Union](#european-union)
+1. [Open Sanctions](#open-sanctions)
+1. [United Kingdom](#united-kingdom)
+1. [United States](#united-states)
+
+#### Data Persistence
+
+1. [Download reliability](#download-reliability)
+1. [Persistence Disclaimer](#data-persistence)
+
+### File
+
+Set the `APP_CONFIG` environment variable with a filepath to a yaml file containing the following:
+
+```yaml
+Watchman:
+  Servers:
+    BindAddress: ":8084"
+    AdminAddress: ":9094"
+
+  Telemetry:
+    ServiceName: "watchman"
+
+  # Database:
+  #   DatabaseName: "watchman"
+  #   MySQL:
+  #     Address: "tcp(mysql:3306)"
+  #     User: "watchman"
+  #     Password: "watchman"
+  #   Postgres:
+  #     Address: "postgres:5432"
+  #     User: "watchman"
+  #     Password: "watchman"
+  #     Connections:
+  #       MaxOpen: 50
+  #       MaxIdle: 50
+  #       MaxLifetime: "60s"
+  #       MaxIdleTime: "60s"
+```
+
+### Metrics
+
+The admin server (`AdminAddress`, `:9094` by default) serves Prometheus metrics at
+`/metrics`, including Go runtime and process collectors plus a duration histogram for
+every request the API server handles:
+
+```
+watchman_http_request_duration_seconds_bucket{method="GET",route="/v2/search",code="200",le="0.25"}
+watchman_http_request_duration_seconds_sum{...}
+watchman_http_request_duration_seconds_count{...}
+```
+
+The `route` label is the registered path template, not the requested path — so
+`/v2/ingest/{fileType}` stays one time series no matter how many file types are seen, and
+query strings never reach the labels. Requests matching no route are recorded as
+`route="unmatched"`.
+
+```promql
+# p95 search latency
+histogram_quantile(0.95, sum(rate(
+  watchman_http_request_duration_seconds_bucket{route="/v2/search"}[5m])) by (le))
+
+# request rate by route
+sum(rate(watchman_http_request_duration_seconds_count[5m])) by (route)
+```
+
+### Download
+
+```yaml
+  Download:
+    RefreshInterval: "12h"
+    InitialDataDirectory: ""
+
+    # Specify which lists to download and include in Watchman results
+    # Examples: us_csl, us_ofac, us_non_sdn, us_fincen_311, uk_csl, eu_csl, un_csl
+    IncludedLists:
+      - "us_csl"
+      - "us_ofac"
+
+    # Source-list names for which download or parse errors are suppressed.
+    # A failed list named here will log a warning but will not cause a refresh error.
+    IgnoredDownloadErrors: []
+
+    # When true, an empty list after download/parse will cause a hard error (useful for
+    # detecting data problems early). Default: false (empty lists are tolerated).
+    ErrorOnEmptyList: false
+
+    # Include any senzing formatted OpenSanctions lists
+    # OpenSanctions:
+    #   ApiKey: "secret"
+    #   Lists:
+    #     - SourceList: opensanctions_peps
+    #       Location: https://data.opensanctions.org/datasets/latest/us_congress/senzing.json
+
+    # Include any senzing formatted lists in Watchman's corpus
+    # Senzing:
+    #   - SourceList: "senzing-persons"
+    #     Location: "file://pkg/sources/senzing/testdata/persons.jsonl"
+    # Use SENZING_CONCURRENT_DOWNLOADS env var (default 5) to limit parallel downloads of Senzing lists.
+```
+
+### Search
+
+```yaml
+  Search:
+    # Tune these settings based on your available resources (CPUs, etc).
+    # Watchman will dynamically find an optimal goroutine count for faster responses.
+    # Usually a multiple (i.e. 2x, 4x) of GOMAXPROCS is optimal.
+    Goroutines:
+      Default: 10
+      Min: 1
+      Max: 25
+
+    # Max concurrent *large* searches admitted at once (admission control).
+    # Candidate selection runs first; sets with <= 100 entities bypass the queue
+    # so exact/crypto hits are not blocked behind full-partition scans.
+    # 0 or omit = GOMAXPROCS. Override with SEARCH_MAX_IN_FLIGHT.
+    # MaxInFlight: 8
+
+    Embeddings:
+      Enabled: false # See below for Cross-Script Embeddings
+```
+
+See [Performance](/watchman/performance/) for how admission control, per-search workers, and candidate indexes interact under load.
+
+### Geocoding
+
+```yaml
+  Geocoding:
+    Enabled: false
+    Provider:
+      # Specify the provider name, which can be one of "opencage", "google", or "nominatim"
+      Name: ""
+      ApiKey: ""  # Can also set GEOCODING_API_KEY
+      BaseURL: "" # Useful for self-hosted Nominatim instances.
+      Timeout: "10s"
+    RateLimit:
+      RequestsPerSecond: 1.5 # req/s
+      Burst: 5
+    Cache:
+      L1MaxSize: 10000
+      L1TTL: "24h"     # time-to-live for L1 cache entries.
+      L2Enabled: false # Uses the database connection for a persistent cache.
+```
+
+#### PostalPool
+
+PostalPool is an experiment for improving address parsing via [libpostal](https://github.com/openvenues/libpostal) using [Senzing's updated classifier, data, and parser](https://github.com/Senzing/libpostal-data).
+
+> PostalPool is optional and may be removed in the future.
+
+```yaml
+  PostalPool:
+    Enabled: false
+    # CAUTION: The configuration below is intended for advanced libpostal usage only.
+    # It may provide performance and concurrency improvements on certain architectures,
+    # but is not required for most deployments.
+    #
+    # The "postal pool" is a set of libpostal binaries running on the host and managed
+    # by Watchman. On some systems, the libpostal data files are shared in memory,
+    # which can introduce a performance penalty when multiple libpostal processes
+    # access them simultaneously.
+    #
+    # For the vast majority of use cases, simply keep `CGOSelfInstances=1`
+    # (the default when the pool is Enabled) to achieve the best performance.
+    Instances: 0
+    StartingPort: 10000
+    StartupTimeout: "60s"
+    RequestTimeout: "10s"
+    BinaryPath: "" # POSTAL_SERVER_BIN_PATH is set in Dockerfile
+    CGOSelfInstances: 1
+```
+
+### MCP
+
+> **Experimental Feature**: The MCP server is experimental and may change in future releases.
+
+Enable the Model Context Protocol server endpoints at `/mcp` for AI agent integration:
+
+```yaml
+  MCP:
+    Enabled: true
+```
+
+When enabled, Watchman will serve MCP endpoints at `/mcp` (streamable HTTP) in addition to the standard HTTP API. (The MCP server is HTTP-based; no stdio mode is used.)
+
+### Included Lists
+
+Watchman integrates the following lists to help you maintain global compliance.
+
+| List ID           | Name                                        | Source                                                                                                                                   |
+|-------------------|---------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------|
+| `eu_csl`          | EU Consolidated list of financial sanctions | [URL](https://data.europa.eu/data/datasets/consolidated-list-of-persons-groups-and-entities-subject-to-eu-financial-sanctions?locale=en) |
+| `opensanctions_*` | OpenSanctions Datasets                      | [URL](https://www.opensanctions.org/datasets/)                                                                                           |
+| `uk_csl`          | UK Sanctions List                           | [URL](https://www.gov.uk/government/publications/the-uk-sanctions-list)                                                                  |
+| `un_csl`          | United Nations Consolidated Sanctions List  | [URL](https://www.un.org/sc/resources/sc-sanctions)                                                                                      |
+| `us_csl`          | Consolidated Screening List (CSL)           | [URL](https://www.trade.gov/consolidated-screening-list)                                                                                 |
+| `us_fincen_311`   | US FinCEN 311 Actions                       | [URL](https://home.treasury.gov/policy-issues/terrorism-and-illicit-finance/311-actions)                                                 |
+| `us_non_sdn`      | US Office of Foreign Assets Control (OFAC)  | [URL](https://ofac.treasury.gov/sanctions-list-service)                                                                                  |
+| `us_ofac`         | US Office of Foreign Assets Control (OFAC)  | [URL](https://ofac.treasury.gov/sanctions-list-service)                                                                                  |
+
+### Environment Variables
+
+| Environmental Variable         | Description                                                                                                                          | Default                                     |
+|--------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------|
+| `INCLUDED_LISTS`               | Comma separated list of lists to include.                                                                                            | Empty                                       |
+| `IGNORED_DOWNLOAD_ERRORS`      | Comma separated list of source-list names for which download/parse errors are suppressed.                                            | Empty                                       |
+| `SENZING_CONCURRENT_DOWNLOADS` | Maximum concurrent downloads for Senzing-formatted lists (OpenSanctions, custom). 0 or less = unlimited.                             | `5`                                         |
+| `DATA_REFRESH_INTERVAL`        | Interval for data redownload and reparse. `off` disables this refreshing.                                                            | 12h                                         |
+| `INITIAL_DATA_DIRECTORY`       | Directory filepath with initial files to use instead of downloading. Periodic downloads will replace the initial files.              | Empty                                       |
+| `ERROR_ON_EMPTY_LIST`          | If true, an empty list after download/parse causes a startup/refresh error (detects data problems).                                  | false                                       |
+| `HTTPS_CERT_FILE`              | Filepath containing a certificate (or intermediate chain) to be served by the HTTP server. Requires all traffic be over secure HTTP. | Empty                                       |
+| `HTTPS_KEY_FILE`               | Filepath of a private key matching the leaf certificate from `HTTPS_CERT_FILE`.                                                      | Empty                                       |
+| `LOG_FORMAT`                   | Format for logging lines to be written as.                                                                                           | Options: `json`, `plain` - Default: `plain` |
+
+### TF-IDF Configuration
+
+[TF-IDF](https://en.wikipedia.org/wiki/Tf%E2%80%93idf) (Term Frequency–Inverse Document Frequency) is a technique used to measure the importance of a word in a corpus. Less frequent words are more important.
+
+By default Watchman does not employ TF-IDF, but it can be enabled and configured with the following environmental variables.
+When enabled, term weights for indexed entities are computed once at list refresh and attached to each entity; query weights are computed once per search.
+
+| Environmental Variable | Description                                                                                                    | Default |
+|------------------------|----------------------------------------------------------------------------------------------------------------|---------|
+| `TFIDF_ENABLED`        | Enabled controls whether TF-IDF weighting is applied to name matching.                                         | `false` |
+| `TFIDF_SMOOTHING`      | SmoothingFactor (k) in the IDF formula: `log((N+k)/(df+k))`. Prevents division by zero and smooths IDF values. | 1.0     |
+| `TFIDF_MIN_IDF`        | MinIDF is the floor for IDF values. Prevents very common terms from having zero or negative weight.            | 0.1     |
+| `TFIDF_MAX_IDF`        | MaxIDF is the ceiling for IDF values. Prevents single-occurrence terms from dominating the score.              | 10.0    |
+
+### Cross-Script Embeddings Configuration
+
+Watchman can use neural network embeddings to match names across different writing systems (Arabic, Cyrillic, Chinese, etc.). This feature requires configuring an embeddings API provider (Ollama, OpenAI, OpenRouter, etc.).
+
+See [Cross-Script Name Matching](cross-script-matching.md) for detailed setup instructions.
+
+| Environmental Variable            | Description                                                       | Default |
+|-----------------------------------|-------------------------------------------------------------------|---------|
+| `EMBEDDINGS_ENABLED`              | Enable embedding-based cross-script search.                       | `false` |
+| `EMBEDDINGS_BASE_URL`             | API endpoint URL for embeddings provider (required when enabled). | Empty   |
+| `EMBEDDINGS_API_KEY`              | API key for authentication (optional for Ollama).                 | Empty   |
+| `EMBEDDINGS_MODEL`                | Model name to use for embeddings (required when enabled).         | Empty   |
+| `EMBEDDINGS_DIMENSION`            | Embedding vector dimension (required, must match model).          | `0`     |
+| `EMBEDDINGS_CACHE_SIZE`           | Number of embedding vectors to cache in memory.                   | `10000` |
+| `EMBEDDINGS_CROSS_SCRIPT_ONLY`    | Only use embeddings for non-Latin queries (recommended).          | `true`  |
+| `EMBEDDINGS_SIMILARITY_THRESHOLD` | Minimum similarity score (0.0-1.0) for results.                   | `0.7`   |
+| `EMBEDDINGS_BATCH_SIZE`           | Batch size for encoding multiple texts.                           | `32`    |
+| `EMBEDDINGS_INDEX_BUILD_TIMEOUT`  | Maximum time allowed for building the embedding index.            | `10m`   |
+
+YAML configuration (example with OpenAI):
+
+```yaml
+  Search:
+    Embeddings:
+      Enabled: true
+      Provider:
+        Name: "openai"
+        BaseURL: "https://api.openai.com/v1"
+        APIKey: "${OPENAI_API_KEY}"
+        Model: "text-embedding-3-small" # Required - no default
+        Dimension: 1536                 # Required - must work with model
+        NormalizeVectors: false         # OpenAI vectors are already normalized
+        Timeout: "30s"
+        RateLimit:
+          RequestsPerSecond: 50
+          Burst: 25
+        Retry:
+          MaxRetries: 3
+          InitialBackoff: "1s"
+          MaxBackoff: "30s"
+        # Headers: { "HTTP-Referer": "https://example.com" }  # e.g. for OpenRouter
+      Cache:
+        Type: "memory" # or sql (persistent via DB, ignores Size)
+        Size: 10000
+      CrossScriptOnly: true
+      SimilarityThreshold: 0.7
+      BatchSize: 32
+      IndexBuildTimeout: "10m"
+```
+
+### Similarity Configuration
+
+| Environmental Variable             | Description                                                                                                   | Default |
+|------------------------------------|---------------------------------------------------------------------------------------------------------------|---------|
+| `SEARCH_MAX_IN_FLIGHT`             | Maximum number of concurrent *large* searches admitted at once (candidate set &gt; 100). Smaller sets bypass the queue. Extra large searches wait. `0` / empty uses `GOMAXPROCS`. | `GOMAXPROCS` |
+| `SEARCH_GOROUTINE_COUNT`           | Set a fixed number of goroutines used for each search. Default is to dynamically optimize for faster results. | Empty   |
+| `KEEP_STOPWORDS`                   | Boolean to keep stopwords in names.                                                                           | `false` |
+| `JARO_WINKLER_BOOST_THRESHOLD`     | Jaro-Winkler boost threshold.                                                                                 | 0.7     |
+| `JARO_WINKLER_PREFIX_SIZE`         | Jaro-Winkler prefix size.                                                                                     | 4       |
+| `LENGTH_DIFFERENCE_CUTOFF_FACTOR`  | Minimum ratio for the length of two matching tokens, before they score is penalised.                          | 0.9     |
+| `LENGTH_DIFFERENCE_PENALTY_WEIGHT` | Weight of penalty applied to scores when two matching tokens have different lengths.                          | 0.3     |
+| `DIFFERENT_LETTER_PENALTY_WEIGHT`  | Weight of penalty applied to scores when two matching tokens begin with different phonetic classes (see firstCharacterSoundexMatch). | 0.9     |
+| `UNMATCHED_INDEX_TOKEN_WEIGHT`     | Weight of penalty applied to scores when part of the indexed name isn't matched.                              | 0.15    |
+| `ADJACENT_SIMILARITY_POSITIONS`    | How many nearby words to search for highest max similarly score.                                              | 3       |
+| `EXACT_MATCH_FAVORITISM`           | Extra weighting assigned to exact matches.                                                                    | 0.0     |
+| `FINAL_SCORE_LOW_COVERAGE_MULTIPLIER`        | Multiplier applied when a query compares against too little of the indexed entity's available data.              | 0.95    |
+| `FINAL_SCORE_MIN_REQUIRED_FIELDS_MULTIPLIER` | Multiplier applied when a search compares fewer than two required fields, such as a name-only query.              | 0.90    |
+| `FINAL_SCORE_NAME_ONLY_MULTIPLIER`           | Multiplier applied to name-only matches when no IDs or addresses are present in the query.                    | 0.95    |
+| `DISABLE_PHONETIC_FILTERING`       | Force comparing search tokens against every index token (skip first-letter phonetic filter inside Jaro-Winkler). Loaded at process start. | `false` |
+| `USE_SOUNDEX_MATCHING`             | Enable full Soundex phonetic code matching to optionally boost Jaro-Winkler scores for phonetically similar names (e.g. "Smith" vs "Smythe"). Loaded at process start. | `false` |
+| `SOUNDEX_BOOST_WEIGHT`             | When `USE_SOUNDEX_MATCHING=yes`, the boost factor applied to pairs whose Soundex codes match (score *= 1+weight, capped at 1.0). Example: `0.12` for a 12% boost. Loaded at process start. | `0.0`   |
+
+> **Note:** `DISABLE_PHONETIC_FILTERING`, `USE_SOUNDEX_MATCHING`, and `SOUNDEX_BOOST_WEIGHT` are read once at process startup for hot-path performance. Restart Watchman after changing them.
+
+#### Source List Configuration
+
+| Environmental Variable | Description                                            | Default |
+|------------------------|--------------------------------------------------------|---------|
+| `DOWNLOAD_TIMEOUT`     | Duration of time allowed for a list to fully download. | `45s`   |
+
+##### United States
+
+| Environmental Variable   | Description                                                         | Default                                                                         |
+|--------------------------|---------------------------------------------------------------------|---------------------------------------------------------------------------------|
+| `OFAC_DOWNLOAD_TEMPLATE` | HTTP address for downloading raw OFAC files.                        | `https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/%s` |
+| `US_CSL_DOWNLOAD_URL`    | Use an alternate URL for downloading US Consolidated Screening List | Subresource of `api.trade.gov`                                                  |
+| `CSL_DOWNLOAD_TEMPLATE`  | Same as `US_CSL_DOWNLOAD_URL`                                       |                                                                                 |
+| `US_NON_SDN_DOWNLOAD_TEMPLATE` | Use an alternate URL for downloading US OFAC Non-SDN list     | Subresource of OFAC publication endpoint                                        |
+| `FINCEN_311_DOWNLOAD_URL` | Use an alternate URL for the FinCEN 311 Special Measures page    | Public FinCEN 311 page                                                          |
+
+##### European Union
+
+| Environmental Variable | Description                                                         | Default                               |
+|------------------------|---------------------------------------------------------------------|---------------------------------------|
+| `EU_CSL_TOKEN`         | Token used to download the EU Consolidated Screening List           | `<valid-token>`                       |
+| `EU_CSL_DOWNLOAD_URL`  | Use an alternate URL for downloading EU Consolidated Screening List | Subresource of `webgate.ec.europa.eu` |
+
+##### United Kingdom
+
+| Environmental Variable   | Description                                                         | Default                     |
+|--------------------------|---------------------------------------------------------------------|-----------------------------|
+| `UK_CSL_DOWNLOAD_URL`    | Use an alternate URL for downloading UK Consolidated Screening List | Subresource of `www.gov.uk` |
+| `UK_SANCTIONS_LIST_URL`  | Use an alternate URL for downloading UK Sanctions List              | Subresource of `www.gov.uk` |
+
+##### United Nations
+
+| Environmental Variable       | Description                                                      | Default |
+|------------------------------|------------------------------------------------------------------|---------|
+| `UN_CONSOLIDATED_LIST_URL`   | Use an alternate URL for downloading UN Consolidated Sanctions List | Public UN XML resource |
+
+##### Open Sanctions
+
+| Environmental Variable  | Description                                                                                           | Default |
+|-------------------------|-------------------------------------------------------------------------------------------------------|---------|
+| `OPENSANCTIONS_API_KEY` | API key for OpenSanctions authenticated access. Suggested when an `opensanctions_*` list is included. | Empty   |
+
+##### Senzing
+
+| Environmental Variable         | Description                                                                                                                                        | Default |
+|--------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|---------|
+| `SENZING_CONCURRENT_DOWNLOADS` | Maximum concurrent Senzing list downloads. Used when loading multiple `opensanctions_*` lists or custom entries under `Download.Senzing`. A value of 0 or less means unlimited concurrency. | `5`     |
+
+#### Download reliability
+
+Sanctions list downloads/endpoints (OFAC, trade.gov, EU, UK, UN, etc.) are occasionally slow, return errors, or are unreachable for extended periods. A failed download on startup or during a
+refresh will prevent Watchman from serving requests (initial download failures cause a fatal exit).
+
+For production deployments, consider running [moov-io/watchman-cache](https://github.com/moov-io/watchman-cache) as a reverse proxy in front of Watchman. It is an optional companion project that provides:
+
+- Internal handling of 302 redirects (particularly relevant for OFAC and Non-SDN files that redirect to short-lived S3 pre-signed URLs)
+- Hardened settings (large buffers, long timeouts, retries, SNI fixes, `ipv6=off`) tuned for large files such as `consolidated.csv`
+- Long cache lifetimes (48h on major lists) plus aggressive stale serving (`proxy_cache_use_stale`), allowing Watchman to continue operating even when the origin is down for multiple days
+- Persistent cache storage using a named Docker volume across container restarts
+- An intentional allowlist — only the exact filenames Watchman requests are permitted (it is not an open proxy)
+
+No changes are required inside Watchman. Simply override the download template environment variables to point at the cache:
+
+```
+OFAC_DOWNLOAD_TEMPLATE=http://watchman-cache:8080/api/PublicationPreview/exports/%s
+US_CSL_DOWNLOAD_TEMPLATE=http://watchman-cache:8080/downloadable_consolidated_screening_list/v1/%s
+US_NON_SDN_DOWNLOAD_TEMPLATE=http://watchman-cache:8080/api/PublicationPreview/exports/%s
+EU_CSL_DOWNLOAD_URL=http://watchman-cache:8080/...
+```
+
+A working `docker-compose.yml` example and Go integration test are provided in the [watchman-cache repository](https://github.com/moov-io/watchman-cache).
+
+This approach is complementary to the `INITIAL_DATA_DIRECTORY` feature (see [Caching Data Files](/watchman/cache-data-files/)).
+
+## Data persistence
+
+By design, Watchman **does not persist** (save) any data about the search queries or actions created. The only storage occurs in memory of the process and upon restart Watchman will have no
+files or data saved. Also, no in-memory encryption of the data is performed.

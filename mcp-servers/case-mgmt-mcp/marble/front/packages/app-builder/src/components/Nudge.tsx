@@ -1,0 +1,99 @@
+import { HoverCard, HoverCardContent, HoverCardPortal, HoverCardTrigger } from '@radix-ui/react-hover-card';
+import { cva } from 'class-variance-authority';
+import { type FeatureAccessLevelDto } from 'marble-api/generated/feature-access-api';
+import { useTranslation } from 'react-i18next';
+import { match } from 'ts-pattern';
+import { CtaV2ClassName, cn } from 'ui-design-system';
+import { Icon, type IconName } from 'ui-icons';
+
+type NudgeProps = {
+  content: string;
+  className?: string;
+  iconClass?: string;
+  link?: string;
+  kind?: Exclude<FeatureAccessLevelDto, 'allowed'>;
+};
+
+const triggerClassName = cva('flex items-center justify-center text-white rounded-sm size-6', {
+  variants: {
+    kind: {
+      test: 'bg-purple-primary',
+      restricted: 'bg-purple-disabled',
+      missing_configuration: 'bg-yellow-primary',
+    },
+  },
+});
+
+export const Nudge = ({ content, link, className, kind = 'restricted', iconClass }: NudgeProps) => {
+  const { t } = useTranslation(['common']);
+  return (
+    <HoverCard>
+      <HoverCardTrigger tabIndex={-1} asChild>
+        <span className={triggerClassName({ kind, className })}>
+          <Icon
+            icon={match<typeof kind, IconName>(kind)
+              .with('restricted', () => 'lock')
+              .with('test', () => 'unlock-right')
+              .with('missing_configuration', () => 'warning')
+              .exhaustive()}
+            className={cn('size-3', iconClass)}
+            aria-hidden
+          />
+        </span>
+      </HoverCardTrigger>
+      <HoverCardPortal>
+        <HoverCardContent
+          side="right"
+          align="start"
+          sideOffset={8}
+          alignOffset={-8}
+          className={cn(
+            'bg-surface-card z-50 flex w-60 flex-col items-center gap-lg rounded-sm border p-md pointer-events-auto shadow-lg',
+            {
+              'border-purple-disabled': kind !== 'missing_configuration',
+              'border-yellow-primary': kind === 'missing_configuration',
+            },
+          )}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span className="text-m font-bold">
+            {match<typeof kind, string>(kind)
+              .with('missing_configuration', () => t('common:missing_configuration_title'))
+              .otherwise(() => t('common:premium'))}
+          </span>
+          <div className="flex w-full flex-col items-center gap-sm">
+            <p className="text-s w-full text-center font-medium">
+              {match<typeof kind, string>(kind)
+                .with('missing_configuration', () => t('common:missing_configuration'))
+                .otherwise(() => content)}
+            </p>
+            {link ? (
+              <a
+                className="text-s text-purple-primary inline-block w-full text-center hover:underline"
+                target="_blank"
+                rel="noreferrer"
+                href={link}
+              >
+                {t('common:check_on_docs')}
+              </a>
+            ) : null}
+          </div>
+          {kind !== 'missing_configuration' ? (
+            <a
+              className={CtaV2ClassName({
+                variant: 'primary',
+                color: 'primary',
+                className: 'mt-md text-center',
+              })}
+              href="https://checkmarble.com/upgrade"
+              target="_blank"
+              rel="noreferrer"
+            >
+              {t('common:upgrade')}
+            </a>
+          ) : null}
+        </HoverCardContent>
+      </HoverCardPortal>
+    </HoverCard>
+  );
+};

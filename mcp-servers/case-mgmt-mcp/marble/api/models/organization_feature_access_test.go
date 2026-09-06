@@ -1,0 +1,146 @@
+package models
+
+import (
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+)
+
+func TestMergeWithLicenseEntitlement(t *testing.T) {
+	tests := []struct {
+		name            string
+		dbFeatureAccess DbStoredOrganizationFeatureAccess
+		license         LicenseEntitlements
+		config          FeaturesConfiguration
+		user            User
+		expected        OrganizationFeatureAccess
+	}{
+		{
+			name: "All features allowed by license and configuration",
+			dbFeatureAccess: DbStoredOrganizationFeatureAccess{
+				Id:             "1",
+				OrganizationId: uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+				TestRun:        Allowed,
+				Sanctions:      Allowed,
+				CaseAutoAssign: Allowed,
+			},
+			license: LicenseEntitlements{
+				Analytics:      true,
+				Webhooks:       true,
+				Workflows:      true,
+				RuleSnoozes:    true,
+				UserRoles:      true,
+				TestRun:        true,
+				Sanctions:      true,
+				CaseAutoAssign: true,
+			},
+			config: FeaturesConfiguration{
+				Sanctions:       true,
+				NameRecognition: true,
+				Analytics:       true,
+			},
+			user: User{AiAssistEnabled: true},
+			expected: OrganizationFeatureAccess{
+				Id:              "1",
+				OrganizationId:  uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+				TestRun:         Allowed,
+				Sanctions:       Allowed,
+				NameRecognition: Allowed,
+				Analytics:       Allowed,
+				Webhooks:        Allowed,
+				Workflows:       Allowed,
+				RuleSnoozes:     Allowed,
+				Roles:           Allowed,
+				AiAssist:        Allowed,
+				CaseAutoAssign:  Allowed,
+			},
+		},
+		{
+			name: "Some features restricted by license",
+			dbFeatureAccess: DbStoredOrganizationFeatureAccess{
+				Id:             "2",
+				OrganizationId: uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+				TestRun:        Allowed,
+				Sanctions:      Allowed,
+				CaseAutoAssign: Allowed,
+			},
+			license: LicenseEntitlements{
+				Analytics:   false,
+				Webhooks:    true,
+				Workflows:   true,
+				RuleSnoozes: true,
+				UserRoles:   true,
+				TestRun:     false,
+				Sanctions:   false,
+			},
+			config: FeaturesConfiguration{
+				Sanctions:       true,
+				NameRecognition: true,
+				Analytics:       true,
+			},
+			user: User{AiAssistEnabled: true},
+			expected: OrganizationFeatureAccess{
+				Id:              "2",
+				OrganizationId:  uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+				TestRun:         Restricted,
+				Sanctions:       Restricted,
+				NameRecognition: Restricted,
+				Analytics:       Restricted,
+				Webhooks:        Allowed,
+				Workflows:       Allowed,
+				RuleSnoozes:     Allowed,
+				Roles:           Allowed,
+				AiAssist:        Allowed,
+				CaseAutoAssign:  Restricted,
+			},
+		},
+		{
+			name: "Some features restricted by configuration",
+			dbFeatureAccess: DbStoredOrganizationFeatureAccess{
+				Id:             "3",
+				OrganizationId: uuid.MustParse("33333333-3333-3333-3333-333333333333"),
+				TestRun:        Allowed,
+				Sanctions:      Allowed,
+				CaseAutoAssign: Allowed,
+			},
+			license: LicenseEntitlements{
+				Analytics:      true,
+				Webhooks:       true,
+				Workflows:      true,
+				RuleSnoozes:    true,
+				UserRoles:      true,
+				TestRun:        true,
+				Sanctions:      true,
+				CaseAutoAssign: true,
+			},
+			config: FeaturesConfiguration{
+				Sanctions:       false,
+				NameRecognition: false,
+				Analytics:       false,
+			},
+			user: User{AiAssistEnabled: false},
+			expected: OrganizationFeatureAccess{
+				Id:              "3",
+				OrganizationId:  uuid.MustParse("33333333-3333-3333-3333-333333333333"),
+				TestRun:         Allowed,
+				Sanctions:       MissingConfiguration,
+				NameRecognition: MissingConfiguration,
+				Analytics:       MissingConfiguration,
+				Webhooks:        Allowed,
+				Workflows:       Allowed,
+				RuleSnoozes:     Allowed,
+				Roles:           Allowed,
+				AiAssist:        Restricted,
+				CaseAutoAssign:  Allowed,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.dbFeatureAccess.MergeWithLicenseEntitlement(tt.license, tt.config, &tt.user)
+			assert.Equal(t, tt.expected, result, tt.name)
+		})
+	}
+}

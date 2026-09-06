@@ -1,0 +1,204 @@
+# Use https://app.stepsecurity.io/ to improve workflow security
+name: Go
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linters:
+    name: Run Go Linters
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Setup Linux Dependencies
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgl1-mesa-dev libwayland-dev libxkbcommon-dev xorg-dev
+
+    - name: Set up Go 1.x
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: stable
+      id: go
+
+    - name: Run Linters
+      run: make check
+      env:
+        SKIP_TESTS: yes
+
+  short:
+    name: Short tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Setup Linux Dependencies
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgl1-mesa-dev libwayland-dev libxkbcommon-dev xorg-dev
+
+    - name: Setup Windows Dependencies
+      if: runner.os == 'Windows'
+      run: |
+        choco install -y make mingw
+
+    - name: Set up Go 1.x
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: stable
+      id: go
+
+    - name: Setup Containers
+      if: runner.os == 'Linux'
+      run: |
+        make setup
+
+    - name: Run Tests
+      run: make check
+      env:
+        GOTEST_FLAGS: "-short"
+        SKIP_LINTERS: yes
+        RUN_DATABASE_TESTS: ${{ runner.os == 'Linux' }}
+
+    - name: Teardown Containers
+      if: runner.os == 'Linux'
+      run: |
+        make teardown
+
+  sources-long:
+    name: Long testing pkg/sources/
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Set up Go 1.x
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: stable
+      id: go
+
+    - name: Short Tests
+      run: go test ./pkg/sources... -count 1 -v
+
+  libpostal:
+    name: Libpostal tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest]
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Set up Go 1.x
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: stable
+      id: go
+
+    - name: Install Libpostal
+      run: make install
+
+    - name: Build postalpool
+      env:
+        GOTAGS: "-tags libpostal"
+      run: make postal-server
+
+    - name: Libpostal Tests
+      run: |
+        go test -tags=libpostal ./pkg/address/... -count 1 -v
+        go test -tags=libpostal ./internal/postalpool/... -count 1 -v
+
+  docker-hub:
+    name: Docker Hub (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Set up Go 1.x
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: stable
+      id: go
+
+    - name: Docker Hub
+      run: make docker-hub
+      env:
+        ARCH: ${{ matrix.arch }}
+
+  docker-openshift:
+    name: Docker Openshift (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Set up Go 1.x
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: stable
+      id: go
+
+    - name: Docker Hub
+      run: make docker-openshift
+      env:
+        ARCH: ${{ matrix.arch }}

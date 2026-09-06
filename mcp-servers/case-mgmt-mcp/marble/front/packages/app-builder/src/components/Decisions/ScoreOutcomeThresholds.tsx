@@ -1,0 +1,64 @@
+import { useTranslation } from 'react-i18next';
+
+interface ScoreOutcomeThresholdsProps {
+  scoreReviewThreshold?: number;
+  scoreBlockAndReviewThreshold?: number;
+  scoreDeclineThreshold?: number;
+}
+
+export function ScoreOutcomeThresholds({
+  scoreReviewThreshold = 0,
+  scoreBlockAndReviewThreshold = 0,
+  scoreDeclineThreshold = 0,
+}: ScoreOutcomeThresholdsProps) {
+  const { t } = useTranslation(['decisions']);
+
+  const showReviewOutcome = scoreBlockAndReviewThreshold > scoreReviewThreshold;
+  const showBlockAndReviewOutcome = scoreDeclineThreshold > scoreBlockAndReviewThreshold;
+
+  return (
+    <div className="relative flex h-[70px] w-full flex-row">
+      <div className="bg-green-background-light border-b-green-primary isolate flex h-10 flex-1 items-center justify-center rounded-sm-md border-b-4">
+        <span className="text-s text-green-primary font-semibold">{t('decisions:outcome.approve')}</span>
+      </div>
+
+      {showReviewOutcome ? (
+        <>
+          <div className="bg-surface-card relative w-1">
+            <span className="text-grey-primary text-m absolute bottom-0 left-1/2 -translate-x-1/2 font-bold">
+              {scoreReviewThreshold}
+            </span>
+          </div>
+
+          <div className="bg-yellow-background flex h-10 flex-1 items-center justify-center border-b-4 border-b-yellow-primary">
+            <span className="text-s font-semibold text-yellow-primary">{t('decisions:outcome.review')}</span>
+          </div>
+        </>
+      ) : null}
+
+      {showBlockAndReviewOutcome ? (
+        <>
+          <div className="bg-surface-card relative w-1">
+            <span className="text-grey-primary text-m absolute bottom-0 left-1/2 -translate-x-1/2 font-bold">
+              {scoreBlockAndReviewThreshold}
+            </span>
+          </div>
+
+          <div className="bg-orange-background-light flex h-10 flex-1 items-center justify-center border-b-4 border-b-orange-primary">
+            <span className="text-s font-semibold text-orange-primary">{t('decisions:outcome.block_and_review')}</span>
+          </div>
+        </>
+      ) : null}
+
+      <div className="bg-surface-card relative w-1">
+        <span className="text-grey-primary text-m absolute bottom-0 left-1/2 -translate-x-1/2 font-bold">
+          {scoreDeclineThreshold}
+        </span>
+      </div>
+
+      <div className="bg-red-background border-b-red-primary flex h-10 flex-1 items-center justify-center rounded-e-md border-b-4">
+        <span className="text-s text-red-primary font-semibold">{t('decisions:outcome.decline')}</span>
+      </div>
+    </div>
+  );
+}

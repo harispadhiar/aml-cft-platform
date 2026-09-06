@@ -1,0 +1,47 @@
+package dbmodels
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/google/uuid"
+)
+
+type DBWebhookEvent struct {
+	Id             string    `db:"id"`
+	CreatedAt      time.Time `db:"created_at"`
+	UpdatedAt      time.Time `db:"updated_at"`
+	RetryCount     int       `db:"retry_count"`
+	DeliveryStatus string    `db:"delivery_status"`
+	OrganizationId uuid.UUID `db:"organization_id"`
+	EventType      string    `db:"event_type"`
+	EventData      []byte    `db:"event_data"`
+}
+
+const TABLE_WEBHOOK_EVENTS = "webhook_events"
+
+var WebhookEventFields = utils.ColumnList[DBWebhookEvent]()
+
+func AdaptWebhookEvent(db DBWebhookEvent) (models.WebhookEvent, error) {
+	var eventData models.WebhookEventPayload
+	err := json.Unmarshal(db.EventData, &eventData)
+	if err != nil {
+		return models.WebhookEvent{}, fmt.Errorf("can't decode %s webhook's event data: %w", db.Id, err)
+	}
+
+	return models.WebhookEvent{
+		Id:             db.Id,
+		CreatedAt:      db.CreatedAt,
+		UpdatedAt:      db.UpdatedAt,
+		RetryCount:     db.RetryCount,
+		DeliveryStatus: models.WebhookEventDeliveryStatus(db.DeliveryStatus),
+		OrganizationId: db.OrganizationId,
+		EventContent: models.WebhookEventContent{
+			Type: models.WebhookEventType(db.EventType),
+			Data: eventData,
+		},
+	}, nil
+}

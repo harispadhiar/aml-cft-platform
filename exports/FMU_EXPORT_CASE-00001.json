@@ -1,0 +1,33 @@
+{
+  "fmu_schema_version": "SBP-FMU-v2.1",
+  "report_type": "STR",
+  "filing_reference": "STR-CASE-00001-202609061059",
+  "filing_timestamp": "2026-09-06T10:59:18.054379+00:00",
+  "reporting_entity": {
+    "name": "Pilot Commercial Bank Pakistan",
+    "sbp_code": "SBP-PILOT-001",
+    "jurisdiction": "PK",
+    "branch": "Compliance Division, Head Office, Karachi"
+  },
+  "subject": {
+    "customer_id": "CUST-008380",
+    "customer_name": "Etizaaz Ghafoor",
+    "cnic": "28341-4241648-8",
+    "location": "Islamabad",
+    "risk_tier": "High",
+    "screening_hit": "None"
+  },
+  "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+  "narrative": "Test Narrative",
+  "ai_model_metadata": {
+    "base_model": "mistralai/Mistral-7B-Instruct-v0.2",
+    "quantisation": "4-bit NF4 (QLoRA)",
+    "adapter_checkpoint": "checkpoints/aml-cft-lora",
+    "human_reviewed": true,
+    "verification_status": "APPROVED_FOR_FILING"
+  },
+  "audit_chain_verification": {
+    "latest_block_hash": "101bbbf5dc56e10368dd4efc126a1491923ee8875cf825723536669f4fdb724c",
+    "tamper_evident": true
+  }
+}

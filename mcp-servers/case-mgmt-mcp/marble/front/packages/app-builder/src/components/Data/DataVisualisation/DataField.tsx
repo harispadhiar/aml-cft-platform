@@ -1,0 +1,688 @@
+import { CopyToClipboardButton } from '@app-builder/components/CopyToClipboardButton';
+import { Spinner } from '@app-builder/components/Spinner';
+import {
+  type DataModelField,
+  DataType,
+  type SemanticSubTypeField,
+  type SemanticSubTypeFieldMap,
+  type SemanticTypeField,
+} from '@app-builder/models';
+import { useObjectDetailsQuery } from '@app-builder/queries/data/get-object-details';
+import { formatAge, formatNumber, useFormatDateTime, useFormatLanguage } from '@app-builder/utils/format';
+import { tryCatch } from '@app-builder/utils/tryCatch';
+import CountryFlag from 'country-flag-emojis';
+import cc from 'currency-codes';
+import parsePhoneNumber from 'libphonenumber-js/min';
+import { type ComponentType, Fragment, lazy, ReactNode, Suspense, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { isNonNullish } from 'remeda';
+import { match, P } from 'ts-pattern';
+import { cn, formatCountryName, Switch } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+import z from 'zod';
+import { DataFields } from './DataFields';
+import type { MetadataType, VALID_DATA_TYPE } from './data-type';
+import { hasMetadataContent, inferDataTypeFromName, MAP_HEIGHT, parseCoords } from './dataFieldsUtils';
+import {
+  DataFieldProvider,
+  useCurrency,
+  useDataField,
+  useField,
+  useFieldCurrency,
+  useFieldMetaData,
+  useFieldValue,
+  useOptions,
+} from './datafield-context';
+
+const MapView = lazy(() => import('./MapView').then((m) => ({ default: m.MapView })));
+
+const codeClassName = (className?: string) =>
+  cn('font-mono border border-grey-border rounded-sm p-xs bg-surface-card', className);
+const subClassName = 'grid gap-xs px-xs py-2xs border border-grey-border bg-grey-background-light rounded-lg';
+
+type DataFieldProps = {
+  field?: DataModelField;
+  value?: string | number | boolean;
+  linkedTo?: string;
+  metaData?: MetadataType;
+  currency?: string;
+};
+
+const FIELD_TYPE_COMPONENTS: Record<VALID_DATA_TYPE, ComponentType> = {
+  'string-main': StringMain,
+  'string-code': StringCode,
+  'string-email': StringEmail,
+  'string-phone': StringPhone,
+  'string-city': StringCity,
+  'string-country': StringCountry,
+  'string-link': StringLink,
+  'string-vpn': StringVpn,
+  'string-free': StringFree,
+  'string-iban': StringIban,
+  'string-currency': StringCurrency,
+  'string-id': StringId,
+  'string-foreign_key': StringForeignKey,
+  'date-birthdate': DateBirthdate,
+  'date-datetime': DateDatetime,
+  'date-date': DateDatetime,
+  'date-time': DateDatetime,
+  'data-gps_coords': DataGpsCoords,
+  'data-ip_address': DataIpAddress,
+  'number-integer': NumberInteger,
+  'number-float': NumberFloat,
+  'number-currency': NumberCurrency,
+  'number-percentile': NumberPercentile,
+  'enum-key_value': StringFree,
+  'enum-colors': StringFree,
+  'enum-values': EnumValues,
+  'boolean-checkbox': BooleanCheckbox,
+  'boolean-yes_no': BooleanYesNo,
+};
+
+function RenderFieldComponent({
+  fieldType,
+  value,
+  metaData,
+}: {
+  fieldType: VALID_DATA_TYPE;
+  value: string | number | boolean;
+  metaData?: MetadataType;
+}) {
+  const contextValue = useMemo(() => ({ field: undefined, value, metaData, fieldType }), [value, metaData, fieldType]);
+  const Comp = FIELD_TYPE_COMPONENTS[fieldType];
+  return (
+    <DataFieldProvider value={contextValue}>
+      <Comp />
+    </DataFieldProvider>
+  );
+}
+
+export function DataField({ field, value, linkedTo, metaData, currency }: DataFieldProps) {
+  const options = useOptions();
+  const fieldType = adaptFieldType(
+    field?.dataType,
+    field?.name,
+    field?.semanticType,
+    field?.semanticSubType,
+    field?.booleanDisplay,
+    field?.isInteger,
+  );
+
+  const resolvedMetaData = options?.hideMetadata ? undefined : metaData;
+
+  const contextValue = useMemo(
+    () => ({ field, value, metaData: resolvedMetaData, fieldType, currency }),
+    [field, value, resolvedMetaData, fieldType, currency],
+  );
+
+  return (
+    <DataFieldProvider value={contextValue}>
+      <div className="col-span-2 grid grid-cols-subgrid items-start">
+        <label htmlFor={field?.id} className="text-grey-secondary truncate" title={field?.name}>
+          {field?.name}
+        </label>
+        <div id={field?.id}>
+          {isNonNullish(value) ? (
+            <>{linkedTo ? <LinkToValue value={`${value}`} linkedTo={linkedTo} /> : <FieldRenderer />}</>
+          ) : (
+            <EmptyValue />
+          )}
+        </div>
+      </div>
+    </DataFieldProvider>
+  );
+}
+
+function FieldRenderer() {
+  const { fieldType } = useDataField();
+  const Comp = FIELD_TYPE_COMPONENTS[fieldType];
+  return <Comp />;
+}
+
+/**
+ * Adapt field type from old data type to new data type
+ * @param field field definition
+ * @returns new data type
+ */
+function adaptFieldType(
+  dataType?: DataType | null,
+  name?: string,
+  semanticType?: SemanticTypeField,
+  semanticSubType?: SemanticSubTypeField,
+  booleanDisplay?: 'yes_no' | 'checkbox',
+  isInteger?: boolean,
+): VALID_DATA_TYPE {
+  if (!dataType || !name) return 'string-free';
+
+  // forced from datatype
+  if (dataType === 'Coords' || dataType === 'Coords[]') return 'data-gps_coords';
+  if (dataType === 'IpAddress' || dataType === 'IpAddress[]') return 'data-ip_address';
+  if (dataType === 'Bool' || dataType === 'Bool[]') return `boolean-${booleanDisplay ?? 'checkbox'}`;
+
+  // from semantic type
+  if (semanticType) {
+    switch (semanticType) {
+      case 'account_identifier':
+        switch (semanticSubType as SemanticSubTypeFieldMap['account_identifier']) {
+          case 'account_number':
+          case 'bic':
+            return 'string-code';
+          case 'iban':
+            return 'string-iban';
+          default:
+            return 'string-free';
+        }
+      case 'address':
+        return 'string-free';
+      case 'country':
+        return 'string-country';
+      case 'creation_date':
+      case 'last_update':
+      case 'validation_date':
+      case 'initiation_date':
+      case 'deletion_date':
+      case 'timestamp':
+        return 'date-datetime';
+      case 'date_of_birth':
+        return 'date-birthdate';
+      case 'unique_id':
+        return 'string-id';
+      case 'percentage':
+        return 'number-percentile';
+      case 'monetary_amount':
+        return 'number-currency';
+      case 'number':
+        return isInteger === false ? 'number-float' : 'number-integer';
+      case 'enum':
+        return 'enum-values';
+      case 'link':
+        switch (semanticSubType as SemanticSubTypeFieldMap['link']) {
+          case 'email':
+            return 'string-email';
+          case 'phone':
+            return 'string-phone';
+          case 'url':
+            return 'string-link';
+          default:
+            return 'string-free';
+        }
+      case 'currency_code':
+        return 'string-currency';
+      case 'foreign_key':
+        return 'string-foreign_key';
+      case 'name':
+        return 'string-main';
+      case 'text':
+        return 'string-free';
+      default:
+        return 'string-free';
+    }
+  }
+  return inferDataTypeFromName(name, dataType);
+}
+
+function useStringValue(): string | undefined {
+  const value = useFieldValue();
+  return value !== undefined && value !== null ? String(value) : undefined;
+}
+
+function useNumberValue(): number | undefined {
+  const value = useFieldValue();
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string' && value.trim() === '') return undefined;
+  return typeof value === 'number' ? value : Number(value);
+}
+
+function useBooleanValue(): boolean | undefined {
+  const value = useFieldValue();
+  if (value === undefined || value === null) return undefined;
+  return typeof value === 'boolean' ? value : value === 'true';
+}
+
+function EmptyValue({ className }: { className?: string }) {
+  return <span className={className}>{'-'}</span>;
+}
+
+function StringMain() {
+  const value = useStringValue();
+  if (!value) return <EmptyValue />;
+  return <StringMainComponent value={value} />;
+}
+
+export function StringMainComponent({ value }: { value: string }) {
+  return <span className="font-semibold">{value}</span>;
+}
+
+function StringCode() {
+  const value = useStringValue();
+  if (!value) return <EmptyValue />;
+  return StringCodeComponent({ value });
+}
+
+export function StringCodeComponent({
+  value,
+  children,
+  className,
+}: {
+  value?: string;
+  children?: ReactNode;
+  className?: string;
+}) {
+  return <span className={codeClassName(className)}>{value ?? children ?? '-'}</span>;
+}
+
+function StringEmail() {
+  const value = useStringValue();
+  if (!value) return <EmptyValue />;
+  return StringEmailComponent({ value });
+}
+
+export function StringEmailComponent({ value }: { value: string }) {
+  const isValid = z.email().safeParse(value).success;
+  if (!isValid) return <span>{value}</span>;
+  return (
+    <a className="text-purple-primary" href={`mailto:${value}`}>
+      {value}
+    </a>
+  );
+}
+
+function StringPhone() {
+  const value = useStringValue();
+  if (!value) return <EmptyValue />;
+  return StringPhoneComponent({ value });
+}
+
+export function StringPhoneComponent({ value }: { value: string }) {
+  const phone = parsePhoneNumber(value);
+  const strPhone = phone ? phone.formatInternational() : value;
+  if (phone) {
+    const phoneUri = phone.getURI();
+    return (
+      <a className="text-purple-primary" href={phoneUri}>
+        {strPhone}
+      </a>
+    );
+  }
+  return <span>{value}</span>;
+}
+
+function StringCity() {
+  const value = useStringValue();
+  if (!value) return <EmptyValue />;
+  return <span>{value}</span>;
+}
+
+function StringCountry() {
+  const value = useStringValue();
+  if (!value) return <EmptyValue />;
+  return <StringCountryComponent value={value} />;
+}
+
+export function StringCountryComponent({
+  value,
+  withCountryName = true,
+}: {
+  value: string;
+  withCountryName?: boolean;
+}) {
+  const language = useFormatLanguage();
+  const result = tryCatch(() => CountryFlag.byCountryCode(value.toUpperCase()));
+  if (!result.ok) return <span>{value}</span>;
+  const country = result.value;
+  return (
+    <span className="inline-flex items-center gap-xs">
+      <span>{country.flag}</span>
+      {withCountryName && <span>{formatCountryName(country.isoAlpha2, language)}</span>}
+    </span>
+  );
+}
+
+function StringLink() {
+  const value = useStringValue();
+  if (!value) return <EmptyValue />;
+  return StringLinkComponent({ value });
+}
+
+export function StringLinkComponent({ value }: { value: string }) {
+  const result = tryCatch(() => new URL(value));
+  if (!result.ok || !['http:', 'https:'].includes(result.value.protocol)) return <span>{value}</span>;
+  return (
+    <a
+      className="text-purple-primary inline-flex items-center gap-2xs"
+      href={result.value.href}
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      <span>{value}</span>
+      <Icon icon="north-east" className="size-3 shrink-0" />
+    </a>
+  );
+}
+
+function StringVpn() {
+  const { t } = useTranslation(['data']);
+  const value = useStringValue();
+  if (!value) return <span>{t('data:no_vpn')}</span>;
+  return (
+    <span className={codeClassName('flex gap-sm items-center')}>
+      <span>{t('data:vpn')}</span>
+      <span>{'-'}</span>
+      <span>{value}</span>
+    </span>
+  );
+}
+
+function StringId() {
+  const value = useStringValue();
+  if (!value) return <EmptyValue className={codeClassName()} />;
+  return (
+    <CopyToClipboardButton toCopy={value}>
+      <span className="truncate">{value}</span>
+    </CopyToClipboardButton>
+  );
+}
+
+function StringForeignKey() {
+  const field = useField();
+  const value = useStringValue();
+  if (!value) return <EmptyValue />;
+  return (
+    <CopyToClipboardButton toCopy={value}>
+      <span className="inline-flex items-center gap-xs" title={value}>
+        <Icon icon="arrow-forward" className="size-4 text-purple-primary" />
+        <span>{field?.foreignkeyTable ?? value ?? '-'}</span>
+      </span>
+    </CopyToClipboardButton>
+  );
+}
+
+function StringFree() {
+  const value = useStringValue();
+  if (!value) return <EmptyValue />;
+  return <span>{value}</span>;
+}
+
+function DateBirthdate() {
+  const value = useStringValue();
+  if (!value) return <EmptyValue />;
+  return <DateBirthdateComponent value={value} />;
+}
+
+export function DateBirthdateComponent({ value, compact = false }: { value: string; compact?: boolean }) {
+  const formatDateTime = useFormatDateTime();
+  const language = useFormatLanguage();
+  const date = new Date(value);
+  const age = formatAge(date, language);
+  return (
+    <span className="inline-flex items-center gap-xs">
+      <span className="text-grey-secondary text-xs">{age}</span>
+      <span className={codeClassName(`text-sm ${compact ? 'py-0' : ''}`)}>
+        {formatDateTime(date, { dateStyle: 'short' })}
+      </span>
+    </span>
+  );
+}
+
+function StringIban() {
+  const value = useStringValue();
+  if (!value) return <EmptyValue />;
+  // Format the IBAN in groups of 4 characters separated by a space
+  const strIban = value.replace(/(.{4})/g, '$1 ').trim();
+  return <span className={codeClassName()}>{strIban}</span>;
+}
+
+function StringCurrency() {
+  const value = useStringValue();
+  if (!value) return <EmptyValue />;
+  const currency = cc.code(value);
+  if (!currency) return <span>{value}</span>;
+  return (
+    <span className={codeClassName('inline-flex items-center gap-xs')}>
+      <span>{currency?.code}</span>
+      <span>{'-'}</span>
+      <span>{currency?.currency}</span>
+    </span>
+  );
+}
+
+function DateDatetime() {
+  const value = useStringValue();
+  if (!value) return <EmptyValue />;
+  return <DateDatetimeComponent value={value} />;
+}
+
+export function DateDatetimeComponent({
+  value,
+  withTime = true,
+  monospaced = false,
+  className,
+}: {
+  value: string;
+  withTime?: boolean;
+  monospaced?: boolean;
+  className?: string;
+}) {
+  const formatDateTime = useFormatDateTime();
+  const date = new Date(value);
+  return (
+    <span className={monospaced ? codeClassName(className) : className}>
+      {formatDateTime(date, { dateStyle: 'short', timeStyle: withTime ? 'short' : undefined })}
+    </span>
+  );
+}
+
+function DataGpsCoords() {
+  const value = useStringValue();
+  const metaData = useFieldMetaData();
+  const opts = value ? parseCoords(value) : null;
+  const options = useOptions();
+  const mapHeight = options?.mapHeight ?? MAP_HEIGHT;
+
+  if (!value || !opts) return <span className={codeClassName()}>-</span>;
+
+  return (
+    <div className="grid gap-sm">
+      <CopyToClipboardButton toCopy={`${opts.latitude},${opts.longitude}`} className="w-fit">
+        <span className="text-s line-clamp-1 font-semibold">
+          {opts.latitude}, {opts.longitude}
+        </span>
+      </CopyToClipboardButton>
+
+      <Suspense
+        fallback={
+          <div
+            className="isolate overflow-hidden rounded-lg border border-grey-border bg-surface-card flex items-center justify-center"
+            style={{ height: mapHeight }}
+          >
+            <Spinner className="size-4" />
+          </div>
+        }
+      >
+        <MapView latitude={opts.latitude} longitude={opts.longitude} mapHeight={mapHeight} />
+      </Suspense>
+      {metaData ? (
+        <div className="w-fit">
+          <MetaData metaData={metaData} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function NumberInteger() {
+  const value = useNumberValue();
+  const language = useFormatLanguage();
+  if (value === undefined || isNaN(value)) return <EmptyValue />;
+  return <span>{formatNumber(value, { language, maximumFractionDigits: 0 })}</span>;
+}
+
+function NumberFloat() {
+  const value = useNumberValue();
+  const language = useFormatLanguage();
+  const field = useField();
+  const decimalPrecision = field?.decimalPrecision ?? 2;
+  if (value === undefined || isNaN(value)) return <EmptyValue />;
+  return (
+    <span>
+      {formatNumber(value, {
+        language,
+        minimumFractionDigits: decimalPrecision,
+        maximumFractionDigits: decimalPrecision,
+      })}
+    </span>
+  );
+}
+
+function NumberCurrency() {
+  const value = useNumberValue();
+  const language = useFormatLanguage();
+  const fieldCurrency = useFieldCurrency();
+  const tableCurrency = useCurrency();
+  const currency = fieldCurrency ?? tableCurrency;
+  const field = useField();
+  const currencyExponent = field?.currencyExponent ?? 0;
+  const decimalPrecision = field?.decimalPrecision ?? 2;
+
+  if (value === undefined || isNaN(value)) return <EmptyValue />;
+  return (
+    <span className="inline-flex items-baseline gap-sm">
+      {currency ? (
+        <span className="text-xs text-grey-secondary border border-grey-border rounded-sm">{currency}</span>
+      ) : null}
+      <span>
+        {formatNumber(value / 10 ** currencyExponent, {
+          language,
+          style: 'decimal',
+          maximumFractionDigits: decimalPrecision,
+          minimumFractionDigits: decimalPrecision,
+        })}
+      </span>
+    </span>
+  );
+}
+
+function NumberPercentile() {
+  const value = useNumberValue();
+  const language = useFormatLanguage();
+  if (value === undefined || isNaN(value)) return <EmptyValue />;
+  return <span>{formatNumber(value, { language, style: 'percent' })}</span>;
+}
+
+function BooleanCheckbox() {
+  const value = useBooleanValue();
+  return <Switch checked={value === true} disabled />;
+}
+
+function BooleanYesNo() {
+  const { t } = useTranslation(['data']);
+  const value = useBooleanValue();
+  if (value === undefined) return <EmptyValue />;
+  return <span>{t(`data:${value ? 'yes' : 'no'}`)}</span>;
+}
+
+function EnumValues() {
+  const value = useStringValue();
+  if (!value) return <EmptyValue className={codeClassName()} />;
+  return <span className={codeClassName()}>{value}</span>;
+}
+
+function DataIpAddress() {
+  const value = useStringValue();
+  const metaData = useFieldMetaData();
+  const [isOpen, setIsOpen] = useState(false);
+  if (!value) return <EmptyValue className={codeClassName()} />;
+  if (!metaData) return <span className={codeClassName()}>{value}</span>;
+
+  return (
+    <div className="grid gap-xs">
+      <button
+        className={codeClassName('w-fit flex gap-sm items-center cursor-pointer')}
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <span>{value}</span>
+        <Icon icon="caret-down" className={cn('size-4 transition-transform duration-200', isOpen && 'rotate-180')} />
+      </button>
+      {isOpen && <MetaData metaData={metaData} />}
+    </div>
+  );
+}
+
+function MetaData({ metaData }: { metaData?: MetadataType }) {
+  if (!metaData || !hasMetadataContent(metaData)) return <EmptyValue />;
+  if (metaData.type === 'number')
+    return <RenderFieldComponent fieldType="number-integer" value={metaData.value as number} />;
+  if (metaData.type === 'url') return <RenderFieldComponent fieldType="string-link" value={metaData.value as string} />;
+  if (metaData.type === 'datetime')
+    return <RenderFieldComponent fieldType="date-datetime" value={new Date(metaData.value as string).toISOString()} />;
+  if (metaData.type === 'DerivedData') return <DataDerivedData metaData={metaData.value as Record<string, unknown>} />;
+  return <StringFree />;
+}
+
+function DataDerivedData({ metaData }: { metaData?: Record<string, unknown> }) {
+  if (!metaData) return null;
+
+  return (
+    <div className={cn(subClassName, 'grid-cols-[max-content_1fr] gap-sm')}>
+      {Object.entries(metaData).map(([key, value]) => {
+        let node: React.ReactNode;
+        if (typeof value === 'number') {
+          node = <RenderFieldComponent fieldType="number-integer" value={value} />;
+        } else if (typeof value === 'boolean') {
+          node = <RenderFieldComponent fieldType="boolean-checkbox" value={value} />;
+        } else {
+          const fieldType = adaptFieldType('String', key);
+          node = <RenderFieldComponent fieldType={fieldType} value={(value ?? '-') as string} />;
+        }
+        return (
+          <Fragment key={key}>
+            <label className="font-semibold">{key}</label>
+            {node}
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function LinkToValue({ value, linkedTo }: { value?: string; linkedTo?: string }) {
+  const { t } = useTranslation(['data']);
+  const [isOpen, setIsOpen] = useState(false);
+  const options = useOptions();
+  const objectDetailQuery = useObjectDetailsQuery(linkedTo, value, isOpen);
+
+  if (!linkedTo || !value) {
+    return <EmptyValue className={codeClassName()} />;
+  }
+
+  return (
+    <div className="grid gap-xs">
+      <button
+        className={codeClassName('w-fit flex gap-sm items-center cursor-pointer')}
+        onClick={() => setIsOpen((prev) => !prev)}
+      >
+        <span>{value}</span>
+        <Icon icon="caret-down" className={cn('size-4 transition-transform duration-200', isOpen && 'rotate-180')} />
+      </button>
+      {isOpen && (
+        <div className={subClassName}>
+          {match(objectDetailQuery)
+            .with({ isFetching: true }, () => <Spinner className="size-4" />)
+            .with({ data: P.not(undefined) }, ({ data }) => (
+              <DataFields
+                table={linkedTo}
+                object={data}
+                options={{ mapHeight: 200, showHeader: options?.showHeader }}
+                className="max-w-3xl"
+              />
+            ))
+            .otherwise(() => (
+              <span className="text-grey-secondary text-s">
+                {t('data:viewer.related_object_not_ingested', { tableName: linkedTo, objectId: value })}
+              </span>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,100 @@
+package api
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/url"
+	"slices"
+	"time"
+
+	sentrygin "github.com/getsentry/sentry-go/gin"
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
+	"github.com/segmentio/analytics-go/v3"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+
+	"github.com/checkmarble/marble-backend/api/middleware"
+	"github.com/checkmarble/marble-backend/infra"
+	"github.com/checkmarble/marble-backend/utils"
+)
+
+// To be deprecated once we move the backoffice from the legacy react SPA to a new app with BFF
+func buildCorsOptions(ctx context.Context, conf Configuration) (cors.Config, bool) {
+	logger := utils.LoggerFromContext(ctx)
+	allowedOrigins := []string{}
+
+	if conf.MarbleBackofficeUrl != "" {
+		parsedUrl, err := url.Parse(conf.MarbleBackofficeUrl)
+		switch {
+		case err != nil:
+			logger.ErrorContext(ctx,
+				"Failed to parse the URL environment variable Marble backoffice url for CORS. Requests made from the browser from this url to the API will be rejected.",
+				"url", conf.MarbleBackofficeUrl)
+		case !slices.Contains([]string{"http", "https"}, parsedUrl.Scheme):
+			logger.DebugContext(ctx,
+				fmt.Sprintf(`The url "%s" does not contain a scheme (http or https), so it cannot be used for CORS.`, conf.MarbleBackofficeUrl),
+			)
+		default:
+			u := url.URL{
+				Scheme: parsedUrl.Scheme,
+				Host:   parsedUrl.Host,
+			}
+			allowedOrigins = append(allowedOrigins, u.String())
+		}
+	}
+
+	if conf.Env == "development" {
+		allowedOrigins = append(allowedOrigins,
+			"http://localhost:3000", "http://localhost:3001", "http://localhost:3002",
+			"http://localhost:3003", "http://localhost:5173")
+	}
+
+	return cors.Config{
+		AllowOrigins: allowedOrigins,
+		AllowMethods: []string{
+			http.MethodOptions, http.MethodHead, http.MethodGet,
+			http.MethodPost, http.MethodDelete, http.MethodPatch,
+		},
+		AllowHeaders:     []string{"Authorization", "Content-Type", "X-Api-Key", "baggage", "sentry-trace"},
+		AllowCredentials: false,
+		MaxAge:           12 * time.Hour,
+	}, len(allowedOrigins) > 0
+}
+
+func InitRouterMiddlewares(
+	ctx context.Context,
+	conf Configuration,
+	disableSegment bool,
+	segmentClient analytics.Client,
+	telemetryRessources infra.TelemetryRessources,
+) *gin.Engine {
+	if conf.Env != "development" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+
+	r := gin.New()
+
+	corsOpts, hasCors := buildCorsOptions(ctx, conf)
+
+	r.Use(gin.Recovery())
+	r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
+	if hasCors {
+		r.Use(cors.New(corsOpts))
+	}
+	r.Use(middleware.NewLogging(logger, conf.RequestLoggingLevel))
+	r.Use(utils.StoreLoggerInContextMiddleware(logger))
+	if !disableSegment {
+		r.Use(utils.StoreSegmentClientInContextMiddleware(segmentClient))
+	}
+	r.Use(otelgin.Middleware(
+		conf.AppName,
+		otelgin.WithTracerProvider(telemetryRessources.TracerProvider),
+		otelgin.WithPropagators(telemetryRessources.TextMapPropagator),
+	))
+	r.Use(utils.StoreOpenTelemetryTracerInContextMiddleware(telemetryRessources.Tracer))
+
+	return r
+}

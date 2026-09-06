@@ -1,0 +1,86 @@
+package dbmodels
+
+import (
+	"time"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/google/uuid"
+)
+
+type DBScenarioTestRun struct {
+	Id                      string    `db:"id"`
+	ScenarioIterationId     string    `db:"scenario_iteration_id"`
+	LiveScenarioIterationId string    `db:"live_scenario_iteration_id"`
+	CreatedAt               time.Time `db:"created_at"`
+	ExpiresAt               time.Time `db:"expires_at"`
+	Status                  string    `db:"status"`
+	Summarized              bool      `db:"summarized"`
+	UpdatedAt               time.Time `db:"updated_at"`
+}
+
+type DBScenarioTestRunWitInfo struct {
+	DBScenarioTestRun
+	OrgId      uuid.UUID `db:"org_id"`
+	ScenarioId string    `db:"scenario_id"`
+}
+
+type DBScenarioTestRunWithSummary struct {
+	DBScenarioTestRunWitInfo
+
+	Summary []DbScenarioTestRunSummary `db:"summaries"`
+}
+
+const TABLE_SCENARIO_TESTRUN = "scenario_test_run"
+
+var SelectScenarioTestRunColumns = utils.ColumnList[DBScenarioTestRun]()
+
+func AdaptScenarioTestrun(db DBScenarioTestRun) (models.ScenarioTestRun, error) {
+	return models.ScenarioTestRun{
+		ScenarioIterationId:     db.ScenarioIterationId,
+		Id:                      db.Id,
+		ScenarioLiveIterationId: db.LiveScenarioIterationId,
+		CreatedAt:               db.CreatedAt,
+		ExpiresAt:               db.ExpiresAt,
+		Status:                  models.ScenarioTestStatusFrom(db.Status),
+		Summarized:              db.Summarized,
+		UpdatedAt:               db.UpdatedAt,
+	}, nil
+}
+
+func AdaptScenarioTestrunWithInfo(db DBScenarioTestRunWitInfo) (models.ScenarioTestRun, error) {
+	return models.ScenarioTestRun{
+		ScenarioIterationId:     db.ScenarioIterationId,
+		Id:                      db.Id,
+		ScenarioLiveIterationId: db.LiveScenarioIterationId,
+		CreatedAt:               db.CreatedAt,
+		ExpiresAt:               db.ExpiresAt,
+		OrganizationId:          db.OrgId,
+		ScenarioId:              db.ScenarioId,
+		Status:                  models.ScenarioTestStatusFrom(db.Status),
+		Summarized:              db.Summarized,
+		UpdatedAt:               db.UpdatedAt,
+	}, nil
+}
+
+func AdaptScenarioTestrunWithSummary(db DBScenarioTestRunWithSummary) (models.ScenarioTestRunWithSummary, error) {
+	summaries := make([]models.ScenarioTestRunSummary, len(db.Summary))
+
+	for idx, s := range db.Summary {
+		summary, err := AdaptScenarioTestRunSummary(s)
+		if err != nil {
+			return models.ScenarioTestRunWithSummary{}, nil
+		}
+		summaries[idx] = summary
+	}
+
+	testRun, err := AdaptScenarioTestrunWithInfo(db.DBScenarioTestRunWitInfo)
+	if err != nil {
+		return models.ScenarioTestRunWithSummary{}, err
+	}
+
+	return models.ScenarioTestRunWithSummary{
+		ScenarioTestRun: testRun,
+		Summary:         summaries,
+	}, nil
+}

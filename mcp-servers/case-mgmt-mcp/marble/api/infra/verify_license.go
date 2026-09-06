@@ -1,0 +1,89 @@
+package infra
+
+import (
+	"encoding/json"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
+	"time"
+
+	"github.com/avast/retry-go/v4"
+	"github.com/cockroachdb/errors"
+
+	"github.com/checkmarble/marble-backend/dto"
+	"github.com/checkmarble/marble-backend/models"
+)
+
+const (
+	LICENSE_SERVER_URL = "https://api.checkmarble.com/validate-license/"
+)
+
+// If config.KillIfReadLicenseError is true, the program will exit if there is an unexpected error while verifying
+// the license or reading the GCP project id
+func VerifyLicense(config models.LicenseConfiguration, deploymentId string) models.LicenseValidation {
+	if config.LicenseKey == "" {
+		isMarbleSaasProject := IsMarbleSaasProject()
+		if config.KillIfReadLicenseError && !isMarbleSaasProject {
+			log.Fatalln("License key or project id not found, exiting")
+		}
+		if isMarbleSaasProject {
+			fullLicense := models.NewFullLicense()
+			fullLicense.IsManagedMarble = true
+			return fullLicense
+		}
+		return models.NewNotFoundLicense()
+	}
+
+	var license models.LicenseValidation
+	err := retry.Do(
+		func() error {
+			var err error
+			license, err = readLicenseFromLicenseServer(config.LicenseKey, deploymentId)
+			return err
+		},
+		retry.Attempts(3),
+		retry.LastErrorOnly(true),
+		retry.Delay(100*time.Millisecond),
+	)
+	if err != nil {
+		if config.KillIfReadLicenseError {
+			log.Fatalf("Error while retrieving license key: %v, exiting", err)
+		}
+		return models.NewNotFoundLicense()
+	}
+	return license
+}
+
+func readLicenseFromLicenseServer(licenseKey string, deploymentId string) (models.LicenseValidation, error) {
+	url, err := url.Parse(LICENSE_SERVER_URL + licenseKey)
+	if err != nil {
+		return models.LicenseValidation{}, err
+	}
+	q := url.Query()
+	q.Add("deployment_id", deploymentId)
+	url.RawQuery = q.Encode()
+
+	resp, err := http.Get(url.String())
+	if err != nil {
+		return models.LicenseValidation{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return models.LicenseValidation{}, errors.Newf(
+			"unexpected status code from license server: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return models.LicenseValidation{}, err
+	}
+
+	licenseValidationDto := dto.LicenseValidation{}
+	err = json.Unmarshal(body, &licenseValidationDto)
+	if err != nil {
+		return models.LicenseValidation{}, err
+	}
+
+	return dto.AdaptLicenseValidation(licenseValidationDto), nil
+}

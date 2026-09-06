@@ -1,0 +1,77 @@
+import { type FeatureAccessApi, type GetFeatureAccessAPIClientWithAuth } from '@app-builder/infra/feature-access-api';
+import { type GetMarbleCoreAPIClientWithAuth, type MarbleCoreApi } from '@app-builder/infra/marblecore-api';
+import { makeGetAiAssistSettingsRepository } from './AiAssistRepository';
+import { makeGetAnalyticsRepository } from './AnalyticsRepository';
+import { makeGetApiKeyRepository } from './ApiKeyRepository';
+import { makeGetAppConfigRepository } from './AppConfigRepository';
+import { makeGetAuditEventsRepository } from './AuditEventsRepository';
+import { makeGetCaseRepository } from './CaseRepository';
+import { makeGetClient360TablesRepository } from './Client360Repository';
+import { makeGetContinuousScreeningRepository } from './ContinuousScreeningRepository';
+import { makeGetCustomListRepository } from './CustomListRepository';
+import { makeGetDataModelRepository } from './DataModelRepository';
+import { makeGetDecisionRepository } from './DecisionRepository';
+
+import { makeGetFeatureAccessRepository } from './FeatureAccessRepository';
+import { makeGetInboxRepository } from './InboxRepository';
+import { makeGetOrganizationRepository } from './OrganizationRepository';
+import { makeGetPersonalSettingsRepository } from './PersonalSettingsRepository';
+import { makeGetRuleSnoozeRepository } from './RuleSnoozeRepository';
+import { makeGetScenarioIterationRuleRepository } from './ScenarioIterationRuleRepository';
+import { makeGetScenarioIterationScreeningRepository } from './ScenarioIterationScreeningRepository';
+import { makeGetScenarioRepository } from './ScenarioRepository';
+import { makeGetScreeningRepository } from './ScreeningRepository';
+import { getCsrfCookie, type SessionStorageRepositoryOptions } from './SessionStorageRepositories';
+import { makeGetTestRunRepository } from './TestRunRepository';
+import { makeGetUserRepository } from './UserRepository';
+import { makeGetUserScoringRepository } from './UserScoringRepository';
+import { makeGetWebhookRepository } from './WebhookRepository';
+
+export function makeServerRepositories({
+  sessionStorageRepositoryOptions,
+  getFeatureAccessApiClientWithoutAuth,
+  getFeatureAccessAPIClientWithAuth,
+  marbleCoreApiClient,
+  getMarbleCoreAPIClientWithAuth,
+}: {
+  sessionStorageRepositoryOptions: SessionStorageRepositoryOptions;
+  getFeatureAccessApiClientWithoutAuth: () => FeatureAccessApi;
+  getFeatureAccessAPIClientWithAuth: GetFeatureAccessAPIClientWithAuth;
+  marbleCoreApiClient: MarbleCoreApi;
+  getMarbleCoreAPIClientWithAuth: GetMarbleCoreAPIClientWithAuth;
+}) {
+  return {
+    csrfCookie: getCsrfCookie(sessionStorageRepositoryOptions),
+    getFeatureAccessApiClientWithoutAuth,
+    getFeatureAccessAPIClientWithAuth,
+    marbleCoreApiClient,
+    getMarbleCoreAPIClientWithAuth,
+    getUserRepository: makeGetUserRepository(),
+    getInboxRepository: makeGetInboxRepository(),
+
+    getDecisionRepository: makeGetDecisionRepository(),
+    getCaseRepository: makeGetCaseRepository(),
+    getContinuousScreeningRepository: makeGetContinuousScreeningRepository(),
+    getScreeningRepository: makeGetScreeningRepository(),
+    getCustomListRepository: makeGetCustomListRepository(),
+    getScenarioRepository: makeGetScenarioRepository(),
+    getScenarioIterationRuleRepository: makeGetScenarioIterationRuleRepository(),
+    getScenarioIterationScreeningRepository: makeGetScenarioIterationScreeningRepository(),
+    getOrganizationRepository: makeGetOrganizationRepository(),
+    getDataModelRepository: makeGetDataModelRepository(),
+    getApiKeyRepository: makeGetApiKeyRepository(),
+    getAnalyticsRepository: makeGetAnalyticsRepository(),
+    getWebhookRepository: makeGetWebhookRepository(),
+    getRuleSnoozeRepository: makeGetRuleSnoozeRepository(),
+    getTestRunRepository: makeGetTestRunRepository(),
+    getAppConfigRepository: makeGetAppConfigRepository(),
+    getFeatureAccessRepository: makeGetFeatureAccessRepository(),
+    getPersonalSettingsRepository: makeGetPersonalSettingsRepository(),
+    getAiAssistSettingsRepository: makeGetAiAssistSettingsRepository(),
+    getClient360TablesRepository: makeGetClient360TablesRepository(),
+    getAuditEventsRepository: makeGetAuditEventsRepository(),
+    getUserScoringRepository: makeGetUserScoringRepository(),
+  };
+}
+
+export type ServerRepositories = ReturnType<typeof makeServerRepositories>;

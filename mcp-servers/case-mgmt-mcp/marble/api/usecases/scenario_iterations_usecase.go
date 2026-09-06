@@ -1,0 +1,559 @@
+package usecases
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/adhocore/gronx"
+	"github.com/cockroachdb/errors"
+	"github.com/google/uuid"
+
+	"github.com/checkmarble/marble-backend/dto"
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/models/ast"
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/checkmarble/marble-backend/repositories"
+	"github.com/checkmarble/marble-backend/usecases/ai_agent"
+	"github.com/checkmarble/marble-backend/usecases/executor_factory"
+	"github.com/checkmarble/marble-backend/usecases/scenarios"
+	"github.com/checkmarble/marble-backend/usecases/security"
+	"github.com/checkmarble/marble-backend/usecases/tracking"
+	"github.com/checkmarble/marble-backend/utils"
+)
+
+type IterationUsecaseRepository interface {
+	GetScenarioIteration(
+		ctx context.Context,
+		exec repositories.Executor,
+		scenarioIterationId string,
+		useCache bool,
+	) (models.ScenarioIteration, error)
+	ListScenarioIterations(
+		ctx context.Context,
+		exec repositories.Executor,
+		organizationId uuid.UUID,
+		filters models.GetScenarioIterationFilters,
+	) ([]models.ScenarioIteration, error)
+	ListScenarioIterationsMetadata(
+		ctx context.Context,
+		exec repositories.Executor,
+		organizationId uuid.UUID,
+		filters models.GetScenarioIterationFilters,
+	) ([]models.ScenarioIterationMetadata, error)
+
+	CreateScenarioIterationAndRules(
+		ctx context.Context,
+		exec repositories.Executor,
+		organizationId uuid.UUID,
+		scenarioIteration models.CreateScenarioIterationInput,
+	) (models.ScenarioIteration, error)
+	UpdateScenarioIteration(
+		ctx context.Context,
+		exec repositories.Executor,
+		scenarioIteration models.UpdateScenarioIterationInput,
+	) (models.ScenarioIteration, error)
+	UpdateScenarioIterationVersion(
+		ctx context.Context,
+		exec repositories.Executor,
+		scenarioIterationId string,
+		newVersion int,
+	) error
+	DeleteScenarioIteration(
+		ctx context.Context,
+		exec repositories.Executor,
+		scenarioIterationId string,
+	) error
+}
+
+const (
+	defaultReviewThreshold         = 1
+	defaultBlockAndReviewThreshold = 10
+	defaultDeclineThreshold        = 20
+)
+
+type ScenarioIterationUsecase struct {
+	repository                IterationUsecaseRepository
+	screeningConfigRepository ScreeningConfigRepository
+	screeningProvider         ScreeningProvider
+	enforceSecurity           security.EnforceSecurityScenario
+	scenarioFetcher           scenarios.ScenarioFetcher
+	validateScenarioIteration scenarios.ValidateScenarioIteration
+	executorFactory           executor_factory.ExecutorFactory
+	transactionFactory        executor_factory.TransactionFactory
+	taskQueueRepository       repositories.TaskQueueRepository
+}
+
+func (usecase *ScenarioIterationUsecase) ListScenarioIterations(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	filters models.GetScenarioIterationFilters,
+) ([]models.ScenarioIteration, error) {
+	scenarioIterations, err := usecase.repository.ListScenarioIterations(ctx,
+		usecase.executorFactory.NewExecutor(), organizationId, filters)
+	if err != nil {
+		return nil, err
+	}
+	for _, si := range scenarioIterations {
+		if err := usecase.enforceSecurity.ReadScenarioIteration(si.ToMetadata()); err != nil {
+			return nil, err
+		}
+	}
+	return scenarioIterations, nil
+}
+
+func (usecase *ScenarioIterationUsecase) ListScenarioIterationsMetadata(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	filters models.GetScenarioIterationFilters,
+) ([]models.ScenarioIterationMetadata, error) {
+	scenarioIterations, err := usecase.repository.ListScenarioIterationsMetadata(ctx,
+		usecase.executorFactory.NewExecutor(), organizationId, filters)
+	if err != nil {
+		return nil, err
+	}
+	for _, si := range scenarioIterations {
+		if err := usecase.enforceSecurity.ReadScenarioIteration(si); err != nil {
+			return nil, err
+		}
+	}
+	return scenarioIterations, nil
+}
+
+func (usecase *ScenarioIterationUsecase) GetScenarioIteration(ctx context.Context,
+	scenarioIterationId string,
+) (models.ScenarioIteration, error) {
+	si, err := usecase.repository.GetScenarioIteration(ctx,
+		usecase.executorFactory.NewExecutor(), scenarioIterationId, false)
+	if err != nil {
+		return models.ScenarioIteration{}, err
+	}
+
+	scc, err := usecase.screeningConfigRepository.ListScreeningConfigs(ctx,
+		usecase.executorFactory.NewExecutor(), si.Id, false)
+	if err != nil {
+		return models.ScenarioIteration{}, errors.Wrap(err,
+			"could not retrieve screening config while getting scenario iteration")
+	}
+	si.ScreeningConfigs = scc
+
+	for idx, scc := range si.ScreeningConfigs {
+		// We need to backport the legacy "datasets" configuration into the new filter tree.
+		if scc.Provider == models.ScreeningProviderOpenSanctions && scc.Filters.IsEmpty() {
+			upstreamCatalog, err := usecase.screeningProvider.GetCatalog(ctx, models.ScreeningProviderOpenSanctions)
+			if err != nil {
+				return models.ScenarioIteration{}, err
+			}
+
+			catalog := dto.AdaptOpenSanctionsCatalog(upstreamCatalog)
+
+			scc.Filters = models.ScreeningConfigFilters{
+				Sanctions:    &models.ScreeningConfigFilter{Datasets: make([]string, 0)},
+				Peps:         &models.ScreeningConfigFilter{Datasets: make([]string, 0)},
+				AdverseMedia: &models.ScreeningConfigFilter{Datasets: make([]string, 0)},
+				Other:        &models.ScreeningConfigFilter{Datasets: make([]string, 0)},
+			}
+
+			for _, ds := range scc.Datasets {
+				for _, s := range catalog.Sections {
+					for _, d := range s.Datasets {
+						if d.Name == ds {
+							switch d.Tag {
+							case "sanctions":
+								scc.Filters.Sanctions.Enabled = true
+								scc.Filters.Sanctions.Datasets = append(scc.Filters.Sanctions.Datasets, ds)
+							case "peps":
+								scc.Filters.Peps.Enabled = true
+								scc.Filters.Peps.Datasets = append(scc.Filters.Peps.Datasets, ds)
+							case "adverse-media":
+								scc.Filters.AdverseMedia.Enabled = true
+								scc.Filters.AdverseMedia.Datasets = append(scc.Filters.AdverseMedia.Datasets, ds)
+							default:
+								scc.Filters.Other.Enabled = true
+								scc.Filters.Other.Datasets = append(scc.Filters.Other.Datasets, ds)
+							}
+						}
+					}
+				}
+			}
+
+			si.ScreeningConfigs[idx] = scc
+		}
+	}
+
+	if err := usecase.enforceSecurity.ReadScenarioIteration(si.ToMetadata()); err != nil {
+		return models.ScenarioIteration{}, err
+	}
+	return si, nil
+}
+
+func (usecase *ScenarioIterationUsecase) CreateScenarioIteration(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	scenarioIteration models.CreateScenarioIterationInput,
+) (models.ScenarioIteration, error) {
+	if err := usecase.enforceSecurity.CreateScenario(organizationId); err != nil {
+		return models.ScenarioIteration{}, err
+	}
+
+	exec := usecase.executorFactory.NewExecutor()
+
+	org, err := usecase.scenarioFetcher.Repository.GetOrganizationById(ctx, exec, organizationId)
+	if err != nil {
+		return models.ScenarioIteration{}, err
+	}
+
+	scenario, err := usecase.scenarioFetcher.FetchScenario(ctx, exec, scenarioIteration.ScenarioId, org.GetScreeningProviderFor(models.ScreeningFeatureTransactionMonitoring))
+	if err != nil {
+		return models.ScenarioIteration{}, err
+	}
+	if err := usecase.enforceSecurity.ReadScenario(scenario); err != nil {
+		return models.ScenarioIteration{}, err
+	}
+
+	b := scenarioIteration.Body
+	if b.Schedule != "" {
+		gron := gronx.New()
+		ok := gron.IsValid(b.Schedule)
+		if !ok {
+			return models.ScenarioIteration{}, fmt.Errorf("invalid schedule: %w", models.BadParameterError)
+		}
+	}
+
+	if b.ScoreReviewThreshold == nil {
+		b.ScoreReviewThreshold = utils.Ptr(defaultReviewThreshold)
+	}
+	if b.ScoreBlockAndReviewThreshold == nil {
+		b.ScoreBlockAndReviewThreshold = utils.Ptr(defaultBlockAndReviewThreshold)
+	}
+	if b.ScoreDeclineThreshold == nil {
+		b.ScoreDeclineThreshold = utils.Ptr(defaultDeclineThreshold)
+	}
+	scenarioIteration.Body = b
+
+	si, err := usecase.repository.CreateScenarioIterationAndRules(ctx,
+		usecase.executorFactory.NewExecutor(), organizationId, scenarioIteration)
+	if err != nil {
+		return models.ScenarioIteration{}, err
+	}
+
+	tracking.TrackEvent(ctx, models.AnalyticsScenarioIterationCreated, map[string]interface{}{
+		"scenario_iteration_id": si.Id,
+	})
+
+	return si, nil
+}
+
+func (usecase *ScenarioIterationUsecase) UpdateScenarioIteration(ctx context.Context,
+	organizationId uuid.UUID, scenarioIteration models.UpdateScenarioIterationInput,
+) (iteration models.ScenarioIteration, err error) {
+	updatedScenarioIteration, err := executor_factory.TransactionReturnValue(
+		ctx,
+		usecase.transactionFactory,
+		func(tx repositories.Transaction) (models.ScenarioIteration, error) {
+			scenarioAndIteration, err := usecase.scenarioFetcher.FetchScenarioAndIteration(ctx, tx, scenarioIteration.Id)
+			if err != nil {
+				return iteration, err
+			}
+			if err := usecase.enforceSecurity.UpdateScenario(scenarioAndIteration.Scenario); err != nil {
+				return iteration, err
+			}
+
+			body := scenarioIteration.Body
+			if body.Schedule != nil && *body.Schedule != "" {
+				gron := gronx.New()
+				ok := gron.IsValid(*body.Schedule)
+				if !ok {
+					return iteration, fmt.Errorf("invalid schedule: %w", models.BadParameterError)
+				}
+			}
+			if scenarioAndIteration.Iteration.Version != nil {
+				return iteration, errors.Wrap(
+					models.ErrScenarioIterationNotDraft,
+					fmt.Sprintf("iteration %s is not a draft", scenarioAndIteration.Iteration.Id),
+				)
+			}
+
+			return usecase.repository.UpdateScenarioIteration(ctx, tx, scenarioIteration)
+		})
+	if err != nil {
+		return models.ScenarioIteration{}, err
+	}
+
+	return updatedScenarioIteration, nil
+}
+
+func (usecase *ScenarioIterationUsecase) CreateDraftFromScenarioIteration(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	scenarioIterationId string,
+) (models.ScenarioIteration, error) {
+	if err := usecase.enforceSecurity.CreateScenario(organizationId); err != nil {
+		return models.ScenarioIteration{}, err
+	}
+
+	newScenarioIteration, err := executor_factory.TransactionReturnValue(
+		ctx,
+		usecase.transactionFactory,
+		func(tx repositories.Transaction) (models.ScenarioIteration, error) {
+			si, err := usecase.repository.GetScenarioIteration(ctx, tx, scenarioIterationId, false)
+			if err != nil {
+				return models.ScenarioIteration{}, err
+			}
+			if err := usecase.enforceSecurity.ReadOrganization(si.OrganizationId); err != nil {
+				return models.ScenarioIteration{}, err
+			}
+
+			screeningConfigs, err := usecase.screeningConfigRepository.ListScreeningConfigs(ctx, tx, si.Id, false)
+			if err != nil {
+				return models.ScenarioIteration{}, errors.Wrap(err,
+					"could not retrieve screening config while creating draft")
+			}
+
+			scenarioId, err := uuid.Parse(si.ScenarioId)
+			if err != nil {
+				return models.ScenarioIteration{}, err
+			}
+			iterations, err := usecase.repository.ListScenarioIterations(
+				ctx,
+				tx,
+				organizationId,
+				models.GetScenarioIterationFilters{ScenarioId: scenarioId},
+			)
+			if err != nil {
+				return models.ScenarioIteration{}, err
+			}
+			for _, iteration := range iterations {
+				if iteration.Version == nil {
+					err = usecase.repository.DeleteScenarioIteration(ctx, tx, iteration.Id)
+					if err != nil {
+						return models.ScenarioIteration{}, err
+					}
+				}
+			}
+			createScenarioIterationInput := models.CreateScenarioIterationInput{
+				ScenarioId: si.ScenarioId,
+				Body: models.CreateScenarioIterationBody{
+					ScoreReviewThreshold:          si.ScoreReviewThreshold,
+					ScoreBlockAndReviewThreshold:  si.ScoreBlockAndReviewThreshold,
+					ScoreDeclineThreshold:         si.ScoreDeclineThreshold,
+					Schedule:                      si.Schedule,
+					Rules:                         make([]models.CreateRuleInput, len(si.Rules)),
+					TriggerConditionAstExpression: si.TriggerConditionAstExpression,
+				},
+			}
+			for i, rule := range si.Rules {
+				createScenarioIterationInput.Body.Rules[i] = models.CreateRuleInput{
+					DisplayOrder:         rule.DisplayOrder,
+					Name:                 rule.Name,
+					Description:          rule.Description,
+					AiDescription:        rule.AiDescription,
+					FormulaAstExpression: rule.FormulaAstExpression,
+					ScoreModifier:        rule.ScoreModifier,
+					RuleGroup:            rule.RuleGroup,
+					SnoozeGroupId:        rule.SnoozeGroupId,
+					StableRuleId:         rule.StableRuleId,
+				}
+			}
+
+			newScenarioIteration, err := usecase.repository.CreateScenarioIterationAndRules(
+				ctx, tx, organizationId, createScenarioIterationInput)
+
+			if len(screeningConfigs) > 0 {
+				newScreeningConfigs := pure_utils.Map(screeningConfigs, func(
+					scc models.ScreeningConfig,
+				) models.UpdateScreeningConfigInput {
+					return models.UpdateScreeningConfigInput{
+						StableId:                 &scc.StableId,
+						Name:                     &scc.Name,
+						Description:              &scc.Description,
+						RuleGroup:                scc.RuleGroup,
+						EntityType:               &scc.EntityType,
+						Provider:                 &scc.Provider,
+						Datasets:                 scc.Datasets,
+						Filters:                  &scc.Filters,
+						Threshold:                scc.Threshold,
+						TriggerRule:              scc.TriggerRule,
+						CounterpartyIdExpression: scc.CounterpartyIdExpression,
+						Query:                    scc.Query,
+						ForcedOutcome:            &scc.ForcedOutcome,
+						Preprocessing:            &scc.Preprocessing,
+						ConfigVersion:            scc.ConfigVersion,
+						Weights:                  scc.Weights,
+					}
+				})
+
+				for _, scc := range newScreeningConfigs {
+					if _, err := usecase.screeningConfigRepository.CreateScreeningConfig(
+						ctx, tx, newScenarioIteration.Id, scc); err != nil {
+						return models.ScenarioIteration{}, errors.Wrap(err,
+							"could not duplicate screening config for new iteration")
+					}
+				}
+			}
+
+			return newScenarioIteration, err
+		})
+	if err != nil {
+		return models.ScenarioIteration{}, err
+	}
+
+	tracking.TrackEvent(ctx, models.AnalyticsScenarioIterationCreated, map[string]interface{}{
+		"scenario_iteration_id": newScenarioIteration.Id,
+	})
+
+	return newScenarioIteration, nil
+}
+
+// Return a validation by running the scenario using fake data
+// If `triggerOrRuleToReplace` is provided, it is used during the validation.
+// If `replaceRuleId` is provided, the corresponding rule is replaced.
+// if `replaceRuleId` is nil, the trigger is replaced.
+func (usecase *ScenarioIterationUsecase) ValidateScenarioIteration(ctx context.Context,
+	iterationId string, triggerOrRuleToReplace *ast.Node, ruleIdToReplace *string,
+) (validation models.ScenarioValidation, err error) {
+	scenarioAndIteration, err := usecase.scenarioFetcher.FetchScenarioAndIteration(ctx,
+		usecase.executorFactory.NewExecutor(), iterationId)
+	if err != nil {
+		return validation, err
+	}
+
+	if err := usecase.enforceSecurity.ReadScenarioIteration(
+		scenarioAndIteration.Iteration.ToMetadata()); err != nil {
+		return validation, err
+	}
+
+	scenarioAndIteration, err = replaceTriggerOrRule(scenarioAndIteration,
+		triggerOrRuleToReplace, ruleIdToReplace)
+	if err != nil {
+		return validation, err
+	}
+	validation, err = usecase.validateScenarioIteration.Validate(ctx, scenarioAndIteration), nil
+	return validation, err
+}
+
+func (usecase *ScenarioIterationUsecase) CommitScenarioIterationVersion(
+	ctx context.Context,
+	iterationId string,
+) (iteration models.ScenarioIteration, err error) {
+	return executor_factory.TransactionReturnValue(
+		ctx,
+		usecase.transactionFactory,
+		func(tx repositories.Transaction) (models.ScenarioIteration, error) {
+			scenarioAndIteration, err := usecase.scenarioFetcher.FetchScenarioAndIteration(ctx, tx, iterationId)
+			if err != nil {
+				return iteration, err
+			}
+			if err := usecase.enforceSecurity.UpdateScenario(scenarioAndIteration.Scenario); err != nil {
+				return iteration, err
+			}
+			if scenarioAndIteration.Iteration.Version != nil {
+				return iteration, errors.Wrap(
+					models.ErrScenarioIterationNotDraft,
+					fmt.Sprintf("input scenario iteration %s is a draft in CommitScenarioIterationVersion", iterationId),
+				)
+			}
+			validation := usecase.validateScenarioIteration.Validate(ctx, scenarioAndIteration)
+			if err := scenarios.ScenarioValidationToError(validation); err != nil {
+				return iteration, errors.Wrap(models.BadParameterError,
+					fmt.Sprintf("Scenario iteration %s is not valid", iterationId),
+				)
+			}
+
+			if err := usecase.enqueueRuleDescriptionJobs(ctx, tx, scenarioAndIteration); err != nil {
+				return iteration, err
+			}
+
+			version, err := usecase.getScenarioVersion(
+				ctx,
+				tx,
+				scenarioAndIteration.Scenario.OrganizationId,
+				scenarioAndIteration.Scenario.Id,
+			)
+			if err != nil {
+				return iteration, err
+			}
+			if err = usecase.repository.UpdateScenarioIterationVersion(ctx, tx, iterationId, version); err != nil {
+				return iteration, err
+			}
+			return usecase.repository.GetScenarioIteration(ctx, tx, iterationId, false)
+		},
+	)
+}
+
+// enqueueRuleDescriptionJobs enqueues one background AI-description job per
+// rule in scenarioAndIteration whose formula is new or changed compared to
+// the scenario's previously committed iteration. Must run before the
+// iteration being committed is assigned a version, so it isn't mistaken for
+// an already-committed "previous" iteration.
+func (usecase *ScenarioIterationUsecase) enqueueRuleDescriptionJobs(
+	ctx context.Context,
+	tx repositories.Transaction,
+	scenarioAndIteration models.ScenarioAndIteration,
+) error {
+	ruleIds := ai_agent.RulesNeedingAiDescriptionGeneration(scenarioAndIteration.Iteration.Rules)
+
+	for _, ruleId := range ruleIds {
+		if err := usecase.taskQueueRepository.EnqueueRuleDescriptionTask(
+			ctx, tx, scenarioAndIteration.Scenario.OrganizationId, ruleId,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func replaceTriggerOrRule(scenarioAndIteration models.ScenarioAndIteration,
+	triggerOrRuleToReplace *ast.Node, ruleIdToReplace *string,
+) (models.ScenarioAndIteration, error) {
+	if triggerOrRuleToReplace != nil {
+		if ruleIdToReplace != nil {
+			var found bool
+			for index, rule := range scenarioAndIteration.Iteration.Rules {
+				if rule.Id == *ruleIdToReplace {
+					scenarioAndIteration.Iteration.Rules[index].FormulaAstExpression = triggerOrRuleToReplace
+					found = true
+					break
+				}
+			}
+			if !found {
+				return scenarioAndIteration, fmt.Errorf("rule not found: %w", models.NotFoundError)
+			}
+		} else {
+			scenarioAndIteration.Iteration.TriggerConditionAstExpression = triggerOrRuleToReplace
+		}
+	}
+
+	return scenarioAndIteration, nil
+}
+
+func (usecase *ScenarioIterationUsecase) getScenarioVersion(
+	ctx context.Context,
+	exec repositories.Executor,
+	organizationId uuid.UUID,
+	scenarioId string,
+) (int, error) {
+	scenarioIdUuid, err := uuid.Parse(scenarioId)
+	if err != nil {
+		return 0, err
+	}
+	scenarioIterations, err := usecase.repository.ListScenarioIterations(
+		ctx,
+		exec,
+		organizationId,
+		models.GetScenarioIterationFilters{ScenarioId: scenarioIdUuid},
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	var latestVersion int
+	for _, scenarioIteration := range scenarioIterations {
+		if scenarioIteration.Version != nil && *scenarioIteration.Version > latestVersion {
+			latestVersion = *scenarioIteration.Version
+		}
+	}
+	newVersion := latestVersion + 1
+
+	return newVersion, nil
+}

@@ -1,0 +1,54 @@
+# VCS
+.git
+.gitignore
+**/.gitignore
+**/.github
+
+# IDE
+.idea
+.vscode
+**/.vscode
+
+# Node/Bun deps in context (use layer caching instead)
+**/node_modules
+node_modules
+
+# Build outputs
+packages/app-builder/build
+**/.output
+**/.nitro
+**/build
+**/dist
+
+# Caches and tooling
+**/.cache
+**/.eslintcache
+**/.next
+**/.turbo
+**/.vite
+**/coverage
+
+# Tests, reports, and stories
+**/*.test.*
+**/__tests__
+**/playwright-report
+**/storybook-static
+**/test-results
+
+# Local and misc
+.env
+.env.*
+**/.env
+**/.aws
+**/.ssh
+**/.DS_Store
+*.local
+*.log
+**/env
+**/venv
+
+# Project files (root)
+.dockerignore
+Dockerfile
+README.md
+docker-compose.yml

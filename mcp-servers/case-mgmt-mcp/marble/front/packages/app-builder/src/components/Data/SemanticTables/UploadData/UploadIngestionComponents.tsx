@@ -1,0 +1,427 @@
+import { type TableModel } from '@app-builder/models';
+import { useUploadIngestionData } from '@app-builder/queries/upload-ingestion-data';
+import { formatNumber, useFormatDateTime, useFormatLanguage } from '@app-builder/utils/format';
+import { REQUEST_TIMEOUT } from '@app-builder/utils/http/http-status-codes';
+import { createColumnHelper, getCoreRowModel } from '@tanstack/react-table';
+import clsx from 'clsx';
+import { type ParseKeys } from 'i18next';
+import { type UploadLog } from 'marble-api';
+import { type ReactNode, useCallback, useMemo, useRef, useState } from 'react';
+import { useDropzone } from 'react-dropzone-esm';
+import { useTranslation } from 'react-i18next';
+import * as R from 'remeda';
+import { Button, CtaV2ClassName, Modal, Table, useVirtualTable } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+
+export const MAX_FILE_SIZE_MB = 32;
+export const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
+
+export const generateCsvTemplateLink = (table: TableModel): string => {
+  const csvContent = table.fields.map((field) => field.name).join(',') + '\n';
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8,' });
+  return URL.createObjectURL(blob);
+};
+
+export function DownloadCsvTemplate({ tableModel, objectType }: { tableModel: TableModel; objectType: string }) {
+  const { t } = useTranslation(['upload']);
+
+  return (
+    <a
+      href={generateCsvTemplateLink(tableModel)}
+      download={`${objectType}_template.csv`}
+      className={CtaV2ClassName({ variant: 'secondary' })}
+    >
+      <Icon icon="download" className="me-sm size-6" />
+      {t('upload:download_template_cta')}
+    </a>
+  );
+}
+
+export const getStatusIcon = (status: string) => {
+  if (status === 'success') {
+    return <Icon icon="tick" className="text-green-primary size-6" />;
+  }
+  if (status === 'failure') {
+    return <Icon icon="cross" className="text-red-primary size-6" />;
+  }
+  return <Icon icon="restart-alt" className="text-grey-secondary size-6" />;
+};
+
+export const getStatusTKey = (status: string): ParseKeys<['upload']> => {
+  if (status === 'success') {
+    return 'upload:status_success';
+  }
+  if (status === 'failure') {
+    return 'upload:status_failure';
+  }
+  if (status === 'processing') {
+    return 'upload:status_processing';
+  }
+  return 'upload:status_pending';
+};
+
+type ModalContent = {
+  message: string;
+  success: boolean;
+  error?: string;
+};
+
+export const ResultModal = ({
+  onOpenChange,
+  isOpen,
+  modalContent,
+  objectType,
+}: {
+  onOpenChange: () => void;
+  isOpen: boolean;
+  modalContent: ModalContent;
+  objectType: string;
+}) => {
+  const { t } = useTranslation(['upload', 'common']);
+  const icon = modalContent.success ? 'tick' : 'cross';
+
+  const errorMessage = (errorString?: string): string | undefined => {
+    if (errorString) {
+      try {
+        const error = JSON.parse(errorString);
+        if ('message' in error) return error.message;
+      } catch (_error) {
+        return errorString;
+      }
+    }
+    return errorString;
+  };
+
+  return (
+    <Modal.Root open={isOpen} onOpenChange={onOpenChange}>
+      <Modal.Content>
+        <div className="bg-surface-card text-s flex flex-col items-center gap-lg p-lg">
+          <Icon
+            icon={icon}
+            className={clsx(
+              'size-[108px] rounded-full border-8',
+              modalContent.success
+                ? 'bg-purple-background border-transparent text-purple-primary'
+                : 'bg-red-background border-transparent text-red-primary',
+            )}
+          />
+          <div className="flex flex-col items-center gap-sm">
+            <p className="text-l font-semibold">{t('upload:results')}</p>
+            <p>{modalContent.message}</p>
+            {!modalContent.success ? (
+              <>
+                <p className="first-letter:capitalize">{errorMessage(modalContent.error)}</p>
+                <p className="mt-lg">
+                  {t('upload:failure_additional_message', {
+                    replace: { objectType },
+                  })}
+                </p>
+              </>
+            ) : null}
+          </div>
+        </div>
+        <Modal.Footer>
+          <Modal.FooterButton isCloseButton label={t('common:understand')} leadingIcon="tick" />
+        </Modal.Footer>
+      </Modal.Content>
+    </Modal.Root>
+  );
+};
+
+/**
+ * Extra form fields a step can contribute to the upload request. Steps own their
+ * own field names, so the parent form stays agnostic about what each step collects.
+ * String arrays are appended as repeated FormData keys (e.g. monitoring_config_id).
+ */
+export type UploadFormStepData = Record<string, string | Blob | string[]>;
+
+export type UploadFormIntermediateStepProps = {
+  file: File;
+  onNext: (data?: UploadFormStepData) => void;
+  onBack: () => void;
+};
+
+export type UploadFormIntermediateStep = (props: UploadFormIntermediateStepProps) => ReactNode;
+
+export const UploadForm = ({
+  objectType,
+  onSuccess,
+  intermediateSteps = [],
+}: {
+  objectType: string;
+  onSuccess?: (uploadLog: UploadLog) => void;
+  intermediateSteps?: UploadFormIntermediateStep[];
+}) => {
+  const { t } = useTranslation(['upload', 'common']);
+  const [loading, setLoading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [stepIndex, setStepIndex] = useState(0);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalContent, setModalContent] = useState<ModalContent>({
+    message: '',
+    success: true,
+  });
+  const uploadIngestionData = useUploadIngestionData(objectType);
+  const uploadStepDataRef = useRef<UploadFormStepData>({});
+
+  const hasIntermediateSteps = intermediateSteps.length > 0;
+  const showIntermediateStep = hasIntermediateSteps && selectedFile !== null && !loading;
+
+  const resetFileSelection = useCallback(() => {
+    setSelectedFile(null);
+    setStepIndex(0);
+    uploadStepDataRef.current = {};
+  }, []);
+
+  const computeModalMessage = useCallback(
+    ({
+      success,
+      linesProcessed,
+      errorMessage,
+    }: {
+      success: boolean;
+      linesProcessed?: number;
+      errorMessage?: string;
+    }) => {
+      if (success) {
+        setModalContent({
+          message: t('upload:success_message', {
+            replace: { linesProcessed, objectType },
+          }),
+          success: true,
+        });
+      } else {
+        setModalContent({
+          message: t('upload:failure_message'),
+          error: errorMessage,
+          success: false,
+        });
+      }
+    },
+    [objectType, t],
+  );
+
+  const ingestFile = useCallback(
+    async (file: File, stepData?: UploadFormStepData) => {
+      try {
+        setLoading(true);
+        const formData = new FormData();
+        formData.append('file', file);
+        for (const [key, value] of Object.entries(stepData ?? {})) {
+          if (Array.isArray(value)) {
+            for (const item of value) {
+              formData.append(key, item);
+            }
+            continue;
+          }
+          formData.append(key, value);
+        }
+
+        const response = await uploadIngestionData.mutateAsync(formData);
+        if (!response.ok) {
+          setIsModalOpen(true);
+          let errorMessage: string | undefined;
+          if (response.status === REQUEST_TIMEOUT) {
+            errorMessage = t('upload:errors.request_timeout');
+          } else {
+            errorMessage = (await response.text()).trim();
+          }
+          computeModalMessage({
+            success: false,
+            errorMessage: errorMessage ?? t('common:global_error'),
+          });
+          return;
+        }
+
+        const uploadLog = (await response.json()) as UploadLog;
+        setIsModalOpen(true);
+        computeModalMessage({
+          success: true,
+          linesProcessed: uploadLog.lines_processed,
+        });
+        onSuccess?.(uploadLog);
+      } catch (error) {
+        setIsModalOpen(true);
+        computeModalMessage({
+          success: false,
+          errorMessage: error instanceof Error ? error.message : t('common:global_error'),
+        });
+      } finally {
+        setLoading(false);
+        resetFileSelection();
+      }
+    },
+    [computeModalMessage, onSuccess, resetFileSelection, t, uploadIngestionData],
+  );
+
+  const onDrop = (acceptedFiles: File[]) => {
+    if (!R.hasAtLeast(acceptedFiles, 1)) {
+      return;
+    }
+    const file = acceptedFiles[0];
+    if (hasIntermediateSteps) {
+      setSelectedFile(file);
+      setStepIndex(0);
+      return;
+    }
+    void ingestFile(file);
+  };
+
+  const handleStepNext = (data?: UploadFormStepData) => {
+    if (!selectedFile) return;
+    if (data) {
+      uploadStepDataRef.current = { ...uploadStepDataRef.current, ...data };
+    }
+    if (stepIndex < intermediateSteps.length - 1) {
+      setStepIndex((index) => index + 1);
+      return;
+    }
+    void ingestFile(selectedFile, uploadStepDataRef.current);
+  };
+
+  const handleStepBack = () => {
+    if (stepIndex > 0) {
+      setStepIndex((index) => index - 1);
+      return;
+    }
+    resetFileSelection();
+  };
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop: (acceptedFiles) => {
+      onDrop(acceptedFiles);
+    },
+    accept: { 'text/*': ['.csv'] },
+    multiple: false,
+    maxSize: MAX_FILE_SIZE,
+  });
+
+  return (
+    <>
+      {loading ? <UploadFormLoading /> : null}
+      {showIntermediateStep && selectedFile
+        ? intermediateSteps[stepIndex]!({
+            file: selectedFile,
+            onNext: handleStepNext,
+            onBack: handleStepBack,
+          })
+        : null}
+      {!loading && !showIntermediateStep ? (
+        <div
+          {...getRootProps()}
+          className={clsx(
+            'text-s flex h-60 flex-col items-center justify-center gap-md rounded-sm border-2 border-dashed',
+            isDragActive ? 'bg-purple-background border-purple-disabled opacity-90' : 'border-grey-placeholder',
+          )}
+        >
+          <input {...getInputProps()} />
+          <p>{t('upload:drop_file_cta')}</p>
+          <p className="text-grey-secondary uppercase">{t('common:or')}</p>
+          <Button variant="primary">
+            <Icon icon="plus" className="size-5" />
+            {t('upload:pick_file_cta')}
+          </Button>
+        </div>
+      ) : null}
+      <ResultModal
+        isOpen={isModalOpen}
+        modalContent={modalContent}
+        objectType={objectType}
+        onOpenChange={() => setIsModalOpen(!isModalOpen)}
+      />
+    </>
+  );
+};
+
+export const UploadFormLoading = ({ className }: { className?: string }) => {
+  const { t } = useTranslation(['common']);
+  return (
+    <div
+      className={clsx(
+        className,
+        'border-grey-placeholder flex h-60 flex-col items-center justify-center gap-md rounded-sm border-2 border-dashed',
+      )}
+    >
+      {t('common:loading')}
+    </div>
+  );
+};
+
+const columnHelper = createColumnHelper<UploadLog>();
+
+export const PastUploads = ({ uploadLogs }: { uploadLogs: UploadLog[] }) => {
+  const { t } = useTranslation(['upload']);
+  const language = useFormatLanguage();
+  const formatDateTime = useFormatDateTime();
+
+  const columns = useMemo(
+    () => [
+      columnHelper.accessor((row) => row.started_at, {
+        id: 'upload.started_at',
+        header: t('upload:started_at'),
+        size: 160,
+        cell: ({ getValue }) => {
+          const dateTime = getValue();
+          return (
+            <time dateTime={dateTime}>{formatDateTime(dateTime, { dateStyle: 'short', timeStyle: 'short' })}</time>
+          );
+        },
+      }),
+      columnHelper.accessor((row) => row.finished_at, {
+        id: 'upload.finished_at',
+        header: t('upload:finished_at'),
+        size: 160,
+        cell: ({ getValue }) => {
+          const dateTime = getValue();
+          if (!dateTime) return '';
+          return (
+            <time dateTime={dateTime}>{formatDateTime(dateTime, { dateStyle: 'short', timeStyle: 'short' })}</time>
+          );
+        },
+      }),
+      columnHelper.accessor((row) => row.lines_processed, {
+        id: 'upload.lines_processed',
+        cell: ({ getValue }) => <span>{formatNumber(getValue(), { language })}</span>,
+        header: t('upload:lines_processed'),
+        size: 130,
+      }),
+      columnHelper.accessor((row) => row.num_rows_ingested, {
+        id: 'upload.num_rows_ingested',
+        cell: ({ getValue }) => <span>{formatNumber(getValue(), { language })}</span>,
+        header: t('upload:num_rows_ingested'),
+        size: 130,
+      }),
+      columnHelper.accessor((row) => row.status, {
+        id: 'upload.status',
+        cell: ({ getValue }) => (
+          <div className="flex flex-row items-center gap-sm">
+            {getStatusIcon(getValue())}
+            <p className="capitalize">{t(getStatusTKey(getValue()))}</p>
+          </div>
+        ),
+        header: t('upload:upload_status'),
+        size: 130,
+      }),
+    ],
+    [formatDateTime, language, t],
+  );
+
+  const { getBodyProps, getContainerProps, table, rows } = useVirtualTable({
+    data: uploadLogs,
+    columns,
+    columnResizeMode: 'onChange',
+    getCoreRowModel: getCoreRowModel(),
+    enableSorting: false,
+  });
+
+  return (
+    <Table.Container {...getContainerProps()} className="max-h-96">
+      <Table.Header headerGroups={table.getHeaderGroups()} />
+      <Table.Body {...getBodyProps()}>
+        {rows.map((row) => (
+          <Table.Row key={row.id} row={row} />
+        ))}
+      </Table.Body>
+    </Table.Container>
+  );
+};

@@ -1,0 +1,29 @@
+import { useTranslation } from 'react-i18next';
+import { useSpinDelay } from 'spin-delay';
+import { cn } from 'ui-design-system';
+import { Icon, type IconName } from 'ui-icons';
+
+interface SpinnerProps {
+  className?: string;
+}
+
+export function Spinner({ className }: SpinnerProps) {
+  const { t } = useTranslation(['common']);
+  return (
+    <span role="status" className="inline-flex items-center justify-center">
+      <span
+        aria-hidden
+        className={cn(
+          'border-purple-background border-r-purple-primary box-border shrink-0 animate-spin rounded-full border-2 border-solid inline-block',
+          className,
+        )}
+      />
+      <span className="sr-only">{t('common:loading')}</span>
+    </span>
+  );
+}
+
+export function LoadingIcon({ className, loading, icon }: { className?: string; icon: IconName; loading: boolean }) {
+  const showSpinner = useSpinDelay(loading);
+  return showSpinner ? <Spinner className={className} /> : <Icon icon={icon} className={className} />;
+}

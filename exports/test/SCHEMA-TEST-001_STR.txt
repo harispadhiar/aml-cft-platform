@@ -1,0 +1,34 @@
+SUSPICIOUS TRANSACTION REPORT
+Filing Reference: STR-SCHEMA-TEST-001-20260906
+Timestamp:        2026-09-06T10:42:51.510927+00:00
+
+REPORTING ENTITY
+  name: Pilot Bank Pakistan
+  sbp_code: SBP-PILOT-001
+  branch: Head Office, Karachi
+
+SUBJECT
+  Customer ID: CUST-000001
+  Risk Tier:   High
+
+NARRATIVE
+The subject made 10 deposits of PKR 950,000 within 48 hours. A True Positive NACTA match was identified. Reported per SBP AML/CFT Regulations 2020 Clause 3 and FATF Recommendation 10.
+
+HUMAN APPROVAL CHAIN
+  G01 | System (AUTOMATION) | ADVANCE | 2026-09-06T10:42:51
+  G02 | System (AUTOMATION) | ADVANCE | 2026-09-06T10:42:51
+  G03 | Analyst (Analyst) | ADVANCE | 2026-09-06T10:42:51
+  G04 | System (AUTOMATION) | ADVANCE | 2026-09-06T10:42:51
+  G05 | System (AUTOMATION) | ADVANCE | 2026-09-06T10:42:51
+  G06 | Analyst (Analyst) | ADVANCE | 2026-09-06T10:42:51
+  G07 | Analyst (Analyst) | ADVANCE | 2026-09-06T10:42:51
+  G08 | Analyst (Analyst) | ADVANCE | 2026-09-06T10:42:51
+  G09 | MLRO (MLRO) | ADVANCE | 2026-09-06T10:42:51
+  G10 | Analyst (Analyst) | ADVANCE | 2026-09-06T10:42:51
+  G11 | Analyst (Analyst) | ADVANCE | 2026-09-06T10:42:51
+  G12 | MLRO (MLRO) | ADVANCE | 2026-09-06T10:42:51
+  G13 | Analyst (Analyst) | ADVANCE | 2026-09-06T10:42:51
+  G14 | Analyst (Analyst) | ADVANCE | 2026-09-06T10:42:51
+  G15 | MLRO (MLRO) | ADVANCE | 2026-09-06T10:42:51
+  G16 | MLRO (MLRO) | ADVANCE | 2026-09-06T10:42:51
+  G17 | System (AUTOMATION) | ADVANCE | 2026-09-06T10:42:51

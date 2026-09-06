@@ -1,0 +1,26 @@
+{
+  "name": "ui-icons",
+  "version": "1.0.0",
+  "description": "",
+  "sideEffect": false,
+  "type": "module",
+  "scripts": {
+    "lint": "biome lint",
+    "type-check": "tsc --noEmit",
+    "generate-icons": "tsx scripts/generate.ts && biome check --write ./src/generated"
+  },
+  "devDependencies": {
+    "@types/node": "25.6.2",
+    "@types/react": "18.3.24",
+    "@types/svg-sprite": "^0.0.39",
+    "ora": "^8.2.0",
+    "react": "18.3.1",
+    "svg-sprite": "^2.0.4",
+    "tsx": "^4.22.4"
+  },
+  "author": "",
+  "license": "ISC",
+  "peerDependencies": {
+    "react": "18.3.1"
+  }
+}

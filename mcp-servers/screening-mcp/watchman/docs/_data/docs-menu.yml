@@ -1,0 +1,46 @@
+- label: Getting started
+  items:
+    - name: Overview
+      link: /
+    - name: What is Watchman?
+      link: /intro/
+
+- label: Usage
+  items:
+    - name: Docker
+      link: /usage-docker/
+    - name: Configuration
+      link: /config/
+    - name: Go library
+      link: /usage-go/
+    - name: MCP Server
+      link: /mcp/
+
+- label: Watchman search
+  items:
+    - name: Search options
+      link: /search/
+    - name: Addresses
+      link: /addresses/
+    - name: Cross-Script Matching
+      link: /cross-script-matching/
+    - name: Data Preparation Pipeline
+      link: /pipeline/
+    - name: Indexing
+      link: /indexing/
+    - name: Geocoding
+      link: /geocoding/
+    - name: File Dataset Ingestion
+      link: /ingest/
+
+- label: Risk Management
+  items:
+    - name: Scoring Methodology
+      link: /methodology/
+
+- label: Production and monitoring
+  items:
+    - name: Caching Data Files
+      link: /cache-data-files/
+    - name: Performance
+      link: /performance/

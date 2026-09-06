@@ -1,0 +1,141 @@
+import { authMiddleware } from '@app-builder/middlewares/auth-middleware';
+import { isForbiddenHttpError, isNotFoundHttpError, isUnauthorizedHttpError } from '@app-builder/models';
+import {
+  updateScoringRulesetPayloadSchema,
+  updateScoringSettingsPayloadSchema,
+} from '@app-builder/schemas/user-scoring';
+import { redirect } from '@tanstack/react-router';
+import { createServerFn } from '@tanstack/react-start';
+import { z } from 'zod/v4';
+
+export const commitScoringRulesetFn = createServerFn({ method: 'POST' })
+  .middleware([authMiddleware])
+  .validator(z.object({ recordType: z.string() }))
+  .handler(async ({ context, data }) => {
+    try {
+      const { recordType } = data;
+      const ruleset = await context.authInfo.userScoring.commitScoringRuleset(recordType);
+
+      if (!ruleset) {
+        throw new Error('No ruleset returned');
+      }
+
+      throw redirect({
+        to: '/user-scoring/$recordType/$version',
+        params: {
+          recordType,
+          version: ruleset.version.toString(),
+        },
+      });
+    } catch (error) {
+      if (error instanceof Response && error.status >= 300 && error.status < 400) throw error;
+      throw new Error('Failed to commit ruleset');
+    }
+  });
+
+export const listRulesetVersionsFn = createServerFn({ method: 'GET' })
+  .middleware([authMiddleware])
+  .validator(z.object({ recordType: z.string() }))
+  .handler(async ({ context, data }) => {
+    const versions = await context.authInfo.userScoring.listRulesetVersions(data.recordType);
+    return { versions };
+  });
+
+export const listRulesetsFn = createServerFn({ method: 'GET' })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    const rulesets = await context.authInfo.userScoring.listRulesets();
+    return { rulesets };
+  });
+
+export const prepareScoringRulesetFn = createServerFn({ method: 'POST' })
+  .middleware([authMiddleware])
+  .validator(z.object({ recordType: z.string() }))
+  .handler(async ({ context, data }) => {
+    try {
+      await context.authInfo.userScoring.prepareScoringRuleset(data.recordType);
+    } catch {
+      throw new Error('Failed to prepare ruleset');
+    }
+  });
+
+export const updateScoringRulesetFn = createServerFn({ method: 'POST' })
+  .middleware([authMiddleware])
+  .validator(updateScoringRulesetPayloadSchema)
+  .handler(async ({ context, data }) => {
+    const { recordType, id: rulesetId, ...rulesetPayload } = data;
+    const entityRulesets = await context.authInfo.userScoring.listRulesetVersions(recordType);
+
+    rulesetPayload.name = `Scores ${recordType}`;
+    const updatedRuleset = await context.authInfo.userScoring.updateScoringRuleset(recordType, rulesetPayload);
+
+    if (!rulesetId) {
+      throw redirect({
+        to: '/user-scoring/$recordType/$version',
+        params: { recordType, version: 'draft' },
+      });
+    }
+
+    const currentRuleset = entityRulesets.find((r) => r.id === rulesetId);
+    if (!currentRuleset) {
+      throw new Error('Non existing ruleset');
+    }
+
+    if (currentRuleset.status === 'committed' && updatedRuleset.status === 'draft') {
+      return updatedRuleset;
+    }
+  });
+
+export const updateScoringSettingsFn = createServerFn({ method: 'POST' })
+  .middleware([authMiddleware])
+  .validator(updateScoringSettingsPayloadSchema)
+  .handler(async ({ context, data }) => {
+    try {
+      await context.authInfo.userScoring.updateScoringSettings(data);
+    } catch {
+      throw new Error('Failed to update scoring settings');
+    }
+  });
+
+export const getScoringRulesetFn = createServerFn({ method: 'GET' })
+  .middleware([authMiddleware])
+  .validator(
+    z.object({
+      recordType: z.string(),
+      version: z.union([z.string(), z.number()]).optional(),
+    }),
+  )
+  .handler(async ({ context, data }) => {
+    const ruleset = await context.authInfo.userScoring.getRulesetWithRules(data.recordType, data.version);
+    return { ruleset };
+  });
+
+export const getScoreDistributionFn = createServerFn({ method: 'GET' })
+  .middleware([authMiddleware])
+  .validator(z.object({ recordType: z.string() }))
+  .handler(async ({ context, data }) => {
+    const distribution = await context.authInfo.userScoring.getScoreDistribution(data.recordType);
+    return { distribution };
+  });
+
+export const getScoringSettingsFn = createServerFn({ method: 'GET' })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    const settings = await context.authInfo.userScoring.getSettings();
+    return { settings: settings ?? null };
+  });
+
+export const getScoreLatestFn = createServerFn({ method: 'GET' })
+  .middleware([authMiddleware])
+  .validator(z.object({ objectType: z.string(), objectId: z.string() }))
+  .handler(async ({ context, data }) => {
+    try {
+      const score = await context.authInfo.userScoring.getScoreLatestWithEvaluation(data.objectType, data.objectId);
+      return { score: score ?? null };
+    } catch (error) {
+      if (isNotFoundHttpError(error) || isUnauthorizedHttpError(error) || isForbiddenHttpError(error)) {
+        return { score: null };
+      }
+      throw error;
+    }
+  });

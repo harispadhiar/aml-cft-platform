@@ -1,0 +1,329 @@
+package models
+
+import (
+	"github.com/google/uuid"
+)
+
+// run async decision job
+type AsyncDecisionArgs struct {
+	DecisionToCreateId   string `json:"decision_to_create_id"`
+	ObjectId             string `json:"object_id"`
+	ScheduledExecutionId string `json:"scheduled_execution_id"`
+	ScenarioIterationId  string `json:"scenario_iteration_id"`
+}
+
+func (AsyncDecisionArgs) Kind() string { return "async_decision" }
+
+// job that starts with a scheduled execution and performs book keeping on the scheduled execution status
+type ScheduledExecStatusSyncArgs struct {
+	ScheduledExecutionId string `json:"scheduled_execution_id"`
+}
+
+func (ScheduledExecStatusSyncArgs) Kind() string { return "scheduled_execution_status_sync" }
+
+type IndexCreationArgs struct {
+	OrgId   uuid.UUID       `json:"org_id"`
+	Indices []ConcreteIndex `json:"indices"`
+}
+
+func (IndexCreationArgs) Kind() string { return "index_creation" }
+
+type IndexCreationStatusArgs struct {
+	OrgId   uuid.UUID       `json:"org_id"`
+	Indices []ConcreteIndex `json:"indices"`
+}
+
+func (IndexCreationStatusArgs) Kind() string { return "index_creation_status" }
+
+type IndexCleanupArgs struct {
+	OrgId uuid.UUID `json:"org_id"`
+}
+
+func (IndexCleanupArgs) Kind() string { return "index_cleanup" }
+
+type IndexDeletionArgs struct {
+	OrgId uuid.UUID `json:"org_id"`
+}
+
+func (IndexDeletionArgs) Kind() string { return "index_deletion" }
+
+type IndexDeletionByNameArgs struct {
+	OrgId      uuid.UUID `json:"org_id"`
+	IndexNames []string  `json:"index_names"`
+}
+
+func (IndexDeletionByNameArgs) Kind() string { return "index_deletion_by_name" }
+
+type TestRunSummaryArgs struct {
+	OrgId uuid.UUID `json:"org_id"`
+}
+
+func (TestRunSummaryArgs) Kind() string { return "test_run_summary" }
+
+type MatchEnrichmentArgs struct {
+	OrgId       uuid.UUID `json:"org_id"`
+	ScreeningId string    `json:"screening_id"`
+}
+
+func (MatchEnrichmentArgs) Kind() string { return "match_enrichment" }
+
+type ContinuousScreeningMatchEnrichmentArgs struct {
+	ContinuousScreeningId uuid.UUID `json:"continuous_screening_id"`
+}
+
+func (ContinuousScreeningMatchEnrichmentArgs) Kind() string {
+	return "continuous_screening_match_enrichment"
+}
+
+type OffloadingArgs struct {
+	OrgId uuid.UUID `json:"org_id"`
+}
+
+func (OffloadingArgs) Kind() string { return "offloading" }
+
+type MetricsCollectionArgs struct{}
+
+func (MetricsCollectionArgs) Kind() string { return "metrics_collection" }
+
+type CaseReviewArgs struct {
+	CaseId         uuid.UUID `json:"case_id"`
+	AiCaseReviewId uuid.UUID `json:"ai_case_review_id"`
+}
+
+func (CaseReviewArgs) Kind() string { return "case_review" }
+
+type ScreeningHitSuggestionArgs struct {
+	ScreeningId string `json:"screening_id"`
+}
+
+func (ScreeningHitSuggestionArgs) Kind() string { return "screening_hit_suggestion" }
+
+type AutoAssignmentArgs struct {
+	OrgId   uuid.UUID `json:"org_id"`
+	InboxId uuid.UUID `json:"inbox_id"`
+}
+
+func (AutoAssignmentArgs) Kind() string { return "auto_assignment" }
+
+type DecisionWorkflowArgs struct {
+	DecisionId string `json:"decision_id"`
+}
+
+func (DecisionWorkflowArgs) Kind() string { return "decision_workflow" }
+
+type AnalyticsExportArgs struct {
+	OrgId uuid.UUID `json:"org_id"`
+}
+
+func (AnalyticsExportArgs) Kind() string { return "analytics_export" }
+
+type AnalyticsMergeArgs struct{}
+
+func (AnalyticsMergeArgs) Kind() string { return "analytics_merge" }
+
+type SendBillingEventArgs struct {
+	Event BillingEvent `json:"event"`
+}
+
+func (SendBillingEventArgs) Kind() string { return "send_billing_event" }
+
+type ContinuousScreeningDoScreeningArgs struct {
+	ObjectType string    `json:"object_type"`
+	OrgId      uuid.UUID `json:"org_id"`
+
+	// Tell which action triggered the screening
+	TriggerType ContinuousScreeningTriggerType `json:"trigger_type"`
+
+	// MonitoringId is the ID from the object type specific monitoring table.
+	MonitoringId uuid.UUID `json:"monitoring_id"`
+
+	PreviousInternalId string `json:"previous_internal_id"`
+	NewInternalId      string `json:"new_internal_id"`
+}
+
+func (ContinuousScreeningDoScreeningArgs) Kind() string {
+	return "continuous_screening_do_screening"
+}
+
+type ContinuousScreeningRegisterObjectArgs struct {
+	OrgId          uuid.UUID `json:"org_id"`
+	ObjectType     string    `json:"object_type"`
+	ObjectId       string    `json:"object_id"`
+	ConfigStableId uuid.UUID `json:"config_stable_id"`
+	NewInternalId  string    `json:"new_internal_id"`
+	ShouldScreen   bool      `json:"should_screen"`
+	UserId         *string   `json:"user_id,omitempty"`
+	ApiKeyId       *string   `json:"api_key_id,omitempty"`
+}
+
+func (ContinuousScreeningRegisterObjectArgs) Kind() string {
+	return "continuous_screening_register_object"
+}
+
+type ContinuousScreeningEnsureDeltaTrackArgs struct {
+	OrgId             uuid.UUID           `json:"org_id"`
+	ObjectType        string              `json:"object_type"`
+	ObjectId          string              `json:"object_id"`
+	ObjectInternalId  uuid.UUID           `json:"object_internal_id"`
+	EntityId          string              `json:"entity_id"`
+	MonitoredObjectId uuid.UUID           `json:"monitored_object_id"`
+	Operation         DeltaTrackOperation `json:"operation"`
+}
+
+func (ContinuousScreeningEnsureDeltaTrackArgs) Kind() string {
+	return "continuous_screening_ensure_delta_track"
+}
+
+type ContinuousScreeningEvaluateNeedArgs struct {
+	OrgId      uuid.UUID `json:"org_id"`
+	ObjectType string    `json:"object_type"`
+	ObjectIds  []string  `json:"object_ids"`
+}
+
+func (ContinuousScreeningEvaluateNeedArgs) Kind() string {
+	return "continuous_screening_evaluate_need"
+}
+
+type ContinuousScreeningScanDatasetUpdatesArgs struct{}
+
+func (ContinuousScreeningScanDatasetUpdatesArgs) Kind() string {
+	return "continuous_screening_scan_dataset_updates"
+}
+
+type ContinuousScreeningApplyDeltaFileArgs struct {
+	OrgId    uuid.UUID `json:"org_id"`
+	UpdateId uuid.UUID `json:"update_id"`
+}
+
+func (ContinuousScreeningApplyDeltaFileArgs) Kind() string {
+	return "continuous_screening_apply_delta_file"
+}
+
+type ContinuousScreeningCreateFullDatasetArgs struct {
+	OrgId string `json:"org_id"`
+}
+
+func (ContinuousScreeningCreateFullDatasetArgs) Kind() string {
+	return "continuous_screening_create_full_dataset"
+}
+
+// Scheduled scenario periodic job - checks and schedules due scenarios for an org
+type ScheduledScenarioArgs struct {
+	OrgId uuid.UUID `json:"org_id"`
+}
+
+func (ScheduledScenarioArgs) Kind() string { return "scheduled_scenario" }
+
+// Scheduled execution job - executes a single scheduled execution
+type ScheduledExecutionArgs struct {
+	ScheduledExecutionId string `json:"scheduled_execution_id"`
+}
+
+func (ScheduledExecutionArgs) Kind() string { return "scheduled_execution" }
+
+// Drives one scheduled execution by walking its object-id manifest in blob storage in batches.
+type BatchExecutionCoordinatorArgs struct {
+	ScheduledExecutionId string `json:"scheduled_execution_id"`
+}
+
+func (BatchExecutionCoordinatorArgs) Kind() string { return "batch_execution_coordinator" }
+
+// CSV ingestion job - processes a single upload log
+type CsvIngestionArgs struct {
+	UploadLogId      uuid.UUID        `json:"upload_log_id"`
+	IngestionOptions IngestionOptions `json:"ingestion_options"`
+}
+
+func (CsvIngestionArgs) Kind() string { return "csv_ingestion" }
+
+type GenerateThumbnailArgs struct {
+	Bucket string `json:"bucket"`
+	Key    string `json:"key"`
+}
+
+func (GenerateThumbnailArgs) Kind() string { return "generate_thumbnail" }
+
+// New webhook delivery system jobs
+
+// WebhookDispatchJobArgs - Stage 1: Fan-out to endpoints
+type WebhookDispatchJobArgs struct {
+	WebhookEventId uuid.UUID `json:"webhook_event_id"`
+}
+
+func (WebhookDispatchJobArgs) Kind() string { return "webhook_dispatch" }
+
+// WebhookDeliveryJobArgs - Stage 2: Per-endpoint delivery
+type WebhookDeliveryJobArgs struct {
+	DeliveryId uuid.UUID `json:"delivery_id"`
+}
+
+func (WebhookDeliveryJobArgs) Kind() string { return "webhook_delivery" }
+
+// WebhookCleanupJobArgs - Cleanup old webhook deliveries and orphaned events
+type WebhookCleanupJobArgs struct{}
+
+func (WebhookCleanupJobArgs) Kind() string { return "webhook_cleanup" }
+
+type TriggeredScoreComputationArgs struct {
+	OrgId      uuid.UUID `json:"org_id"`
+	RecordType string    `json:"record_type"`
+	RecordId   string    `json:"record_id"`
+}
+
+func (TriggeredScoreComputationArgs) Kind() string { return "triggered_score_computation" }
+
+type ScoringInitialInsertionArgs struct {
+	OrgId      uuid.UUID `json:"org_id"`
+	RecordType string    `json:"record_type"`
+	RecordId   string    `json:"record_id"`
+}
+
+func (ScoringInitialInsertionArgs) Kind() string { return "scoring_initial_insertion" }
+
+type AsyncDecisionExecutionArgs struct {
+	AsyncDecisionExecutionId uuid.UUID `json:"async_decision_execution_id"`
+}
+
+func (AsyncDecisionExecutionArgs) Kind() string { return "async_decision_execution" }
+
+// AsyncDecisionExecutionCleanupArgs - Cleanup old async decision executions
+type AsyncDecisionExecutionCleanupArgs struct{}
+
+func (AsyncDecisionExecutionCleanupArgs) Kind() string {
+	return "async_decision_execution_cleanup"
+}
+
+type RulesetDryRunArgs struct {
+	OrgId     uuid.UUID `json:"org_id"`
+	RulesetId uuid.UUID `json:"ruleset_id"`
+	DryRunId  uuid.UUID `json:"dry_run_id"`
+}
+
+func (RulesetDryRunArgs) Kind() string { return "ruleset_dry_run" }
+
+type ScoreComputationArgs struct {
+	OrgId uuid.UUID `json:"org_id"`
+}
+
+func (ScoreComputationArgs) Kind() string { return "score_computation" }
+
+type ScoringInitialComputationArgs struct {
+	OrgId uuid.UUID `json:"org_id"`
+}
+
+func (ScoringInitialComputationArgs) Kind() string { return "scoring_initial_computation" }
+
+type AsyncUploadArgs struct {
+	OrgId            uuid.UUID        `json:"org_id"`
+	ObjectType       string           `json:"object_type"`
+	Key              string           `json:"key"`
+	IngestionOptions IngestionOptions `json:"ingestion_options"`
+}
+
+func (AsyncUploadArgs) Kind() string { return "async_upload" }
+
+type RuleDescriptionArgs struct {
+	RuleId string `json:"rule_id"`
+}
+
+func (RuleDescriptionArgs) Kind() string { return "rule_description" }

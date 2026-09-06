@@ -1,0 +1,75 @@
+import { type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
+import { match } from 'ts-pattern';
+import { cn, Tag } from 'ui-design-system';
+import { Icon, type IconName } from 'ui-icons';
+
+import { UpsaleModal } from '../UpsaleModal';
+
+interface ConfigRowProps {
+  isRestricted: boolean;
+  canEdit: boolean;
+  label: string;
+  /** Tag to display when canEdit is true (e.g., "Configuré", "3/5 configurés") */
+  statusTag?: ReactNode;
+  /** Icon to show when canEdit is true. Defaults to 'edit' */
+  editIcon?: IconName;
+  /** Show wand icon in upsale modal for AI-related features */
+  showWand?: boolean;
+  /** Title for the upsale modal */
+  upsaleTitle?: string;
+  /** Description for the upsale modal */
+  upsaleDescription?: string;
+  onClick: () => void;
+}
+
+export function ConfigRow({
+  isRestricted,
+  canEdit,
+  label,
+  statusTag,
+  editIcon = 'edit',
+  showWand,
+  upsaleTitle,
+  upsaleDescription,
+  onClick,
+}: ConfigRowProps) {
+  const { t } = useTranslation(['cases']);
+
+  return (
+    <div
+      className={cn('border rounded-lg p-md flex flex-col gap-md', {
+        'border-purple-secondary bg-purple-background-light': isRestricted,
+        'border-grey-border bg-surface-card': !isRestricted,
+      })}
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex-1 flex items-center gap-xs">
+          <span className="text-s font-medium">{label}</span>
+          {match({ isRestricted, canEdit })
+            .with({ isRestricted: true }, () => null)
+            .with({ canEdit: true }, () => statusTag)
+            .otherwise(() => (
+              <Tag color="purple" size="small">
+                {t('cases:overview.config.view_only')}
+              </Tag>
+            ))}
+        </div>
+        {match({ isRestricted, canEdit })
+          .with({ isRestricted: true }, () => (
+            <UpsaleModal title={upsaleTitle} description={upsaleDescription} showWand={showWand} />
+          ))
+          .with({ canEdit: true }, () => (
+            <Icon
+              icon={editIcon}
+              className="size-5 cursor-pointer text-purple-primary hover:text-purple-hover"
+              onClick={onClick}
+            />
+          ))
+          .otherwise(() => (
+            <Icon icon="eye" className="size-5 cursor-pointer text-purple-primary" onClick={onClick} />
+          ))}
+      </div>
+    </div>
+  );
+}

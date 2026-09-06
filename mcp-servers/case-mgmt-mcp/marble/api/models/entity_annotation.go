@@ -1,0 +1,150 @@
+package models
+
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+type EntityAnnotationType int
+
+const (
+	EntityAnnotationUnknown EntityAnnotationType = iota
+	EntityAnnotationComment
+	EntityAnnotationFile
+	EntityAnnotationTag
+	EntityAnnotationRiskTag
+)
+
+func EntityAnnotationFrom(kind string) EntityAnnotationType {
+	switch kind {
+	case "comment":
+		return EntityAnnotationComment
+	case "file":
+		return EntityAnnotationFile
+	case "tag":
+		return EntityAnnotationTag
+	case "risk_tag":
+		return EntityAnnotationRiskTag
+	default:
+		return EntityAnnotationUnknown
+	}
+}
+
+func (t EntityAnnotationType) String() string {
+	switch t {
+	case EntityAnnotationComment:
+		return "comment"
+	case EntityAnnotationFile:
+		return "file"
+	case EntityAnnotationTag:
+		return "tag"
+	case EntityAnnotationRiskTag:
+		return "risk_tag"
+	default:
+		return "unknown"
+	}
+}
+
+type EntityAnnotation struct {
+	Id             string
+	OrgId          uuid.UUID
+	ObjectType     string
+	ObjectId       string
+	CaseId         *string
+	AnnotationType EntityAnnotationType
+	// See description of the payload schema in models/entity_annotation_payload.go
+	Payload     json.RawMessage
+	AnnotatedBy *UserId
+	CreatedAt   time.Time
+	DeletedAt   *time.Time
+
+	FileThumbnails   []string
+	FileContentTypes []string
+}
+
+type EntityAnnotationRequest struct {
+	OrgId          uuid.UUID
+	ObjectType     string
+	ObjectId       string
+	AnnotationType *EntityAnnotationType
+	LoadThumbnails bool
+}
+
+type CaseEntityAnnotationRequest struct {
+	OrgId          uuid.UUID
+	CaseId         string
+	AnnotationType *EntityAnnotationType
+}
+
+type EntityAnnotationRequestForObjects struct {
+	OrgId          uuid.UUID
+	ObjectType     string
+	ObjectIds      []string
+	AnnotationType *EntityAnnotationType
+}
+
+type CreateEntityAnnotationRequest struct {
+	OrgId          uuid.UUID
+	ObjectType     string
+	ObjectId       string
+	CaseId         *string
+	AnnotationType EntityAnnotationType
+	// See description of the payload schema in models/entity_annotation_payload.go
+	Payload     EntityAnnotationPayload
+	AnnotatedBy *UserId
+}
+
+type AnnotationByIdRequest struct {
+	OrgId          uuid.UUID
+	AnnotationId   string
+	AnnotationType *EntityAnnotationType
+	IncludeDeleted bool
+}
+
+// EntityAnnotationRiskTagsFilter is used to query risk tag annotations
+// for MonitoringListCheck rule evaluation
+type EntityAnnotationRiskTagsFilter struct {
+	OrgId      uuid.UUID
+	ObjectType string
+	ObjectIds  []string
+	Tags       []RiskTag // Optional: filter by specific tags, empty means any tags
+}
+
+type EntityAnnotationTagsFilter struct {
+	OrgId      uuid.UUID
+	ObjectType string
+	ObjectIds  []string
+	Tags       []uuid.UUID
+}
+
+type GroupedEntityAnnotations struct {
+	Comments []EntityAnnotation
+	Tags     []EntityAnnotation
+	Files    []EntityAnnotation
+	RiskTags []EntityAnnotation
+}
+
+func GroupAnnotationsByType(annotations []EntityAnnotation) GroupedEntityAnnotations {
+	grouped := GroupedEntityAnnotations{}
+
+	for _, annotation := range annotations {
+		switch annotation.AnnotationType {
+		case EntityAnnotationComment:
+			grouped.Comments = append(grouped.Comments, annotation)
+		case EntityAnnotationTag:
+			grouped.Tags = append(grouped.Tags, annotation)
+		case EntityAnnotationFile:
+			grouped.Files = append(grouped.Files, annotation)
+		case EntityAnnotationRiskTag:
+			grouped.RiskTags = append(grouped.RiskTags, annotation)
+		}
+	}
+
+	return grouped
+}
+
+func ThumbnailFileName(key string) string {
+	return key + "_thumb"
+}

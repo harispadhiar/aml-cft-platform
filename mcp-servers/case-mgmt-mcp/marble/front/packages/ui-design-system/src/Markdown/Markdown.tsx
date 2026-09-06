@@ -1,0 +1,63 @@
+import {
+  HoverCard,
+  HoverCardArrow,
+  HoverCardContent,
+  HoverCardPortal,
+  HoverCardTrigger,
+} from '@radix-ui/react-hover-card';
+import ReactMarkdown, { MarkdownToJSX } from 'markdown-to-jsx';
+import { Code } from '../Code/Code';
+
+export type Components = MarkdownToJSX.Overrides;
+
+export const defaultMarkdownComponents: Components = {
+  a: ({ children, href, title }) => (
+    <HoverCard>
+      <HoverCardTrigger>
+        <a
+          href={href}
+          className="text-purple-primary hover:bg-purple-background hover:text-grey-secondary text-underline underline-offset-4 decoration-purple-primary"
+        >
+          {children}
+        </a>
+      </HoverCardTrigger>
+      <HoverCardPortal>
+        <HoverCardContent
+          side="top"
+          align="start"
+          alignOffset={-16}
+          sideOffset={12}
+          className="bg-surface-card p-md flex flex-col gap-sm items-center border border-grey-border rounded-sm shadow-md z-50"
+        >
+          <HoverCardArrow className="fill-grey-white" />
+
+          <p className="text-m font-medium">{title}</p>
+          <a href={href} className="text-s text-purple-primary">
+            {href}
+          </a>
+        </HoverCardContent>
+      </HoverCardPortal>
+    </HoverCard>
+  ),
+  h1: ({ children }) => <div className="text-h1 font-bold mb-sm">{children}</div>,
+  h2: ({ children }) => <div className="text-h2 font-bold mb-sm">{children}</div>,
+  h3: ({ children }) => <div className="text-default font-bold mb-sm">{children}</div>,
+  p: ({ children }) => <p className="not-last:mb-sm">{children}</p>,
+  ul: ({ children }) => <ul className="mb-sm list-disc ps-md">{children}</ul>,
+  ol: ({ children }) => <ul className="mb-sm list-decimal ps-md">{children}</ul>,
+  code: ({ children }) => <Code className="font-mono">{children}</Code>,
+  hr: () => <hr className="mb-sm bg-grey-border h-px border-0" />,
+};
+
+interface MarkdownProps {
+  children: string;
+  components?: Components;
+}
+
+export function Markdown({ children, components }: MarkdownProps) {
+  return (
+    <ReactMarkdown options={{ disableParsingRawHTML: true, overrides: components ?? defaultMarkdownComponents }}>
+      {children}
+    </ReactMarkdown>
+  );
+}

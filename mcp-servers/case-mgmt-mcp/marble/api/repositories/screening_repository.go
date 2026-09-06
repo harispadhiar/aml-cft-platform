@@ -1,0 +1,513 @@
+package repositories
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/Masterminds/squirrel"
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/checkmarble/marble-backend/repositories/dbmodels"
+)
+
+func (*MarbleDbRepository) GetActiveScreeningForDecision(
+	ctx context.Context,
+	exec Executor,
+	screeningId string,
+) (models.ScreeningWithMatches, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.ScreeningWithMatches{}, err
+	}
+
+	sql := selectScreeningsWithMatches().
+		Where(squirrel.Eq{
+			"sc.id": screeningId,
+		})
+
+	askedFor, err := SqlToModel(ctx, exec, sql, dbmodels.AdaptScreeningWithMatches)
+	if err != nil {
+		return models.ScreeningWithMatches{}, err
+	}
+	if !askedFor.IsArchived {
+		return askedFor, nil
+	}
+
+	sql = selectScreeningsWithMatches().
+		Where(squirrel.Eq{
+			"sc.decision_id":         askedFor.DecisionId,
+			"sc.screening_config_id": askedFor.ScreeningConfigId,
+			"sc.is_archived":         false,
+		})
+
+	return SqlToModel(ctx, exec, sql, dbmodels.AdaptScreeningWithMatches)
+}
+
+func (*MarbleDbRepository) ListScreeningsForDecision(
+	ctx context.Context,
+	exec Executor,
+	decisionId string,
+	initialOnly bool,
+) ([]models.ScreeningWithMatches, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return nil, err
+	}
+
+	filters := squirrel.Eq{"sc.decision_id": decisionId}
+
+	if initialOnly {
+		filters["sc.is_manual"] = false
+	} else {
+		filters["sc.is_archived"] = false
+	}
+
+	sql := selectScreeningsWithMatches().
+		Where(filters)
+
+	return SqlToListOfModels(ctx, exec, sql, dbmodels.AdaptScreeningWithMatches)
+}
+
+func (*MarbleDbRepository) GetScreening(ctx context.Context, exec Executor, id string) (models.ScreeningWithMatches, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.ScreeningWithMatches{}, err
+	}
+
+	sql := selectScreeningsWithMatches().
+		Where(squirrel.Eq{"sc.id": id})
+
+	return SqlToModel(ctx, exec, sql, dbmodels.AdaptScreeningWithMatches)
+}
+
+func (*MarbleDbRepository) GetScreeningWithoutMatches(ctx context.Context, exec Executor, id string) (models.Screening, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.Screening{}, err
+	}
+
+	sql := selectScreenings().Where(squirrel.Eq{"sc.id": id})
+
+	return SqlToModel(ctx, exec, sql, dbmodels.AdaptScreening)
+}
+
+func selectScreenings() squirrel.SelectBuilder {
+	return NewQueryBuilder().
+		Select(columnsNames("sc", dbmodels.SelectScreeningColumn)...).
+		Columns("scc.id AS config_id", "stable_id", "name", "scc.datasets", "scc.filters").
+		From(dbmodels.TABLE_SCREENINGS + " AS sc").
+		InnerJoin(dbmodels.TABLE_SCREENING_CONFIGS + " AS scc ON sc.screening_config_id=scc.id")
+}
+
+// The screening matches are returned unordered. The score used for sorting lives inside the
+// payload, which may be offloaded to blob storage (NULL `payload` column), so it can't be read
+// in SQL reliably. The whole ordering (status, then descending score) is therefore done in one
+// place, in memory after hydration - see ScreeningUsecase.hydrateAndSortMatches.
+func selectScreeningsWithMatches() squirrel.SelectBuilder {
+	return NewQueryBuilder().
+		Select(columnsNames("sc", dbmodels.SelectScreeningColumn)...).
+		Columns("scc.id AS config_id", "stable_id", "scc.name", "scc.datasets", "scc.filters").
+		Column(fmt.Sprintf("ARRAY_AGG(ROW(%s)) FILTER (WHERE scm.id IS NOT NULL) AS matches",
+			strings.Join(columnsNames("scm", dbmodels.SelectScreeningMatchesColumn), ","))).
+		From(dbmodels.TABLE_SCREENINGS + " AS sc").
+		InnerJoin(dbmodels.TABLE_SCREENING_CONFIGS + " AS scc ON sc.screening_config_id=scc.id").
+		LeftJoin(dbmodels.TABLE_SCREENING_MATCHES + " AS scm ON (sc.id = scm.screening_id)").
+		// TODO: revert to "group by id" once the view/table renaming has been done - currently the "screenings" table is a view on the actual table called "sanction_checks" which is not compatible with the "group by id" syntax
+		// GroupBy("sc.id").
+		GroupBy(append(columnsNames("sc", dbmodels.SelectScreeningColumn), "config_id",
+			"stable_id", "name", "scc.datasets", "scc.filters")...).
+		OrderBy("sc.created_at")
+}
+
+func (*MarbleDbRepository) ArchiveScreening(ctx context.Context, exec Executor, id string) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	sql := NewQueryBuilder().
+		Update(dbmodels.TABLE_SCREENINGS).
+		Set("is_archived", true).
+		Set("updated_at", "NOW()").
+		Where(
+			squirrel.Eq{"id": id, "is_archived": false},
+		)
+
+	return ExecBuilder(ctx, exec, sql)
+}
+
+func (*MarbleDbRepository) UpdateScreeningStatus(ctx context.Context, exec Executor, id string,
+	status models.ScreeningStatus,
+) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	return ExecBuilder(
+		ctx,
+		exec,
+		NewQueryBuilder().
+			Update(dbmodels.TABLE_SCREENINGS).
+			Set("status", status.String()).
+			Set("updated_at", "NOW()").
+			Where(squirrel.Eq{"id": id}),
+	)
+}
+
+func (*MarbleDbRepository) UpdateScreeningMatchPayload(ctx context.Context, exec Executor,
+	match models.ScreeningMatch, newPayload []byte,
+) (models.ScreeningMatch, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.ScreeningMatch{}, err
+	}
+
+	sql := NewQueryBuilder().
+		Update(dbmodels.TABLE_SCREENING_MATCHES).
+		Set("payload", newPayload).
+		Set("enriched", true).
+		Set("updated_at", "NOW()").
+		Where(squirrel.Eq{"id": match.Id}).Suffix(fmt.Sprintf("RETURNING %s",
+		strings.Join(dbmodels.SelectScreeningMatchesColumn, ",")))
+
+	return SqlToModel(ctx, exec, sql, dbmodels.AdaptScreeningMatch)
+}
+
+// SetScreeningMatchEnriched marks a match as enriched without touching the payload column. It is
+// used for offloaded matches, whose enriched payload is written back to blob storage instead of
+// the DB column.
+func (*MarbleDbRepository) SetScreeningMatchEnriched(ctx context.Context, exec Executor,
+	matchId string,
+) (models.ScreeningMatch, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.ScreeningMatch{}, err
+	}
+
+	sql := NewQueryBuilder().
+		Update(dbmodels.TABLE_SCREENING_MATCHES).
+		Set("enriched", true).
+		Set("updated_at", "NOW()").
+		Where(squirrel.Eq{"id": matchId}).
+		Suffix(fmt.Sprintf("RETURNING %s", strings.Join(dbmodels.SelectScreeningMatchesColumn, ",")))
+
+	return SqlToModel(ctx, exec, sql, dbmodels.AdaptScreeningMatch)
+}
+
+func (*MarbleDbRepository) ListScreeningMatches(
+	ctx context.Context,
+	exec Executor,
+	screeningId string,
+) ([]models.ScreeningMatch, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return nil, err
+	}
+
+	sql := NewQueryBuilder().
+		Select(dbmodels.SelectScreeningMatchesColumn...).
+		From(dbmodels.TABLE_SCREENING_MATCHES).
+		Where(squirrel.Eq{"screening_id": screeningId})
+
+	return SqlToListOfModels(ctx, exec, sql, dbmodels.AdaptScreeningMatch)
+}
+
+func (*MarbleDbRepository) GetScreeningMatch(ctx context.Context, exec Executor,
+	matchId string,
+) (models.ScreeningMatch, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.ScreeningMatch{}, err
+	}
+
+	sql := NewQueryBuilder().
+		Select(dbmodels.SelectScreeningMatchesColumn...).
+		From(dbmodels.TABLE_SCREENING_MATCHES).
+		Where(squirrel.Eq{"id": matchId})
+
+	return SqlToModel(ctx, exec, sql, dbmodels.AdaptScreeningMatch)
+}
+
+func (*MarbleDbRepository) UpdateScreeningMatchStatus(
+	ctx context.Context,
+	exec Executor,
+	match models.ScreeningMatch,
+	update models.ScreeningMatchUpdate,
+) (models.ScreeningMatch, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.ScreeningMatch{}, err
+	}
+
+	sql := NewQueryBuilder().
+		Update(dbmodels.TABLE_SCREENING_MATCHES).
+		SetMap(map[string]any{
+			"status":      update.Status.String(),
+			"reviewed_by": update.ReviewerId,
+			"updated_at":  "NOW()",
+		}).
+		Where(squirrel.Eq{"id": match.Id}).
+		Suffix(fmt.Sprintf("RETURNING %s", strings.Join(dbmodels.SelectScreeningMatchesColumn, ",")))
+
+	return SqlToModel(ctx, exec, sql, dbmodels.AdaptScreeningMatch)
+}
+
+// InsertScreening persists a screening and its matches. Match payloads that should be offloaded
+// to blob storage are expected to be offloaded and blanked by the caller (see
+// OffloadedReadWriter.OffloadScreeningMatches) before this is called - this method only writes
+// whatever payload it is given. Matches with a pre-assigned Id keep it (so it matches their blob
+// key); otherwise an Id is generated here.
+func (*MarbleDbRepository) InsertScreening(
+	ctx context.Context,
+	exec Executor,
+	screening models.ScreeningWithMatches,
+) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	sql := NewQueryBuilder().
+		Insert(dbmodels.TABLE_SCREENINGS).
+		Columns(
+			"id",
+			"decision_id",
+			"org_id",
+			"screening_config_id",
+			"provider",
+			"search_input",
+			"initial_query",
+			"counterparty_id",
+			"match_threshold",
+			"match_limit",
+			"is_partial",
+			"is_manual",
+			"initial_has_matches",
+			"requested_by",
+			"status",
+			"error_codes",
+			"number_of_matches",
+		).
+		Values(
+			screening.Id,
+			screening.DecisionId,
+			screening.OrgId,
+			screening.ScreeningConfigId,
+			screening.Provider,
+			screening.SearchInput,
+			screening.InitialQuery,
+			screening.UniqueCounterpartyIdentifier,
+			screening.EffectiveThreshold,
+			screening.OrgConfig.MatchLimit,
+			screening.Partial,
+			screening.IsManual,
+			screening.InitialHasMatches,
+			screening.RequestedBy,
+			screening.Status.String(),
+			screening.ErrorCodes,
+			screening.NumberOfMatches,
+		)
+
+	err := ExecBuilder(ctx, exec, sql)
+	if err != nil {
+		return err
+	}
+
+	if len(screening.Matches) == 0 {
+		return nil
+	}
+
+	matchSql := NewQueryBuilder().
+		Insert(dbmodels.TABLE_SCREENING_MATCHES).
+		Columns("id", "screening_id", "opensanction_entity_id", "query_ids", "payload")
+
+	for _, match := range screening.Matches {
+		matchId := match.Id
+		if matchId == "" {
+			matchId = pure_utils.NewId().String()
+		}
+
+		matchSql = matchSql.Values(matchId, screening.Id, match.EntityId, match.QueryIds, match.Payload)
+	}
+
+	return ExecBuilder(ctx, exec, matchSql)
+}
+
+func (*MarbleDbRepository) ListScreeningCommentsByIds(ctx context.Context, exec Executor, ids []string) ([]models.ScreeningMatchComment, error) {
+	sql := NewQueryBuilder().
+		Select(dbmodels.SelectScreeningMatchCommentsColumn...).
+		From(dbmodels.TABLE_SCREENING_MATCH_COMMENTS).
+		Where("screening_match_id = ANY(?)", ids)
+
+	return SqlToListOfModels(ctx, exec, sql, dbmodels.AdaptScreeningMatchComment)
+}
+
+func (*MarbleDbRepository) AddScreeningMatchComment(ctx context.Context,
+	exec Executor, comment models.ScreeningMatchComment,
+) (models.ScreeningMatchComment, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.ScreeningMatchComment{}, err
+	}
+
+	sql := NewQueryBuilder().
+		Insert(dbmodels.TABLE_SCREENING_MATCH_COMMENTS).
+		Columns("id", "screening_match_id", "commented_by", "comment").
+		Values(pure_utils.NewId(), comment.MatchId, comment.CommenterId, comment.Comment).
+		Suffix(fmt.Sprintf("RETURNING %s", strings.Join(dbmodels.SelectScreeningMatchCommentsColumn, ",")))
+
+	return SqlToModel(ctx, exec, sql, dbmodels.AdaptScreeningMatchComment)
+}
+
+func (repo *MarbleDbRepository) CreateScreeningFile(ctx context.Context, exec Executor,
+	input models.ScreeningFileInput,
+) (models.ScreeningFile, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.ScreeningFile{}, err
+	}
+
+	file, err := SqlToModel(
+		ctx,
+		exec,
+		NewQueryBuilder().Insert(dbmodels.TABLE_SCREENING_FILES).
+			Columns(
+				"id",
+				"bucket_name",
+				"screening_id",
+				"file_name",
+				"file_reference",
+			).
+			Values(
+				pure_utils.NewId(),
+				input.BucketName,
+				input.ScreeningId,
+				input.FileName,
+				input.FileReference,
+			).
+			Suffix(fmt.Sprintf("RETURNING %s", strings.Join(dbmodels.SelectScreeningFileColumn, ","))),
+		dbmodels.AdaptScreeningFile,
+	)
+
+	return file, err
+}
+
+func (repo *MarbleDbRepository) ListScreeningFiles(ctx context.Context, exec Executor,
+	screeningId string,
+) ([]models.ScreeningFile, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return nil, err
+	}
+
+	files, err := SqlToListOfModels(
+		ctx,
+		exec,
+		NewQueryBuilder().Select(dbmodels.SelectScreeningFileColumn...).
+			From(dbmodels.TABLE_SCREENING_FILES).
+			Where(squirrel.Eq{"screening_id": screeningId}),
+		dbmodels.AdaptScreeningFile,
+	)
+
+	return files, err
+}
+
+func (repo *MarbleDbRepository) GetScreeningFile(ctx context.Context, exec Executor,
+	screeningId, fileId string,
+) (models.ScreeningFile, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.ScreeningFile{}, err
+	}
+
+	file, err := SqlToModel(
+		ctx,
+		exec,
+		NewQueryBuilder().Select(dbmodels.SelectScreeningFileColumn...).
+			From(dbmodels.TABLE_SCREENING_FILES).
+			Where(squirrel.Eq{"screening_id": screeningId, "id": fileId}),
+		dbmodels.AdaptScreeningFile,
+	)
+
+	return file, err
+}
+
+func (repo *MarbleDbRepository) CopyScreeningFiles(ctx context.Context, exec Executor, screeningId, newScreeningId string) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	sql := NewQueryBuilder().
+		Insert(dbmodels.TABLE_SCREENING_FILES).
+		Columns("bucket_name", "file_reference", "file_name", "screening_id").
+		Select(squirrel.
+			Select("bucket_name", "file_reference", "file_name").
+			Column("?", newScreeningId).
+			From(dbmodels.TABLE_SCREENING_FILES).
+			Where(squirrel.Eq{"screening_id": screeningId}))
+
+	if err := ExecBuilder(ctx, exec, sql); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (repo *MarbleDbRepository) CountScreeningsByOrg(ctx context.Context, exec Executor,
+	orgIds []string, from, to time.Time,
+) (map[string]int, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return nil, err
+	}
+
+	query := NewQueryBuilder().
+		Select("org_id, count(*) as count").
+		From(dbmodels.TABLE_SCREENINGS).
+		Where(squirrel.Eq{"org_id": orgIds}).
+		Where(squirrel.GtOrEq{"created_at": from}).
+		Where(squirrel.Lt{"created_at": to}).
+		GroupBy("org_id")
+
+	return countByHelper(ctx, exec, query, orgIds)
+}
+
+func (repo *MarbleDbRepository) CountScreeningsByProvider(ctx context.Context, exec Executor,
+	orgIds []string, providers []models.ScreeningProvider, from, to time.Time,
+) (models.ByOrgByProviderCounter, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return nil, err
+	}
+
+	query := NewQueryBuilder().
+		Select("org_id, provider, count(*) as count").
+		From(dbmodels.TABLE_SCREENINGS).
+		Where(squirrel.Eq{"org_id": orgIds}).
+		Where(squirrel.Eq{"provider": providers}).
+		Where(squirrel.GtOrEq{"created_at": from}).
+		Where(squirrel.Lt{"created_at": to}).
+		Where(squirrel.NotEq{"status": models.ScreeningStatusError.String()}).
+		GroupBy("org_id", "provider")
+
+	stringProviders := pure_utils.Map(providers, func(p models.ScreeningProvider) string { return string(p) })
+
+	return countBy2Keys(ctx, exec, query, orgIds, stringProviders)
+}
+
+func (repo *MarbleDbRepository) screeningsWithoutHitsOfDecision(
+	ctx context.Context,
+	exec Executor,
+	decisionIds []string,
+) (map[string][]models.ScreeningBaseInfo, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return nil, err
+	}
+
+	sql := NewQueryBuilder().
+		Select(columnsNames("sc", dbmodels.SelectScreeningBaseInfoColumn)...).
+		Column("scf.name AS name").
+		From(dbmodels.TABLE_SCREENINGS + " AS sc").
+		Join(dbmodels.TABLE_SCREENING_CONFIGS + " AS scf ON sc.screening_config_id = scf.id").
+		Where(squirrel.Eq{
+			"sc.decision_id": decisionIds,
+			"sc.is_archived": false,
+		})
+
+	screenings, err := SqlToListOfModels(ctx, exec, sql, dbmodels.AdaptScreeningBaseInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	screeningsAsMap := make(map[string][]models.ScreeningBaseInfo, len(decisionIds))
+	for _, screening := range screenings {
+		screeningsAsMap[screening.DecisionId] = append(
+			screeningsAsMap[screening.DecisionId], screening)
+	}
+	return screeningsAsMap, nil
+}

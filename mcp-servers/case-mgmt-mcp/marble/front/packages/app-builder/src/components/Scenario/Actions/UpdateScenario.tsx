@@ -1,0 +1,147 @@
+import { FormErrorOrDescription } from '@app-builder/components/Form/Tanstack/FormErrorOrDescription';
+import { FormInput } from '@app-builder/components/Form/Tanstack/FormInput';
+import { FormLabel } from '@app-builder/components/Form/Tanstack/FormLabel';
+import { useLoaderRevalidator } from '@app-builder/contexts/LoaderRevalidatorContext';
+import {
+  UpdateScenarioPayload,
+  updateScenarioPayloadSchema,
+  useUpdateScenarioMutation,
+} from '@app-builder/queries/scenarios/update-scenario';
+import { getFieldErrors, handleSubmit } from '@app-builder/utils/form';
+import { useForm } from '@tanstack/react-form';
+import { useHydrated } from '@tanstack/react-router';
+import * as React from 'react';
+import toast from 'react-hot-toast';
+import { useTranslation } from 'react-i18next';
+import { Button, Modal } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+
+export function UpdateScenario({
+  children,
+  defaultValue,
+}: {
+  children: React.ReactElement;
+  defaultValue: UpdateScenarioPayload;
+}) {
+  const [open, setOpen] = React.useState(false);
+
+  return (
+    <Modal.Root open={open} onOpenChange={setOpen}>
+      <Modal.Trigger asChild>{children}</Modal.Trigger>
+      <Modal.Content>
+        <UpdateScenarioContent defaultValue={defaultValue} onUpdateSuccess={() => setOpen(false)} />
+      </Modal.Content>
+    </Modal.Root>
+  );
+}
+
+function UpdateScenarioContent({
+  defaultValue,
+  onUpdateSuccess,
+}: {
+  defaultValue: UpdateScenarioPayload;
+  onUpdateSuccess: () => void;
+}) {
+  const { t } = useTranslation(['scenarios', 'common']);
+  const updateScenarioMutation = useUpdateScenarioMutation();
+  const revalidate = useLoaderRevalidator();
+
+  const form = useForm({
+    defaultValues: defaultValue,
+    onSubmit: ({ value, formApi }) => {
+      if (formApi.state.isValid) {
+        updateScenarioMutation
+          .mutateAsync(value)
+          .then(() => {
+            onUpdateSuccess();
+            revalidate();
+          })
+          .catch(() => {
+            toast.error(t('common:errors.unknown'));
+          });
+      }
+    },
+    validators: {
+      onSubmitAsync: updateScenarioPayloadSchema,
+    },
+  });
+
+  const isSubmitting = updateScenarioMutation.isPending || form.state.isSubmitting;
+
+  return (
+    <form onSubmit={handleSubmit(form)}>
+      <Modal.Title>{t('scenarios:update_scenario.title')}</Modal.Title>
+      <div className="flex flex-col gap-lg p-lg">
+        <form.Field
+          name="name"
+          validators={{
+            onBlur: updateScenarioPayloadSchema.shape.name,
+            onChange: updateScenarioPayloadSchema.shape.name,
+          }}
+        >
+          {(field) => (
+            <div className="group flex w-full flex-col gap-sm">
+              <FormLabel name={field.name}>{t('scenarios:create_scenario.name')}</FormLabel>
+              <FormInput
+                type="text"
+                name={field.name}
+                defaultValue={field.state.value}
+                onChange={(e) => field.handleChange(e.currentTarget.value)}
+                onBlur={field.handleBlur}
+                valid={field.state.meta.errors.length === 0}
+                placeholder={t('scenarios:create_scenario.name_placeholder')}
+              />
+              <FormErrorOrDescription errors={getFieldErrors(field.state.meta.errors)} />
+            </div>
+          )}
+        </form.Field>
+        <form.Field
+          name="description"
+          validators={{
+            onBlur: updateScenarioPayloadSchema.shape.description,
+            onChange: updateScenarioPayloadSchema.shape.description,
+          }}
+        >
+          {(field) => (
+            <div className="group flex w-full flex-col gap-sm">
+              <FormLabel name={field.name}>{t('scenarios:create_scenario.description')}</FormLabel>
+              <FormInput
+                type="text"
+                name={field.name}
+                defaultValue={field.state.value}
+                onChange={(e) => field.handleChange(e.currentTarget.value)}
+                onBlur={field.handleBlur}
+                valid={field.state.meta.errors.length === 0}
+                placeholder={t('scenarios:create_scenario.description_placeholder')}
+              />
+              <FormErrorOrDescription errors={getFieldErrors(field.state.meta.errors)} />
+            </div>
+          )}
+        </form.Field>
+      </div>
+      <Modal.Footer>
+        <Modal.FooterButton isCloseButton label={t('common:cancel')} />
+        <Modal.FooterButton label={t('common:save')} type="submit" isLoading={isSubmitting} />
+      </Modal.Footer>
+    </form>
+  );
+}
+
+export function UpdateScenarioButton({ defaultValue }: { defaultValue: UpdateScenarioPayload }) {
+  const { t } = useTranslation(['scenarios']);
+  const hydrated = useHydrated();
+
+  return (
+    <UpdateScenario defaultValue={defaultValue}>
+      <Button
+        variant="secondary"
+        mode="icon"
+        disabled={!hydrated}
+        aria-label={t('scenarios:update_scenario.edit_name_description')}
+        title={t('scenarios:update_scenario.edit_name_description')}
+      >
+        <Icon icon="edit-square" className="size-6" />
+      </Button>
+    </UpdateScenario>
+  );
+}

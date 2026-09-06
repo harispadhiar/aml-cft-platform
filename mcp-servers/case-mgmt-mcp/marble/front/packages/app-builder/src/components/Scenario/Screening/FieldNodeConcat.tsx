@@ -1,0 +1,156 @@
+import { type AstNode, isUndefinedAstNode, NewUndefinedAstNode } from '@app-builder/models';
+import { isKnownOperandAstNode, type KnownOperandAstNode } from '@app-builder/models/astNode/builder-ast-node';
+import { NewStringConcatAstNode, type StringConcatAstNode } from '@app-builder/models/astNode/strings';
+import { reorder } from '@app-builder/utils/list';
+import { DragDropContext, Draggable, Droppable, type OnDragEndResponder } from '@hello-pangea/dnd';
+import { replace } from 'radash';
+import { useEffect, useRef, useState } from 'react';
+import { splice } from 'remeda';
+import { Button } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+
+import { MatchOperand } from './MatchOperand';
+
+function concatFromNodes(nodes: KnownOperandAstNode[]): AstNode | null {
+  const finalNodes = nodes.filter((n) => !isUndefinedAstNode(n));
+  return finalNodes.length !== 0 ? NewStringConcatAstNode(finalNodes, { withSeparator: true }) : null;
+}
+
+export function FieldNodeConcat({
+  value,
+  limit,
+  onBlur,
+  onChange,
+  viewOnly,
+  placeholder,
+  withDate,
+}: {
+  value?: StringConcatAstNode;
+  limit?: number;
+  placeholder?: string;
+  onChange?: (node: AstNode | null) => void;
+  onBlur?: () => void;
+  viewOnly?: boolean;
+  withDate?: boolean;
+}) {
+  const [nodes, setNodes] = useState<KnownOperandAstNode[]>(() =>
+    value?.children?.length ? value.children : [NewUndefinedAstNode()],
+  );
+
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  const emitFromNodes = (nextNodes: KnownOperandAstNode[]) => {
+    onChangeRef.current?.(concatFromNodes(nextNodes));
+  };
+
+  const applyNodes = (nextNodes: KnownOperandAstNode[]) => {
+    setNodes(nextNodes);
+    emitFromNodes(nextNodes);
+  };
+
+  useEffect(() => {
+    setNodes((prev) => {
+      const filled = prev.filter((node) => !isUndefinedAstNode(node));
+
+      if (value?.children?.length) {
+        // `concatFromNodes` strips placeholders before emitting, so the parent echoes
+        // back only the filled nodes. When that echo matches what we already hold
+        // (same filled nodes, by id), keep local placeholders intact instead of
+        // collapsing them. Only reconcile when the parent truly changed the data.
+        const isOwnEcho =
+          value.children.length === filled.length &&
+          value.children.every((child, index) => child.id === filled[index]?.id);
+        return isOwnEcho ? prev : value.children;
+      }
+
+      // Parent cleared the value: reset to a single placeholder only if we held content.
+      return filled.length === 0 ? prev : [NewUndefinedAstNode()];
+    });
+  }, [value]);
+
+  const onDragEnd: OnDragEndResponder<string> = (result): void => {
+    if (!result.destination || result.destination.index === result.source.index) {
+      return;
+    }
+
+    applyNodes(reorder(nodes, result.source.index, result.destination.index));
+  };
+
+  return (
+    <DragDropContext onDragEnd={onDragEnd} autoScrollerOptions={{ disabled: true }}>
+      <div onBlur={onBlur} className="flex flex-col gap-sm">
+        <Droppable isDropDisabled={viewOnly} droppableId="NODES" direction="vertical">
+          {(dropProvided) => (
+            <div className="flex flex-col gap-sm" ref={dropProvided.innerRef}>
+              {nodes.map((node, index) => (
+                <Draggable isDragDisabled={viewOnly} key={node.id} draggableId={node.id} index={index}>
+                  {(dragProvided) => (
+                    <div
+                      key={node.id}
+                      ref={dragProvided.innerRef}
+                      {...dragProvided.draggableProps}
+                      className="flex items-center gap-2xs"
+                    >
+                      {!viewOnly ? (
+                        <div className="flex flex-row">
+                          <div
+                            key={node.id}
+                            className="hover:bg-grey-background flex size-6 items-center justify-center rounded-sm"
+                            {...dragProvided.dragHandleProps}
+                          >
+                            <Icon icon="drag" className="text-grey-disabled size-3" />
+                          </div>
+                          {nodes.length > 1 ? (
+                            <Button
+                              mode="icon"
+                              variant="secondary"
+                              appearance="link"
+                              onClick={() => applyNodes(splice(nodes, index, 1, []))}
+                            >
+                              <Icon icon="cross" className="size-4" />
+                            </Button>
+                          ) : null}
+                          {!limit || nodes.length < limit ? (
+                            <Button
+                              mode="icon"
+                              variant="secondary"
+                              appearance="link"
+                              disabled={nodes.length === limit}
+                              onClick={() =>
+                                applyNodes(
+                                  splice(nodes, index, 1, [
+                                    { ...nodes[index]!, id: nodes[index]!.id },
+                                    NewUndefinedAstNode(),
+                                  ]),
+                                )
+                              }
+                            >
+                              <Icon icon="plus" className="size-4" />
+                            </Button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      <MatchOperand
+                        node={node}
+                        key={`node-${index}`}
+                        placeholder={placeholder}
+                        onSave={(savedNode) => {
+                          if (isKnownOperandAstNode(savedNode)) {
+                            applyNodes(replace(nodes, { ...savedNode, id: node.id }, (_, i) => i === index));
+                          }
+                        }}
+                        withDate={withDate}
+                      />
+                    </div>
+                  )}
+                </Draggable>
+              ))}
+              {dropProvided.placeholder}
+            </div>
+          )}
+        </Droppable>
+      </div>
+    </DragDropContext>
+  );
+}

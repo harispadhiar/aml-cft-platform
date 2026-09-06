@@ -1,0 +1,167 @@
+import { Panel, PanelSharpFactory } from '@app-builder/components/Panel';
+import { Spinner } from '@app-builder/components/Spinner';
+import { useLoaderRevalidator } from '@app-builder/contexts/LoaderRevalidatorContext';
+import { type InboxMetadata } from '@app-builder/models/inbox';
+import { useGetInboxesQuery } from '@app-builder/queries/cases/get-inboxes';
+import { useUpdateInboxEscalationMutation } from '@app-builder/queries/cases/update-inbox-escalation';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import toast from 'react-hot-toast';
+import { useTranslation } from 'react-i18next';
+import { match } from 'ts-pattern';
+import { Button } from 'ui-design-system';
+import { type EscalationCondition, EscalationConditionRow } from './EscalationConditionRow';
+
+interface EscalationConditionsPanelContentProps {
+  readOnly?: boolean;
+  allInboxesMetadata: InboxMetadata[];
+}
+
+interface ConditionWithId extends EscalationCondition {
+  id: string;
+}
+
+export const EscalationConditionsPanelContent = ({
+  readOnly,
+  allInboxesMetadata,
+}: EscalationConditionsPanelContentProps) => {
+  const panelSharp = PanelSharpFactory.useSharp();
+  const { t } = useTranslation(['cases', 'common']);
+  const inboxesQuery = useGetInboxesQuery();
+  const updateEscalationMutation = useUpdateInboxEscalationMutation();
+  const revalidate = useLoaderRevalidator();
+  const baseId = useId();
+
+  const [conditions, setConditions] = useState<ConditionWithId[]>([]);
+  const conditionCounterRef = useRef(0);
+
+  const inboxes = inboxesQuery.data?.inboxes ?? [];
+
+  // Sync conditions when query data updates
+  useEffect(() => {
+    if (inboxesQuery.isSuccess) {
+      const existingConditions = (inboxesQuery.data?.inboxes ?? [])
+        .filter((inbox) => inbox.escalationInboxId)
+        .map((inbox, idx) => ({
+          id: `existing-${inbox.id}-${idx}`,
+          sourceInboxId: inbox.id,
+          targetInboxId: inbox.escalationInboxId ?? null,
+        }));
+      setConditions(existingConditions);
+    }
+  }, [inboxesQuery.data]);
+
+  const handleAddCondition = useCallback(() => {
+    const counter = conditionCounterRef.current++;
+    setConditions((prev) => [...prev, { id: `${baseId}-new-${counter}`, sourceInboxId: '', targetInboxId: null }]);
+  }, [baseId]);
+
+  const handleRemoveCondition = useCallback((id: string) => {
+    setConditions((prev) => prev.filter((c) => c.id !== id));
+  }, []);
+
+  const handleUpdateCondition = useCallback(
+    (id: string, field: 'sourceInboxId' | 'targetInboxId', value: string | null) => {
+      setConditions((prev) => prev.map((cond) => (cond.id === id ? { ...cond, [field]: value } : cond)));
+    },
+    [],
+  );
+
+  const handleSave = () => {
+    // Get original conditions to detect changes
+    const originalConditions = new Map(
+      inboxes.filter((inbox) => inbox.escalationInboxId).map((inbox) => [inbox.id, inbox.escalationInboxId]),
+    );
+
+    // Current conditions map
+    const currentConditions = new Map(
+      conditions.filter((c) => c.sourceInboxId && c.targetInboxId).map((c) => [c.sourceInboxId, c.targetInboxId]),
+    );
+
+    const updates: { inboxId: string; escalationInboxId: string | null }[] = [];
+
+    // Find removed escalations (were in original but not in current)
+    for (const [sourceId] of originalConditions) {
+      if (!currentConditions.has(sourceId)) {
+        updates.push({ inboxId: sourceId, escalationInboxId: null });
+      }
+    }
+
+    // Find added or changed escalations
+    for (const [sourceId, targetId] of currentConditions) {
+      const originalTarget = originalConditions.get(sourceId);
+      if (originalTarget !== targetId) {
+        updates.push({ inboxId: sourceId, escalationInboxId: targetId });
+      }
+    }
+
+    updateEscalationMutation.mutate(
+      { updates },
+      {
+        onSuccess: () => {
+          toast.success(t('cases:overview.panel.escalation.saved'));
+          revalidate();
+          panelSharp.actions.close();
+        },
+        onError: () => {
+          toast.error(t('common:errors.unknown'));
+        },
+      },
+    );
+  };
+
+  return (
+    <Panel.Container size="small">
+      <Panel.Content>
+        <Panel.Header>{t('cases:overview.panel.escalation.title')}</Panel.Header>
+        {match(inboxesQuery)
+          .with({ isPending: true }, () => (
+            <div className="flex items-center justify-center py-xl">
+              <Spinner className="size-8" />
+            </div>
+          ))
+          .with({ isError: true }, () => (
+            <div className="text-s text-grey-secondary py-sm">{t('cases:overview.config.error_loading')}</div>
+          ))
+          .with({ isSuccess: true }, () => (
+            <div className="flex flex-col gap-md">
+              <div className="border border-grey-border rounded-lg p-md bg-grey-background-light dark:bg-surface-card flex flex-col gap-md">
+                <div className="text-s font-medium">{t('cases:overview.panel.escalation.conditions_title')}</div>
+
+                <div className="flex flex-col gap-md">
+                  {conditions.map((condition) => (
+                    <EscalationConditionRow
+                      key={condition.id}
+                      condition={condition}
+                      allInboxesMetadata={allInboxesMetadata}
+                      usedSourceIds={conditions.filter((c) => c.id !== condition.id).map((c) => c.sourceInboxId)}
+                      onUpdate={(field, value) => handleUpdateCondition(condition.id, field, value)}
+                      onRemove={() => handleRemoveCondition(condition.id)}
+                      disabled={readOnly}
+                    />
+                  ))}
+
+                  {readOnly || conditions.length === inboxes.length ? null : (
+                    <div>
+                      <Button variant="primary" appearance="stroked" onClick={handleAddCondition}>
+                        {t('cases:overview.panel.escalation.add_condition')}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))
+          .exhaustive()}
+        {readOnly ? null : (
+          <Panel.Footer>
+            <Panel.FooterButton
+              onClick={handleSave}
+              isLoading={updateEscalationMutation.isPending}
+              label={t('cases:overview.validate_config')}
+            />
+          </Panel.Footer>
+        )}
+      </Panel.Content>
+    </Panel.Container>
+  );
+};

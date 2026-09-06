@@ -1,0 +1,73 @@
+import { FORBIDDEN, NOT_FOUND } from '@app-builder/utils/http/http-status-codes';
+import { useCanGoBack, useRouter } from '@tanstack/react-router';
+import { type Namespace } from 'i18next';
+import { useTranslation } from 'react-i18next';
+import { Button, Typo } from 'ui-design-system';
+
+export const handle = {
+  i18n: ['common'] satisfies Namespace,
+};
+
+export const ErrorComponent = ({ error }: { error: unknown }) => {
+  const router = useRouter();
+  const canGoBack = useCanGoBack();
+  const { t } = useTranslation(handle.i18n);
+
+  const isDevMode = process.env.NODE_ENV === 'development';
+
+  let title: string, subtitle: string | null;
+  if (error instanceof Response && error.status === FORBIDDEN) {
+    title = t('common:errors.forbidden.title');
+    subtitle = t('common:errors.forbidden.subtitle');
+  } else if (error instanceof Response && error.status === NOT_FOUND) {
+    title = t('common:errors.not_found');
+    subtitle = null;
+  } else {
+    title = t('common:error_boundary.default.title');
+    subtitle = t('common:error_boundary.default.subtitle');
+  }
+
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-md">
+      <Typo variant="title1" className="text-purple-hover">
+        {title}
+      </Typo>
+      {subtitle ? <p className="text-grey-primary text-s mb-lg">{subtitle}</p> : null}
+
+      {canGoBack ? (
+        <div className="mb-xs">
+          <Button
+            variant="primary"
+            onClick={() => {
+              router.history.back();
+            }}
+          >
+            {t('common:go_back')}
+          </Button>
+        </div>
+      ) : null}
+      {isDevMode ? <ErrorDetail error={error} /> : null}
+    </div>
+  );
+};
+
+const ErrorDetail = ({ error }: { error: unknown }) => {
+  if (error instanceof Response) {
+    return (
+      <div className="text-grey-primary text-xs">
+        <p>
+          Error status: {error.status} {error.statusText}
+        </p>
+        <p>{error.statusText}</p>
+      </div>
+    );
+  } else if (error instanceof Error) {
+    return (
+      <div className="text-grey-primary text-xs">
+        <pre>{error.stack}</pre>
+      </div>
+    );
+  } else {
+    return <Typo variant="title1">Unknown Error</Typo>;
+  }
+};

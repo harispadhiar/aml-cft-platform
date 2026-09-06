@@ -1,0 +1,423 @@
+package models
+
+import (
+	"net/url"
+	"slices"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/pkg/errors"
+)
+
+type WebhookEventDeliveryStatus string
+
+const (
+	// In this state, the event delivery has been enqueued to the message broker, but a worker node is yet to pick it up for delivery.
+	Scheduled WebhookEventDeliveryStatus = "scheduled"
+	// The event has been successfully delivered to the target service.
+	Success WebhookEventDeliveryStatus = "success"
+	// The event delivery previously failed and the automatic retries have kicked in
+	Retry WebhookEventDeliveryStatus = "retry"
+	// The webhooks feature is not available in the license
+	Skipped WebhookEventDeliveryStatus = "skipped"
+)
+
+type WebhookEventType string
+
+const (
+	WebhookEventType_CaseUpdated                      WebhookEventType = "case.updated"
+	WebhookEventType_CaseCreatedManually              WebhookEventType = "case.created_manually"
+	WebhookEventType_CaseCreatedWorkflow              WebhookEventType = "case.created_from_workflow"
+	WebhookEventType_CaseDecisionsUpdated             WebhookEventType = "case.decisions_updated"
+	WebhookEventType_CaseTagsUpdated                  WebhookEventType = "case.tags_updated"
+	WebhookEventType_CaseCommentCreated               WebhookEventType = "case.comment_created"
+	WebhookEventType_CaseFileCreated                  WebhookEventType = "case.file_created"
+	WebhookEventType_CaseRuleSnoozeCreated            WebhookEventType = "case.rule_snooze_created"
+	WebhookEventType_CaseDecisionReviewed             WebhookEventType = "case.decision_reviewed"
+	WebhookEventType_DecisionCreated                  WebhookEventType = "decision.created"
+	WebhookEventType_AsyncDecisionFailed              WebhookEventType = "async_decision.failed"
+	WebhookEventType_ContinuousScreeningCreated       WebhookEventType = "continuous_screening.created"
+	WebhookEventType_ContinuousScreeningMatchReviewed WebhookEventType = "continuous_screening.match_reviewed"
+	WebhookEventType_ScoringRiskLevelChangedChanged   WebhookEventType = "user_scoring.risk_level_changed"
+)
+
+var validWebhookEventTypes = []WebhookEventType{
+	WebhookEventType_CaseUpdated,
+	WebhookEventType_CaseCreatedManually,
+	WebhookEventType_CaseCreatedWorkflow,
+	WebhookEventType_CaseDecisionsUpdated,
+	WebhookEventType_CaseTagsUpdated,
+	WebhookEventType_CaseCommentCreated,
+	WebhookEventType_CaseFileCreated,
+	WebhookEventType_DecisionCreated,
+	WebhookEventType_CaseRuleSnoozeCreated,
+	WebhookEventType_CaseDecisionReviewed,
+	WebhookEventType_AsyncDecisionFailed,
+	WebhookEventType_ContinuousScreeningCreated,
+	WebhookEventType_ContinuousScreeningMatchReviewed,
+	WebhookEventType_ScoringRiskLevelChangedChanged,
+}
+
+type WebhookEventContent struct {
+	Type WebhookEventType
+	Data WebhookEventPayload
+}
+
+type WebhookEventPayload struct {
+	Type      WebhookEventType
+	Content   WebhookEventData
+	Timestamp time.Time
+}
+
+type WebhookEventData struct {
+	Decision                 *DecisionWithRuleExecutions
+	Case                     *Case
+	Files                    *[]CaseFile
+	Comments                 *CaseEvent
+	AsyncDecisionExecution   *AsyncDecisionExecution
+	ContinuousScreening      *ContinuousScreeningWithMatches
+	ContinuousScreeningMatch *ContinuousScreeningMatch
+	Score                    *ScoringScore
+}
+
+type WebhookEvent struct {
+	Id             string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	RetryCount     int
+	DeliveryStatus WebhookEventDeliveryStatus
+	OrganizationId uuid.UUID
+	EventContent   WebhookEventContent
+}
+
+type WebhookEventCreate struct {
+	OrganizationId uuid.UUID
+	EventContent   WebhookEventContent
+}
+
+type WebhookEventUpdate struct {
+	Id             string
+	DeliveryStatus WebhookEventDeliveryStatus
+}
+
+type WebhookEventFilters struct {
+	DeliveryStatus []WebhookEventDeliveryStatus
+	Limit          uint64
+	OrganizationId *uuid.UUID
+}
+
+func (f WebhookEventFilters) MergeWithDefaults() WebhookEventFilters {
+	defaultFilters := WebhookEventFilters{
+		Limit: 100,
+	}
+	defaultFilters.DeliveryStatus = f.DeliveryStatus
+	defaultFilters.OrganizationId = f.OrganizationId
+	if f.Limit > 0 {
+		defaultFilters.Limit = f.Limit
+	}
+	return defaultFilters
+}
+
+type WebhookRegister struct {
+	EventTypes        []string
+	Secret            string
+	Url               string
+	HttpTimeout       *int
+	RateLimit         *int
+	RateLimitDuration *int
+}
+
+func (input WebhookRegister) Validate() error {
+	for _, eventType := range input.EventTypes {
+		if !slices.Contains(validWebhookEventTypes, WebhookEventType(eventType)) {
+			return errors.Wrapf(BadParameterError, "invalid event type: %s", eventType)
+		}
+	}
+	if _, err := url.ParseRequestURI(input.Url); err != nil {
+		return errors.Wrapf(BadParameterError, "invalid Url: %s", input.Url)
+	}
+	if input.HttpTimeout != nil && *input.HttpTimeout < 0 {
+		return errors.Wrapf(BadParameterError, "invalid HttpTimeout: %d", *input.HttpTimeout)
+	}
+	if input.RateLimit != nil && *input.RateLimit < 0 {
+		return errors.Wrapf(BadParameterError, "invalid RateLimit: %d", *input.RateLimit)
+	}
+	if input.RateLimitDuration != nil && *input.RateLimitDuration < 0 {
+		return errors.Wrapf(BadParameterError, "invalid RateLimitDuration: %d", *input.RateLimitDuration)
+	}
+
+	return nil
+}
+
+func NewWebhookEventDecisionCreated(decision DecisionWithRuleExecutions) WebhookEventContent {
+	return WebhookEventContent{
+		Type: WebhookEventType_DecisionCreated,
+		Data: WebhookEventPayload{
+			Type:      WebhookEventType_DecisionCreated,
+			Content:   WebhookEventData{Decision: &decision},
+			Timestamp: time.Now(),
+		},
+	}
+}
+
+func newWebhookContent(eventType WebhookEventType, p WebhookEventData) WebhookEventContent {
+	return WebhookEventContent{
+		Type: eventType,
+		Data: WebhookEventPayload{
+			Type:      eventType,
+			Content:   p,
+			Timestamp: time.Now(),
+		},
+	}
+}
+
+func NewWebhookEventCaseUpdated(c Case) WebhookEventContent {
+	return newWebhookContent(WebhookEventType_CaseUpdated, WebhookEventData{Case: &c})
+}
+
+func NewWebhookEventCaseCreatedManually(c Case) WebhookEventContent {
+	return newWebhookContent(WebhookEventType_CaseCreatedManually, WebhookEventData{Case: &c})
+}
+
+func NewWebhookEventCaseCreatedWorkflow(c Case) WebhookEventContent {
+	return newWebhookContent(WebhookEventType_CaseCreatedWorkflow, WebhookEventData{Case: &c})
+}
+
+func NewWebhookEventCaseCreatedFromContinuousScreening(
+	cs ContinuousScreeningWithMatches,
+) WebhookEventContent {
+	return newWebhookContent(
+		WebhookEventType_ContinuousScreeningCreated,
+		WebhookEventData{ContinuousScreening: &cs},
+	)
+}
+
+func NewWebhookEventCaseContinuousScreeningMatchReviewed(
+	cs ContinuousScreeningWithMatches, m ContinuousScreeningMatch,
+) WebhookEventContent {
+	return newWebhookContent(
+		WebhookEventType_ContinuousScreeningMatchReviewed,
+		WebhookEventData{ContinuousScreening: &cs, ContinuousScreeningMatch: &m},
+	)
+}
+
+func NewWebhookEventCaseDecisionsUpdated(c Case) WebhookEventContent {
+	return newWebhookContent(WebhookEventType_CaseDecisionsUpdated, WebhookEventData{Case: &c})
+}
+
+func NewWebhookEventCaseTagsUpdated(c Case) WebhookEventContent {
+	return newWebhookContent(WebhookEventType_CaseTagsUpdated, WebhookEventData{Case: &c})
+}
+
+func NewWebhookEventCaseCommentCreated(c Case, comments CaseEvent) WebhookEventContent {
+	return newWebhookContent(WebhookEventType_CaseCommentCreated, WebhookEventData{
+		Case: &c, Comments: &comments,
+	})
+}
+
+func NewWebhookEventCaseFileCreated(c Case, files []CaseFile) WebhookEventContent {
+	return newWebhookContent(WebhookEventType_CaseFileCreated, WebhookEventData{
+		Case: &c, Files: &files,
+	})
+}
+
+func NewWebhookEventRuleSnoozeCreated(c Case, ruleSnooze RuleSnooze) WebhookEventContent {
+	return newWebhookContent(WebhookEventType_CaseRuleSnoozeCreated, WebhookEventData{Case: &c})
+}
+
+func NewWebhookEventDecisionReviewed(c Case, decision Decision) WebhookEventContent {
+	return newWebhookContent(WebhookEventType_CaseDecisionReviewed, WebhookEventData{
+		Case: &c, Decision: &DecisionWithRuleExecutions{Decision: decision},
+	})
+}
+
+func NewWebhookEventAsyncDecisionFailed(data AsyncDecisionExecution) WebhookEventContent {
+	return WebhookEventContent{
+		Type: WebhookEventType_AsyncDecisionFailed,
+		Data: WebhookEventPayload{
+			Type:      WebhookEventType_AsyncDecisionFailed,
+			Content:   WebhookEventData{AsyncDecisionExecution: &data},
+			Timestamp: time.Now(),
+		},
+	}
+}
+
+func NewWebhookScoringScoreChanged(score ScoringScore) WebhookEventContent {
+	return newWebhookContent(WebhookEventType_ScoringRiskLevelChangedChanged, WebhookEventData{
+		Score: &score,
+	})
+}
+
+type Webhook struct {
+	Id                string
+	OrganizationId    uuid.UUID
+	EventTypes        []string
+	Secrets           []Secret
+	Url               string
+	HttpTimeout       *int
+	RateLimit         *int
+	RateLimitDuration *int
+}
+
+type Secret struct {
+	CreatedAt string
+	DeletedAt string
+	ExpiresAt string
+	Uid       string
+	UpdatedAt string
+	Value     string
+}
+
+type WebhookUpdate struct {
+	EventTypes        *[]string
+	Url               *string
+	HttpTimeout       *int
+	RateLimit         *int
+	RateLimitDuration *int
+}
+
+// New webhook delivery system models
+
+type WebhookDeliveryStatus string
+
+const (
+	WebhookDeliveryStatusPending WebhookDeliveryStatus = "pending"
+	WebhookDeliveryStatusSuccess WebhookDeliveryStatus = "success"
+	WebhookDeliveryStatusFailed  WebhookDeliveryStatus = "failed"
+)
+
+// NewWebhook represents a webhook endpoint in the new delivery system
+type NewWebhook struct {
+	Id                       uuid.UUID
+	OrganizationId           uuid.UUID
+	Url                      string
+	EventTypes               []string
+	HttpTimeoutSeconds       int
+	RateLimit                *int
+	RateLimitDurationSeconds *int
+	Enabled                  bool
+	Secrets                  []NewWebhookSecret
+	CreatedAt                time.Time
+	UpdatedAt                time.Time
+	DeletedAt                *time.Time
+}
+
+// NewWebhookSecret represents a signing secret for webhook signatures
+type NewWebhookSecret struct {
+	Id        uuid.UUID
+	WebhookId uuid.UUID
+	Value     string
+	CreatedAt time.Time
+	ExpiresAt *time.Time
+	RevokedAt *time.Time
+}
+
+// WebhookEventV2 represents an event in the new webhook delivery system
+type WebhookEventV2 struct {
+	Id             uuid.UUID
+	OrganizationId uuid.UUID
+	EventType      string
+	ApiVersion     string // API version for the payload format (e.g., "v1", "v1beta")
+	EventData      []byte // Already serialized JSON payload
+	CreatedAt      time.Time
+}
+
+// WebhookDelivery represents a delivery attempt to a specific endpoint
+type WebhookDelivery struct {
+	Id                 uuid.UUID
+	WebhookEventId     uuid.UUID
+	WebhookId          uuid.UUID
+	Status             WebhookDeliveryStatus
+	Attempts           int
+	NextRetryAt        *time.Time
+	LastError          *string
+	LastResponseStatus *int
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+// NewWebhookCreate is the input for creating a new webhook
+type NewWebhookCreate struct {
+	OrganizationId           uuid.UUID
+	Url                      string
+	EventTypes               []string
+	Secret                   string
+	HttpTimeoutSeconds       *int
+	RateLimit                *int
+	RateLimitDurationSeconds *int
+}
+
+// NewWebhookUpdate is the input for updating a webhook
+type NewWebhookUpdate struct {
+	EventTypes               *[]string
+	Url                      *string
+	HttpTimeoutSeconds       *int
+	RateLimit                *int
+	RateLimitDurationSeconds *int
+	Enabled                  *bool
+}
+
+func (input WebhookUpdate) Validate() error {
+	if input.EventTypes != nil {
+		for _, eventType := range *input.EventTypes {
+			if !slices.Contains(validWebhookEventTypes, WebhookEventType(eventType)) {
+				return errors.Wrapf(BadParameterError, "invalid event type: %s", eventType)
+			}
+		}
+	}
+	if input.Url != nil {
+		if _, err := url.ParseRequestURI(*input.Url); err != nil {
+			return errors.Wrapf(BadParameterError, "invalid Url: %s", *input.Url)
+		}
+	}
+	if input.HttpTimeout != nil && *input.HttpTimeout < 0 {
+		return errors.Wrapf(BadParameterError, "invalid HttpTimeout: %d", *input.HttpTimeout)
+	}
+	if input.RateLimit != nil && *input.RateLimit < 0 {
+		return errors.Wrapf(BadParameterError, "invalid RateLimit: %d", *input.RateLimit)
+	}
+	if input.RateLimitDuration != nil && *input.RateLimitDuration < 0 {
+		return errors.Wrapf(BadParameterError, "invalid RateLimitDuration: %d", *input.RateLimitDuration)
+	}
+	return nil
+}
+
+// MergeWebhookWithUpdate merges a Webhook with a WebhookUpdate, returning a new Webhook with the updated fields.
+// Secret is not updated by this function.
+func MergeWebhookWithUpdate(w Webhook, update WebhookUpdate) Webhook {
+	result := Webhook{
+		Id:                w.Id,
+		OrganizationId:    w.OrganizationId,
+		EventTypes:        w.EventTypes,
+		Url:               w.Url,
+		HttpTimeout:       w.HttpTimeout,
+		RateLimit:         w.RateLimit,
+		RateLimitDuration: w.RateLimitDuration,
+	}
+	if update.EventTypes != nil {
+		result.EventTypes = *update.EventTypes
+	}
+	if update.Url != nil {
+		result.Url = *update.Url
+	}
+	if update.HttpTimeout != nil {
+		result.HttpTimeout = update.HttpTimeout
+	}
+	if update.RateLimit != nil {
+		result.RateLimit = update.RateLimit
+	}
+	if update.RateLimitDuration != nil {
+		result.RateLimitDuration = update.RateLimitDuration
+	}
+	return result
+}
+
+// WebhookSendResult contains the result of a webhook delivery attempt.
+type WebhookSendResult struct {
+	StatusCode int
+	Error      error
+}
+
+func (r WebhookSendResult) IsSuccess() bool {
+	return r.StatusCode >= 200 && r.StatusCode < 300 && r.Error == nil
+}

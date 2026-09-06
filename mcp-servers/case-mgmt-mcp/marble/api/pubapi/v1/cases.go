@@ -1,0 +1,660 @@
+package v1
+
+import (
+	"io"
+	"mime/multipart"
+	"net/http"
+	"time"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/pubapi"
+	"github.com/checkmarble/marble-backend/pubapi/types"
+	"github.com/checkmarble/marble-backend/pubapi/v1/dto"
+	"github.com/checkmarble/marble-backend/pubapi/v1/params"
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/checkmarble/marble-backend/usecases"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/cockroachdb/errors"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+)
+
+var casePaginationDefaults = models.PaginationDefaults{
+	Limit:  50,
+	SortBy: models.CasesSortingCreatedAt,
+	Order:  models.SortingOrderDesc,
+}
+
+func HandleListCases(uc usecases.Usecases) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		orgId, err := utils.OrganizationIdFromRequest(c.Request)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		var p params.ListCasesParams
+
+		if err := c.ShouldBindQuery(&p); err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		if !p.StartDate.IsZero() && !p.EndDate.IsZero() {
+			if time.Time(p.StartDate).After(time.Time(p.EndDate)) {
+				types.NewErrorResponse().WithError(errors.WithDetail(
+					types.ErrInvalidPayload, "end date should be after start date")).Serve(c)
+				return
+			}
+		}
+
+		filters, err := p.ToFilters().Parse()
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+		filters.UseLinearOrdering = true
+
+		paging := p.PaginationParams.ToModel(casePaginationDefaults)
+
+		uc := pubapi.UsecasesWithCreds(ctx, uc)
+		caseUsecase := uc.NewCaseUseCase()
+		userUsecase := uc.NewUserUseCase()
+		tagUsecase := uc.NewTagUseCase()
+
+		cases, err := caseUsecase.ListCases(ctx, orgId, paging, filters)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		caseIds := pure_utils.Map(cases.Cases, func(cas models.Case) string { return cas.Id })
+
+		users, err := userUsecase.ListUsers(ctx, &orgId, false)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+		referents, err := caseUsecase.GetCasesReferents(ctx, caseIds)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+		tags, err := tagUsecase.ListAllTags(ctx, orgId, models.TagTargetCase, false)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		nextPageId := ""
+
+		if len(cases.Cases) > 0 {
+			nextPageId = cases.Cases[len(cases.Cases)-1].Id
+		}
+
+		types.
+			NewResponse(pure_utils.Map(cases.Cases, dto.AdaptCase(users, tags, referents))).
+			WithPagination(cases.HasNextPage, nextPageId).
+			Serve(c)
+	}
+}
+
+func HandleGetCase(uc usecases.Usecases) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		caseId, err := types.UuidParam(c, "caseId")
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		orgId, err := utils.OrganizationIdFromRequest(c.Request)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		uc := pubapi.UsecasesWithCreds(ctx, uc)
+		caseUsecase := uc.NewCaseUseCase()
+		userUsecase := uc.NewUserUseCase()
+		tagUsecase := uc.NewTagUseCase()
+
+		cas, err := caseUsecase.GetCase(ctx, caseId.String())
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		users, err := userUsecase.ListUsers(ctx, utils.Ptr(orgId), false)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+		referents, err := caseUsecase.GetCasesReferents(ctx, []string{cas.Id})
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+		tags, err := tagUsecase.ListAllTags(ctx, orgId, models.TagTargetCase, false)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		types.
+			NewResponse(dto.AdaptCase(users, tags, referents)(cas)).
+			Serve(c)
+	}
+}
+
+type CreateCaseParams struct {
+	InboxId       string   `json:"inbox_id" binding:"required,uuid"`
+	Name          string   `json:"name" binding:"required"`
+	Decisions     []string `json:"decisions" binding:"omitempty,dive,uuid"`
+	AssigneeEmail string   `json:"assignee_email"`
+}
+
+func HandleCreateCase(uc usecases.Usecases) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		var params CreateCaseParams
+
+		if err := c.ShouldBindBodyWithJSON(&params); err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		orgId, err := utils.OrganizationIdFromRequest(c.Request)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		uc := pubapi.UsecasesWithCreds(c.Request.Context(), uc)
+		caseUsecase := uc.NewCaseUseCase()
+		userUsecase := uc.NewUserUseCase()
+
+		inboxId, err := uuid.Parse(params.InboxId)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		req := models.CreateCaseAttributes{
+			OrganizationId: orgId,
+			InboxId:        inboxId,
+			Name:           params.Name,
+			DecisionIds: pure_utils.Map(params.Decisions,
+				func(id string) string { return id }),
+			Type: models.CaseTypeDecision, // By default, we can only create cases from decisions
+		}
+
+		if params.AssigneeEmail != "" {
+			user, err := userUsecase.GetUserByEmail(ctx, params.AssigneeEmail)
+			if err != nil {
+				types.NewErrorResponse().WithError(err).Serve(c)
+				return
+			}
+
+			req.AssigneeId = utils.Ptr(string(user.UserId))
+		}
+
+		cas, err := caseUsecase.CreateCaseAsApiClient(ctx, orgId, req)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		referents, err := caseUsecase.GetCasesReferents(ctx, []string{cas.Id})
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		types.NewResponse(dto.AdaptCase(nil, nil, referents)(cas)).Serve(c)
+	}
+}
+
+type UpdateCaseParams struct {
+	InboxId string `json:"inbox_id" binding:"omitempty,uuid"`
+	Name    string `json:"name"`
+	Outcome string `json:"outcome" binding:"omitempty,oneof=unset confirmed_risk valuable_alert false_positive"`
+}
+
+func HandleUpdateCase(uc usecases.Usecases) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		caseId, err := types.UuidParam(c, "caseId")
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		var params UpdateCaseParams
+
+		if err := c.ShouldBindBodyWithJSON(&params); err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		uc := pubapi.UsecasesWithCreds(c.Request.Context(), uc)
+		caseUsecase := uc.NewCaseUseCase()
+
+		req := models.UpdateCaseAttributes{
+			Id: caseId.String(),
+		}
+
+		if params.InboxId != "" {
+			inboxId, err := uuid.Parse(params.InboxId)
+			if err != nil {
+				types.NewErrorResponse().WithError(err).Serve(c)
+				return
+			}
+			req.InboxId = &inboxId
+		}
+		if params.Name != "" {
+			req.Name = params.Name
+		}
+		if params.Outcome != "" {
+			req.Outcome = models.CaseOutcome(params.Outcome)
+		}
+
+		cas, err := caseUsecase.UpdateCase(ctx, "", req)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		referents, err := caseUsecase.GetCasesReferents(ctx, []string{cas.Id})
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		types.NewResponse(dto.AdaptCase(nil, nil, referents)(cas)).Serve(c)
+	}
+}
+
+type CloseCaseParams struct {
+	Outcome string `json:"outcome" binding:"omitempty,oneof=unset confirmed_risk valuable_alert false_positive"`
+}
+
+func HandleSetCaseStatus(uc usecases.Usecases, status models.CaseStatus) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		caseId, err := types.UuidParam(c, "caseId")
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		uc := pubapi.UsecasesWithCreds(c.Request.Context(), uc)
+		caseUsecase := uc.NewCaseUseCase()
+
+		req := models.UpdateCaseAttributes{
+			Id:     caseId.String(),
+			Status: status,
+		}
+
+		if status == models.CaseClosed {
+			var params CloseCaseParams
+
+			if err := c.ShouldBindBodyWithJSON(&params); err != nil {
+				if !errors.Is(err, io.EOF) {
+					types.NewErrorResponse().WithError(err).Serve(c)
+					return
+				}
+			}
+
+			if params.Outcome != "" {
+				req.Outcome = models.CaseOutcome(params.Outcome)
+			}
+		}
+
+		cas, err := caseUsecase.UpdateCase(ctx, "", req)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		referents, err := caseUsecase.GetCasesReferents(ctx, []string{cas.Id})
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		types.NewResponse(dto.AdaptCase(nil, nil, referents)(cas)).Serve(c)
+	}
+}
+
+func HandleEscalateCase(uc usecases.Usecases) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		caseId, err := types.UuidParam(c, "caseId")
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		uc := pubapi.UsecasesWithCreds(c.Request.Context(), uc)
+		caseUsecase := uc.NewCaseUseCase()
+
+		err = caseUsecase.EscalateCase(ctx, caseId.String())
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		cas, err := caseUsecase.GetCase(ctx, caseId.String())
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		referents, err := caseUsecase.GetCasesReferents(ctx, []string{cas.Id})
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		types.NewResponse(dto.AdaptCase(nil, nil, referents)(cas)).Serve(c)
+	}
+}
+
+func HandleListCaseComments(uc usecases.Usecases) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		orgId, err := utils.OrganizationIdFromRequest(c.Request)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		caseId, err := types.UuidParam(c, "caseId")
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		var p types.PaginationParams
+
+		if err := c.ShouldBindQuery(&p); err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		paging := p.ToModel(casePaginationDefaults)
+		uc := pubapi.UsecasesWithCreds(ctx, uc)
+		caseUsecase := uc.NewCaseUseCase()
+		userUsecase := uc.NewUserUseCase()
+
+		users, err := userUsecase.ListUsers(ctx, utils.Ptr(orgId), false)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		comments, err := caseUsecase.GetCaseComments(ctx, caseId.String(), paging)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		nextPageId := ""
+
+		if len(comments.Items) > 0 {
+			nextPageId = comments.Items[len(comments.Items)-1].Id
+		}
+
+		types.
+			NewResponse(pure_utils.Map(comments.Items, dto.AdaptCaseComment(users))).
+			WithPagination(comments.HasNextPage, nextPageId).
+			Serve(c)
+	}
+}
+
+type CreateCommentParams struct {
+	Comment string `json:"comment" binding:"required,lte=16384"`
+}
+
+func HandleCreateComment(uc usecases.Usecases) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		caseId, err := types.UuidParam(c, "caseId")
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		var params CreateCommentParams
+
+		if err := c.ShouldBindBodyWithJSON(&params); err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		uc := pubapi.UsecasesWithCreds(c.Request.Context(), uc)
+		caseUsecase := uc.NewCaseUseCase()
+
+		req := models.CreateCaseCommentAttributes{
+			Id:      caseId.String(),
+			Comment: params.Comment,
+		}
+
+		if _, err := caseUsecase.CreateCaseComment(ctx, "", req); err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		c.Status(http.StatusCreated)
+	}
+}
+
+func HandleListCaseFiles(uc usecases.Usecases) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		caseId, err := types.UuidParam(c, "caseId")
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		uc := pubapi.UsecasesWithCreds(ctx, uc)
+		caseUsecase := uc.NewCaseUseCase()
+
+		files, err := caseUsecase.GetCaseFiles(ctx, caseId.String())
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		types.
+			NewResponse(pure_utils.Map(files, dto.AdaptCaseFile)).
+			Serve(c)
+	}
+}
+
+func HandleDownloadCaseFile(uc usecases.Usecases) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		fileId, err := types.UuidParam(c, "fileId")
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		uc := pubapi.UsecasesWithCreds(ctx, uc)
+		caseUsecase := uc.NewCaseUseCase()
+
+		url, err := caseUsecase.GetCaseFileUrl(ctx, fileId.String())
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		types.Redirect(c, url)
+	}
+}
+
+const CaseFileUploadMaxSize = 5 << 20 // 5 MB
+
+var caseReviewPaginationDefaults = models.PaginationDefaults{
+	Limit:  50,
+	SortBy: models.SortingFieldCreatedAt,
+	Order:  models.SortingOrderDesc,
+}
+
+func HandleListAiCaseReviews(uc usecases.Usecases) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		caseId, err := types.UuidParam(c, "caseId")
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		var p types.PaginationParams
+		if err := c.ShouldBindQuery(&p); err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		pagination := p.ToModel(caseReviewPaginationDefaults)
+
+		uc := pubapi.UsecasesWithCreds(ctx, uc)
+		aiUsecase := uc.NewAiAgentUsecase()
+
+		result, err := aiUsecase.ListCaseReviews(ctx, *caseId, &pagination)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		nextPageId := ""
+		if len(result.Items) > 0 {
+			nextPageId = result.Items[len(result.Items)-1].Id.String()
+		}
+
+		types.
+			NewResponse(pure_utils.Map(result.Items, dto.AdaptAiCaseReview)).
+			WithPagination(result.HasNextPage, nextPageId).
+			Serve(c)
+	}
+}
+
+func HandleGetAiCaseReviewById(uc usecases.Usecases) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		caseId, err := types.UuidParam(c, "caseId")
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		aiReviewId, err := types.UuidParam(c, "aiReviewId")
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		uc := pubapi.UsecasesWithCreds(ctx, uc)
+		aiUsecase := uc.NewAiAgentUsecase()
+
+		review, err := aiUsecase.GetCaseReviewById(ctx, caseId.String(), *aiReviewId)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		types.NewResponse(dto.AdaptAiCaseReviewDetail(review)).Serve(c)
+	}
+}
+
+func HandleEnqueueAiCaseReview(uc usecases.Usecases) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		caseId, err := types.UuidParam(c, "caseId")
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		usecase := pubapi.UsecasesWithCreds(ctx, uc).NewAiAgentUsecase()
+		aiReviewId, ok, err := usecase.EnqueueCreateCaseReview(ctx, caseId.String(), true)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+		if !ok {
+			types.NewErrorResponse().
+				WithError(errors.Wrap(models.ForbiddenError, "AI case review is not enabled")).
+				Serve(c)
+			return
+		}
+		types.NewResponse(gin.H{"ai_review_id": aiReviewId}).Serve(c, http.StatusAccepted)
+	}
+}
+
+func HandleCreateCaseFile(uc usecases.Usecases) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		caseId, err := types.UuidParam(c, "caseId")
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, CaseFileUploadMaxSize)
+
+		if err := c.Request.ParseMultipartForm(CaseFileUploadMaxSize); err != nil {
+			if errors.Is(err, &http.MaxBytesError{}) {
+				types.NewErrorResponse().
+					WithError(errors.WithDetail(err, "uploaded file too large")).
+					Serve(c)
+				return
+			}
+
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		_, file, err := c.Request.FormFile("file")
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		uc := pubapi.UsecasesWithCreds(ctx, uc)
+		caseUsecase := uc.NewCaseUseCase()
+
+		req := models.CreateCaseFilesInput{
+			CaseId: caseId.String(),
+			Files:  []multipart.FileHeader{*file},
+		}
+
+		_, files, err := caseUsecase.CreateCaseFiles(ctx, req)
+		if err != nil {
+			types.NewErrorResponse().WithError(err).Serve(c)
+			return
+		}
+
+		types.
+			NewResponse(pure_utils.Map(files, dto.AdaptCaseFile)).
+			Serve(c)
+	}
+}

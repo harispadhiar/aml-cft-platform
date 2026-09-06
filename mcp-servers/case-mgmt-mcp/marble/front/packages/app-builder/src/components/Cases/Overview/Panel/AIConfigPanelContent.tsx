@@ -1,0 +1,333 @@
+import { CalloutV2 } from '@app-builder/components/Callout';
+import { ExternalLink } from '@app-builder/components/ExternalLink';
+import { FormErrorOrDescription } from '@app-builder/components/Form/Tanstack/FormErrorOrDescription';
+import { FormLabel } from '@app-builder/components/Form/Tanstack/FormLabel';
+import { FormTextArea } from '@app-builder/components/Form/Tanstack/FormTextArea';
+import { Panel } from '@app-builder/components/Panel';
+import { type AiSettingSchema, aiSettingSchema } from '@app-builder/models/ai-settings';
+import { useUpdateAiSettings } from '@app-builder/queries/cases/update-ai-settings';
+import { getFieldErrors, handleSubmit } from '@app-builder/utils/form';
+import { useForm } from '@tanstack/react-form';
+import toast from 'react-hot-toast';
+import { Trans, useTranslation } from 'react-i18next';
+import { Button, Input, Switch, Tooltip } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+import { LanguageDropdown } from './LanguageDropdown';
+
+interface AIConfigPanelContentProps {
+  settings: AiSettingSchema;
+  onSuccess?: () => void;
+  readOnly?: boolean;
+}
+
+export function AIConfigPanelContent({ settings, onSuccess, readOnly }: AIConfigPanelContentProps) {
+  const { t } = useTranslation(['cases', 'common']);
+  const updateMutation = useUpdateAiSettings();
+
+  const form = useForm({
+    defaultValues: {
+      caseReviewSetting: {
+        language: settings.caseReviewSetting.language || 'en',
+        structure: settings.caseReviewSetting.structure || '',
+        orgDescription: settings.caseReviewSetting.orgDescription || '',
+        additionalCaseReviewInstruction: settings.caseReviewSetting.additionalCaseReviewInstruction || '',
+      },
+      kycEnrichmentSetting: {
+        enabled: settings.kycEnrichmentSetting.enabled,
+        customInstructions: settings.kycEnrichmentSetting.customInstructions || '',
+        domainsFilter: settings.kycEnrichmentSetting.domainsFilter || [],
+      },
+    },
+    validators: {
+      onSubmit: aiSettingSchema,
+    },
+    onSubmit: ({ value }) => {
+      return updateMutation
+        .mutateAsync(value)
+        .then(() => {
+          toast.success(t('common:success.save'));
+          onSuccess?.();
+        })
+        .catch(() => {
+          toast.error(t('common:errors.unknown'));
+        });
+    },
+  });
+
+  return (
+    <Panel.Container size="small">
+      <Panel.Content>
+        <Panel.Header>{t('cases:overview.panel.ai_config.title')}</Panel.Header>
+        <form id="ai-config-panel-form" className="flex flex-col gap-sm" onSubmit={handleSubmit(form)}>
+          {/* Section: Informations générales */}
+          <div className="bg-grey-background-light dark:bg-surface-card border border-grey-border rounded-lg p-md flex flex-col gap-md">
+            <span className="text-s font-medium">{t('cases:ai_settings.general.title')}</span>
+            <form.Field name="caseReviewSetting.orgDescription">
+              {(field) => (
+                <div className="flex flex-col gap-xs">
+                  <FormLabel name={field.name} className="text-xs flex items-center gap-sm">
+                    {t('cases:ai_settings.general.org_description.field.label')}
+                    <Tooltip.Default
+                      delayDuration={300}
+                      className="max-w-96"
+                      content={
+                        <span className="font-normal text-pretty">
+                          {t('cases:ai_settings.general.org_description.field.tooltip')}
+                        </span>
+                      }
+                    >
+                      <Icon icon="tip" className="size-4 shrink-0 cursor-pointer text-purple-primary" />
+                    </Tooltip.Default>
+                  </FormLabel>
+                  <FormTextArea
+                    name={field.name}
+                    onChange={(e) => field.handleChange(e.currentTarget.value)}
+                    onBlur={field.handleBlur}
+                    defaultValue={field.state.value}
+                    valid={field.state.meta.errors.length === 0}
+                    resize="vertical"
+                    className="min-h-[140px] disabled:cursor-not-allowed"
+                    placeholder={t('cases:ai_settings.general.org_description.field.placeholder')}
+                    disabled={readOnly}
+                  />
+                </div>
+              )}
+            </form.Field>
+
+            <form.Field name="caseReviewSetting.structure">
+              {(field) => (
+                <div className="flex flex-col gap-xs">
+                  <FormLabel name={field.name} className="text-xs flex items-center gap-sm">
+                    {t('cases:ai_settings.general.structure.field.label')}
+                    <Tooltip.Default
+                      delayDuration={300}
+                      className="max-w-96"
+                      content={
+                        <span className="font-normal">
+                          <Trans
+                            t={t}
+                            i18nKey="cases:ai_settings.general.structure.field.tooltip"
+                            components={{
+                              DocLink: <ExternalLink href="https://www.markdownguide.org/basic-syntax/" />,
+                            }}
+                          />
+                        </span>
+                      }
+                    >
+                      <Icon icon="tip" className="size-4 shrink-0 cursor-pointer text-purple-primary" />
+                    </Tooltip.Default>
+                  </FormLabel>
+                  <FormTextArea
+                    name={field.name}
+                    onChange={(e) => field.handleChange(e.currentTarget.value)}
+                    onBlur={field.handleBlur}
+                    defaultValue={field.state.value}
+                    valid={field.state.meta.errors.length === 0}
+                    resize="vertical"
+                    className="min-h-[140px] disabled:cursor-not-allowed"
+                    placeholder={t('cases:ai_settings.general.structure.field.placeholder')}
+                    disabled={readOnly}
+                  />
+                </div>
+              )}
+            </form.Field>
+
+            <form.Field name="caseReviewSetting.language">
+              {(field) => (
+                <div className="flex flex-col gap-xs">
+                  <FormLabel name={field.name} className="text-xs flex items-center gap-sm">
+                    {t('cases:ai_settings.general.language.field.label')}
+                    <Tooltip.Default
+                      delayDuration={300}
+                      className="max-w-96"
+                      content={
+                        <span className="font-normal">{t('cases:ai_settings.general.language.field.tooltip')}</span>
+                      }
+                    >
+                      <Icon icon="tip" className="size-4 shrink-0 cursor-pointer text-purple-primary" />
+                    </Tooltip.Default>
+                  </FormLabel>
+                  <LanguageDropdown
+                    value={field.state.value}
+                    onChange={(value) => field.handleChange(value)}
+                    disabled={readOnly}
+                  />
+                </div>
+              )}
+            </form.Field>
+
+            <form.Field name="caseReviewSetting.additionalCaseReviewInstruction">
+              {(field) => (
+                <div className="flex flex-col gap-xs">
+                  <FormLabel name={field.name} className="text-xs flex items-center gap-sm">
+                    {t('cases:ai_settings.general.additional_instruction.field.label')}
+                    <Tooltip.Default
+                      delayDuration={300}
+                      className="max-w-96"
+                      content={
+                        <span className="font-normal text-pretty">
+                          {t('cases:ai_settings.general.additional_instruction.field.tooltip')}
+                        </span>
+                      }
+                    >
+                      <Icon icon="tip" className="size-4 shrink-0 cursor-pointer text-purple-primary" />
+                    </Tooltip.Default>
+                  </FormLabel>
+                  <FormTextArea
+                    name={field.name}
+                    onChange={(e) => field.handleChange(e.currentTarget.value)}
+                    onBlur={field.handleBlur}
+                    defaultValue={field.state.value}
+                    valid={field.state.meta.errors.length === 0}
+                    resize="vertical"
+                    className="min-h-[140px] disabled:cursor-not-allowed"
+                    placeholder={t('cases:ai_settings.general.additional_instruction.field.placeholder')}
+                    disabled={readOnly}
+                  />
+                </div>
+              )}
+            </form.Field>
+          </div>
+
+          {/* Section: IA (KYC Enrichment) */}
+          <div className="bg-grey-background-light dark:bg-surface-card border border-grey-border rounded-lg p-md flex flex-col gap-md">
+            <span className="text-s font-medium">{t('cases:overview.panel.ai_config.kyc_enrichment')}</span>
+            <form.Field name="kycEnrichmentSetting.enabled">
+              {(field) => (
+                <div className="flex gap-sm text-pretty">
+                  <Switch
+                    className="shrink-0"
+                    checked={field.state.value}
+                    onCheckedChange={(val) => field.handleChange(val)}
+                    disabled={readOnly}
+                  />
+                  <div className="flex flex-col gap-xs">
+                    <div className="text-s text-grey-primary">
+                      <Trans
+                        t={t}
+                        i18nKey="cases:ai_settings.kyc_enrichment.enabled.field.label"
+                        ns="cases"
+                        components={{
+                          bold: <span className="font-semibold text-grey-primary" />,
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </form.Field>
+
+            <form.Field name="kycEnrichmentSetting.customInstructions">
+              {(field) => (
+                <div className="flex flex-col gap-xs">
+                  <FormLabel name={field.name} className="text-xs flex items-center gap-sm">
+                    {t('cases:ai_settings.kyc_enrichment.custom_instructions.field.label')}
+                    <Tooltip.Default
+                      delayDuration={300}
+                      className="max-w-96"
+                      content={
+                        <span className="font-normal">
+                          <Trans
+                            t={t}
+                            i18nKey="cases:ai_settings.kyc_enrichment.custom_instructions.field.tooltip"
+                            components={{
+                              DocLink: <ExternalLink href="https://www.markdownguide.org/basic-syntax/" />,
+                            }}
+                          />
+                        </span>
+                      }
+                    >
+                      <Icon icon="tip" className="size-4 shrink-0 cursor-pointer text-purple-primary" />
+                    </Tooltip.Default>
+                  </FormLabel>
+                  <FormTextArea
+                    name={field.name}
+                    onChange={(e) => field.handleChange(e.currentTarget.value)}
+                    onBlur={field.handleBlur}
+                    defaultValue={field.state.value}
+                    valid={field.state.meta.errors.length === 0}
+                    resize="vertical"
+                    className="min-h-[140px] disabled:cursor-not-allowed"
+                    placeholder={t('cases:ai_settings.kyc_enrichment.custom_instructions.field.placeholder')}
+                    disabled={readOnly}
+                  />
+                </div>
+              )}
+            </form.Field>
+
+            <CalloutV2>{t('cases:ai_settings.kyc_enrichment_callout')}</CalloutV2>
+
+            <form.Field name="kycEnrichmentSetting.domainsFilter" mode="array">
+              {(domainsField) => (
+                <div className="flex flex-col gap-sm">
+                  {domainsField.state.value.map((_, idx) => (
+                    <form.Field key={idx} name={`kycEnrichmentSetting.domainsFilter[${idx}]`}>
+                      {(field) => (
+                        <div className="flex flex-col gap-xs">
+                          <div className="flex gap-sm items-center">
+                            <Input
+                              className="flex-1 [&>input]:disabled:cursor-not-allowed"
+                              value={field.state.value}
+                              onChange={(e) => {
+                                field.handleChange(e.target.value);
+                                domainsField.validate('change');
+                              }}
+                              placeholder={t('cases:ai_settings.domains_filter.placeholder')}
+                              disabled={readOnly}
+                            />
+                            {!readOnly && (
+                              <Button
+                                mode="icon"
+                                variant="secondary"
+                                type="button"
+                                onClick={() => domainsField.removeValue(idx)}
+                              >
+                                <Icon icon="delete" className="size-4 text-purple-primary" />
+                              </Button>
+                            )}
+                          </div>
+                          <FormErrorOrDescription errors={getFieldErrors(field.state.meta.errors)} />
+                        </div>
+                      )}
+                    </form.Field>
+                  ))}
+
+                  {!readOnly && (
+                    <Button
+                      type="button"
+                      variant="primary"
+                      appearance="stroked"
+                      disabled={domainsField.state.value.length >= 10}
+                      onClick={() => domainsField.pushValue('')}
+                      className="w-fit"
+                    >
+                      {t('cases:ai_settings.kyc_enrichment.add_new.button')}
+                    </Button>
+                  )}
+                </div>
+              )}
+            </form.Field>
+          </div>
+        </form>
+        {!readOnly && (
+          <Panel.Footer>
+            <form.Subscribe selector={(state) => state.isSubmitting}>
+              {(isSubmitting) => {
+                const isPending = isSubmitting || updateMutation.isPending;
+                return (
+                  <Panel.FooterButton
+                    type="submit"
+                    form="ai-config-panel-form"
+                    variant="primary"
+                    label={t('cases:overview.validate_config')}
+                    isLoading={isPending}
+                  />
+                );
+              }}
+            </form.Subscribe>
+          </Panel.Footer>
+        )}
+      </Panel.Content>
+    </Panel.Container>
+  );
+}

@@ -1,0 +1,375 @@
+import { Panel } from '@app-builder/components/Panel';
+import { NewAstNode } from '@app-builder/models';
+import { NewAggregatorAstNode } from '@app-builder/models/astNode/aggregation';
+import { NewSwitchAstNode } from '@app-builder/models/astNode/control-flow';
+import { type CustomList } from '@app-builder/models/custom-list';
+import { type DataModel } from '@app-builder/models/data-model';
+import {
+  buildAstNodeFromModel,
+  RULE_TYPES,
+  type RuleModelType,
+  type ScoringRule,
+  type ScoringRulesetWithRules,
+} from '@app-builder/models/scoring';
+import { useDataModelQuery } from '@app-builder/queries/data/get-data-model';
+import { useUpdateScoringRulesetMutation } from '@app-builder/queries/scoring/update-ruleset';
+import { useNavigate, useRouter } from '@tanstack/react-router';
+import { useState } from 'react';
+import toast from 'react-hot-toast';
+import { useTranslation } from 'react-i18next';
+import { match } from 'ts-pattern';
+import { Button, cn, MenuCommand, Tag } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+import { v7 as uuidv7 } from 'uuid';
+import { Spinner } from '../Spinner';
+import { ScoringRuleEditPanel } from './ScoringRuleEditPanel';
+import { SwitchNode } from './SwitchNode';
+
+interface AddRuleMenuContentProps {
+  onConfirm: (ruleType: RuleModelType) => void;
+  onCancel: () => void;
+}
+
+function AddRuleMenuContent({ onConfirm, onCancel }: AddRuleMenuContentProps) {
+  const { t } = useTranslation(['user-scoring']);
+  const [selectedType, setSelectedType] = useState<RuleModelType>('user_attribute');
+
+  return (
+    <MenuCommand.Content align="end" sideOffset={4} className="min-w-80">
+      <MenuCommand.List className="p-md">
+        <MenuCommand.Group heading={<div className="mb-md">{t('user-scoring:ruleset.rule_type_heading')}</div>}>
+          <div className="flex flex-col gap-sm">
+            {RULE_TYPES.map((value) => (
+              <MenuCommand.HeadlessItem key={value} value={value} onSelect={() => setSelectedType(value)}>
+                <div className="flex items-center gap-sm">
+                  <div
+                    className={cn(
+                      'border-purple-primary flex size-4 shrink-0 items-center justify-center rounded-full border',
+                      selectedType === value ? 'bg-purple-primary' : 'bg-white',
+                    )}
+                  >
+                    {selectedType === value && <div className="size-2 rounded-full bg-white" />}
+                  </div>
+                  <span
+                    className={cn('text-s text-grey-primary', selectedType === value ? 'font-semibold' : 'font-normal')}
+                  >
+                    {t(`user-scoring:ruleset.rule_type.${value}`)}
+                  </span>
+                </div>
+              </MenuCommand.HeadlessItem>
+            ))}
+          </div>
+        </MenuCommand.Group>
+      </MenuCommand.List>
+      <div className="border-grey-border flex items-center justify-end gap-sm border-t p-sm">
+        <Button variant="secondary" size="small" onClick={onCancel}>
+          {t('user-scoring:ruleset.cancel')}
+        </Button>
+        <Button variant="primary" size="small" onClick={() => onConfirm(selectedType)}>
+          {t('user-scoring:ruleset.create_rule')}
+        </Button>
+      </div>
+    </MenuCommand.Content>
+  );
+}
+
+interface RulesTableProps {
+  ruleset: ScoringRulesetWithRules;
+  maxRiskLevel: number;
+  customLists: CustomList[];
+  hasValidLicense?: boolean;
+}
+
+export function RulesTable({ ruleset, maxRiskLevel, customLists, hasValidLicense }: RulesTableProps) {
+  const { t } = useTranslation(['user-scoring']);
+  const router = useRouter();
+  const navigate = useNavigate();
+  const { rules, recordType: entityType } = ruleset;
+  const [open, setOpen] = useState(false);
+  const [panelRule, setPanelRule] = useState<ScoringRule | null>(null);
+  const dataModelQuery = useDataModelQuery();
+  const mutation = useUpdateScoringRulesetMutation();
+
+  const handleConfirm = (ruleType: RuleModelType) => {
+    const ast = match(ruleType)
+      .with('user_attribute', () => NewSwitchAstNode(ruleType, NewAstNode()))
+      .with('aggregate', () => NewSwitchAstNode(ruleType, NewAggregatorAstNode('SUM')))
+      .with('screening_tags', 'entity_tags', () =>
+        buildAstNodeFromModel(
+          {
+            type: ruleType as 'screening_tags' | 'entity_tags',
+            conditions: {
+              type: 'tags',
+              branches: [{ value: [], impact: { modifier: 0 } }],
+              default: { modifier: 0 },
+            },
+          },
+          { entityType },
+        ),
+      )
+      .with('past_alerts', () =>
+        buildAstNodeFromModel({
+          type: 'past_alerts',
+          conditions: { type: 'bool', ifTrue: { modifier: 0 }, ifFalse: { modifier: 0 } },
+        }),
+      )
+      .exhaustive();
+
+    setPanelRule({
+      stableId: uuidv7(),
+      name: '',
+      description: '',
+      riskType: 'customer_features',
+      ast,
+    });
+    setOpen(false);
+  };
+
+  const onSaveSuccess = async (ruleset: ScoringRulesetWithRules | undefined) => {
+    toast.success(t('common:success.save'));
+    await router.invalidate();
+
+    if (ruleset) {
+      navigate({
+        to: '/user-scoring/$recordType/$version',
+        params: {
+          recordType: ruleset.recordType,
+          version: 'draft',
+        },
+      });
+    }
+    return true;
+  };
+
+  const onSaveError = async () => {
+    toast.error(t('common:errors.unknown'));
+    return false;
+  };
+
+  const handleRuleChange = async (stableId: string, newRule: ScoringRule) => {
+    return mutation
+      .mutateAsync({
+        id: ruleset.id,
+        recordType: ruleset.recordType,
+        name: ruleset.name,
+        thresholds: ruleset.thresholds,
+        cooldownSeconds: ruleset.cooldownSeconds,
+        scoringIntervalSeconds: ruleset.scoringIntervalSeconds,
+        rules: ruleset.rules.map((r) =>
+          r.stableId === stableId
+            ? {
+                stableId: r.stableId,
+                name: newRule.name,
+                description: newRule.description,
+                riskType: newRule.riskType,
+                ast: newRule.ast,
+              }
+            : { stableId: r.stableId, name: r.name, description: r.description, riskType: r.riskType, ast: r.ast },
+        ),
+      })
+      .then(onSaveSuccess)
+      .catch(onSaveError);
+  };
+
+  const handleRuleAdd = async (newRule: ScoringRule) => {
+    return mutation
+      .mutateAsync({
+        id: ruleset.id,
+        recordType: ruleset.recordType,
+        name: ruleset.name,
+        thresholds: ruleset.thresholds,
+        cooldownSeconds: ruleset.cooldownSeconds,
+        scoringIntervalSeconds: ruleset.scoringIntervalSeconds,
+        rules: [
+          ...ruleset.rules.map((r) => ({
+            stableId: r.stableId,
+            name: r.name,
+            description: r.description,
+            riskType: r.riskType,
+            ast: r.ast,
+          })),
+          {
+            stableId: newRule.stableId,
+            name: newRule.name,
+            description: newRule.description,
+            riskType: newRule.riskType,
+            ast: newRule.ast,
+          },
+        ],
+      })
+      .then((ruleset) => {
+        setPanelRule(null);
+        return onSaveSuccess(ruleset);
+      })
+      .catch(onSaveError);
+  };
+
+  const handleRuleDelete = (stableId: string) => {
+    mutation
+      .mutateAsync({
+        id: ruleset.id,
+        recordType: ruleset.recordType,
+        name: ruleset.name,
+        thresholds: ruleset.thresholds,
+        cooldownSeconds: ruleset.cooldownSeconds,
+        scoringIntervalSeconds: ruleset.scoringIntervalSeconds,
+        rules: ruleset.rules
+          .filter((r) => r.stableId !== stableId)
+          .map((r) => ({
+            stableId: r.stableId,
+            name: r.name,
+            description: r.description,
+            riskType: r.riskType,
+            ast: r.ast,
+          })),
+      })
+      .then(onSaveSuccess)
+      .catch(onSaveError);
+  };
+
+  return (
+    <>
+      <div className="bg-surface-card border-grey-border rounded-md overflow-hidden border">
+        <div className="border-grey-border flex items-center justify-between border-b px-md py-sm">
+          <div className="text-s text-grey-secondary grid flex-1 grid-cols-[150px_1fr] gap-md font-semibold">
+            <span>{t('user-scoring:ruleset.risk_types_column')}</span>
+            <span>{t('user-scoring:ruleset.rules_column')}</span>
+          </div>
+          <MenuCommand.Menu open={open} onOpenChange={setOpen} persistOnSelect>
+            <MenuCommand.Trigger>
+              <Button variant="secondary">
+                <Icon icon="plus" className="size-4" />
+                {t('user-scoring:ruleset.add_rule')}
+              </Button>
+            </MenuCommand.Trigger>
+            <AddRuleMenuContent onConfirm={handleConfirm} onCancel={() => setOpen(false)} />
+          </MenuCommand.Menu>
+        </div>
+        {rules.length === 0 ? (
+          <div className="text-s text-grey-secondary flex items-center justify-center py-xl">
+            {t('user-scoring:ruleset.no_rules')}
+          </div>
+        ) : (
+          match(dataModelQuery)
+            .with({ isPending: true }, () => (
+              <div className="flex items-center justify-center py-xl">
+                <Spinner />
+              </div>
+            ))
+            .with({ isError: true }, () => (
+              <div className="text-s text-red-primary flex items-center justify-center py-xl">
+                {t('user-scoring:ruleset.error')}
+              </div>
+            ))
+            .with({ isSuccess: true }, ({ data: { dataModel } }) =>
+              rules.map((rule) => (
+                <RuleRow
+                  key={rule.stableId}
+                  rule={rule}
+                  dataModel={dataModel}
+                  entityType={entityType}
+                  maxRiskLevel={maxRiskLevel}
+                  customLists={customLists}
+                  hasValidLicense={hasValidLicense}
+                  onRuleChange={(newRule) => handleRuleChange(rule.stableId, newRule)}
+                  onRuleDelete={() => handleRuleDelete(rule.stableId)}
+                />
+              )),
+            )
+            .exhaustive()
+        )}
+      </div>
+      <Panel.Root
+        open={panelRule !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) setPanelRule(null);
+        }}
+      >
+        {panelRule && dataModelQuery.data ? (
+          <ScoringRuleEditPanel
+            rule={panelRule}
+            dataModel={dataModelQuery.data.dataModel}
+            entityType={entityType}
+            maxRiskLevel={maxRiskLevel}
+            customLists={customLists}
+            hasValidLicense={hasValidLicense}
+            onChange={handleRuleAdd}
+          />
+        ) : null}
+      </Panel.Root>
+    </>
+  );
+}
+
+interface RuleRowProps {
+  rule: ScoringRule;
+  dataModel: DataModel;
+  entityType: string;
+  maxRiskLevel: number;
+  customLists: CustomList[];
+  hasValidLicense?: boolean;
+  onRuleChange?: (rule: ScoringRule) => Promise<boolean>;
+  onRuleDelete?: () => void;
+}
+
+function RuleRow({
+  rule,
+  dataModel,
+  entityType,
+  maxRiskLevel,
+  customLists,
+  hasValidLicense,
+  onRuleChange,
+  onRuleDelete,
+}: RuleRowProps) {
+  const { t } = useTranslation(['user-scoring']);
+  const [isEditing, setIsEditing] = useState(false);
+
+  return (
+    <div className="border-grey-border flex border-b last:border-b-0">
+      <div className="flex w-[150px] shrink-0 items-center px-md py-sm">
+        {rule.riskType ? <Tag color="grey">{t(`user-scoring:risk_type.${rule.riskType}`)}</Tag> : null}
+      </div>
+      <div className="flex flex-1 flex-col gap-sm px-md py-sm">
+        <span className="text-grey-primary text-s font-medium">{rule.name}</span>
+        <SwitchNode
+          node={rule.ast}
+          mode="view"
+          dataModel={dataModel}
+          entityType={entityType}
+          maxRiskLevel={maxRiskLevel}
+          customLists={customLists}
+        />
+      </div>
+      <div className="flex shrink-0 items-center justify-end px-md py-sm">
+        <button
+          type="button"
+          className="border-purple-primary text-purple-primary flex size-6 items-center justify-center rounded-lg border shadow-sm"
+          aria-label="Edit rule"
+          onClick={() => setIsEditing(true)}
+        >
+          <Icon icon="edit" className="size-4" />
+        </button>
+        <Panel.Root open={isEditing} onOpenChange={setIsEditing}>
+          <ScoringRuleEditPanel
+            rule={rule}
+            dataModel={dataModel}
+            entityType={entityType}
+            maxRiskLevel={maxRiskLevel}
+            customLists={customLists}
+            hasValidLicense={hasValidLicense}
+            onChange={onRuleChange}
+            onDelete={
+              onRuleDelete
+                ? () => {
+                    onRuleDelete();
+                    setIsEditing(false);
+                  }
+                : undefined
+            }
+          />
+        </Panel.Root>
+      </div>
+    </div>
+  );
+}

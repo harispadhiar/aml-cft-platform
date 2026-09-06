@@ -1,0 +1,56 @@
+package dbmodels
+
+import (
+	"strconv"
+	"time"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/google/uuid"
+)
+
+type DBScheduledExecution struct {
+	Id                         string     `db:"id"`
+	OrganizationId             uuid.UUID  `db:"organization_id"`
+	ScenarioId                 string     `db:"scenario_id"`
+	ScenarioIterationId        string     `db:"scenario_iteration_id"`
+	Status                     string     `db:"status"`
+	StartedAt                  time.Time  `db:"started_at"`
+	FinishedAt                 *time.Time `db:"finished_at"`
+	NumberOfCreatedDecisions   int        `db:"number_of_created_decisions"`
+	NumberOfEvaluatedDecisions int        `db:"number_of_evaluated_decisions"`
+	NumberOfPlannedDecisions   *int       `db:"number_of_planned_decisions"`
+	Manual                     bool       `db:"manual"`
+	ManifestBlobKey            *string    `db:"manifest_blob_key"`
+	ManifestByteOffset         int64      `db:"manifest_byte_offset"`
+	ManifestRowsProcessed      int64      `db:"manifest_rows_processed"`
+	Deadline                   *time.Time `db:"deadline"`
+}
+
+const TABLE_SCHEDULED_EXECUTIONS = "scheduled_executions"
+
+var ScheduledExecutionFields = utils.ColumnList[DBScheduledExecution]()
+
+func AdaptScheduledExecution(db DBScheduledExecution, scenario models.Scenario,
+	iteration models.ScenarioIteration,
+) models.ScheduledExecution {
+	return models.ScheduledExecution{
+		Id:                         db.Id,
+		OrganizationId:             db.OrganizationId,
+		ScenarioId:                 db.ScenarioId,
+		ScenarioIterationId:        db.ScenarioIterationId,
+		ScenarioVersion:            strconv.Itoa(utils.Or(iteration.Version, 0)),
+		Status:                     models.ScheduledExecutionStatusFrom(db.Status),
+		StartedAt:                  db.StartedAt,
+		FinishedAt:                 db.FinishedAt,
+		NumberOfCreatedDecisions:   db.NumberOfCreatedDecisions,
+		NumberOfEvaluatedDecisions: db.NumberOfEvaluatedDecisions,
+		NumberOfPlannedDecisions:   db.NumberOfPlannedDecisions,
+		Scenario:                   scenario,
+		Manual:                     db.Manual,
+		ManifestBlobKey:            db.ManifestBlobKey,
+		ManifestByteOffset:         db.ManifestByteOffset,
+		ManifestRowsProcessed:      db.ManifestRowsProcessed,
+		Deadline:                   db.Deadline,
+	}
+}

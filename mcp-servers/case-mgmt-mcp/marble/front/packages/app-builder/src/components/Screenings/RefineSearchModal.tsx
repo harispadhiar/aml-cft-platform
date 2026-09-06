@@ -1,0 +1,281 @@
+import { Callout } from '@app-builder/components/Callout';
+import { SEARCH_ENTITIES, type SearchableSchema } from '@app-builder/constants/screening-entity';
+import { type Screening, type ScreeningMatchPayload } from '@app-builder/models/screening';
+import { useRefineScreeningMutation } from '@app-builder/queries/screening/refine-screening';
+import { useSearchScreeningMatchesMutation } from '@app-builder/queries/screening/search-screening-matches';
+import { type RefineSearchInput, refineSearchSchema } from '@app-builder/server-fns/screenings';
+import { handleSubmit } from '@app-builder/utils/form';
+import { useCallbackRef } from '@app-builder/utils/hooks';
+import { useForm, useStore } from '@tanstack/react-form';
+import clsx from 'clsx';
+import { type ReactNode, useRef, useState } from 'react';
+import toast from 'react-hot-toast';
+import { Trans, useTranslation } from 'react-i18next';
+import * as R from 'remeda';
+import { Input, Modal, Select } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+import { type z } from 'zod/v4';
+import { MatchResult } from './MatchResult';
+import { ScreeningStatusTag } from './ScreeningStatusTag';
+import { screeningsI18n } from './screenings-i18n';
+import { setAdditionalFields } from './set-additional-fields';
+
+export type RefineSearchModalProps = {
+  open: boolean;
+  screeningId: string;
+  screening: Screening;
+  onRefineSuccess: (screeningId: string) => void;
+  onClose: () => void;
+};
+
+export function RefineSearchModal({
+  open,
+  screeningId,
+  screening,
+  onRefineSuccess: _onRefineSuccess,
+  onClose: _onClose,
+}: RefineSearchModalProps) {
+  const { t } = useTranslation(screeningsI18n);
+  const formValuesRef = useRef<RefineSearchInput | null>(null);
+  const onClose = useCallbackRef(_onClose);
+  const onRefineSuccess = useCallbackRef(_onRefineSuccess);
+
+  const [searchResults, setSearchResults] = useState<ScreeningMatchPayload[] | null>(null);
+
+  const searchMutation = useSearchScreeningMatchesMutation();
+  const refineMutation = useRefineScreeningMutation();
+
+  const form = useForm({
+    defaultValues: {
+      screeningId,
+      fields: {},
+    } as z.infer<typeof refineSearchSchema>,
+    validators: {
+      onChange: refineSearchSchema,
+    },
+    onSubmit: ({ value }) => {
+      formValuesRef.current = value;
+      searchMutation
+        .mutateAsync(value)
+        .then((data) => {
+          setSearchResults(data);
+        })
+        .catch(() => {
+          toast.error(t('common:errors.unknown'));
+        });
+    },
+  });
+
+  const entityType = useStore(form.store, (state) => state.values.entityType);
+  const additionalFields = entityType ? SEARCH_ENTITIES[entityType].fields : [];
+
+  const onSearchEntityChange = ({ value }: { value: SearchableSchema }) => {
+    if (value) {
+      form.setFieldValue('fields', setAdditionalFields(SEARCH_ENTITIES[value].fields, form.state.values.fields));
+    }
+  };
+
+  const handleBackToSearch = () => {
+    setSearchResults(null);
+  };
+
+  const handleRefine = () => {
+    if (formValuesRef.current) {
+      refineMutation.mutateAsync(formValuesRef.current).then((data) => {
+        onRefineSuccess(data.id);
+        onClose();
+      });
+    }
+  };
+
+  return (
+    <Modal.Root
+      open={open}
+      onOpenChange={(isOpen) => {
+        if (!isOpen) onClose();
+      }}
+    >
+      <Modal.Content
+        fixedHeight={!searchResults}
+        size="medium"
+        className={clsx({ 'h-[80vh]': !searchResults }, 'max-h-[80vh]')}
+      >
+        <Modal.Title>{t('screenings:refine_modal.title')}</Modal.Title>
+        {searchResults ? (
+          <>
+            <div className="flex flex-col gap-xl overflow-y-scroll p-lg">
+              {searchResults.length > 0 ? (
+                <>
+                  <Field label={t('screenings:refine_modal.result_label')}>
+                    <div className="flex grow flex-col gap-sm">
+                      {searchResults.map((match) => {
+                        return <MatchResult key={match.id} entity={match} />;
+                      })}
+                    </div>
+                  </Field>
+                  <Callout bordered>{t('screenings:refine_modal.refine_callout')}</Callout>
+                </>
+              ) : (
+                <>
+                  <span>{t('screenings:refine_modal.no_match_label')}</span>
+                  <Callout bordered>
+                    <div className="flex flex-col items-start gap-sm">
+                      <Trans
+                        t={t}
+                        i18nKey="screenings:refine_modal.no_match_callout"
+                        components={{
+                          Status: <ScreeningStatusTag status="no_hit" pendingHitCount={0} />,
+                        }}
+                      />
+                    </div>
+                  </Callout>
+                </>
+              )}
+            </div>
+            <Modal.Footer>
+              <Modal.FooterButton
+                variant="secondary"
+                label={t('screenings:refine_modal.back_search')}
+                onClick={handleBackToSearch}
+              />
+              <Modal.FooterButton
+                label={t('screenings:refine_modal.apply_search')}
+                onClick={handleRefine}
+                disabled={searchResults.length > (screening.request?.limit ?? Infinity)}
+                isLoading={refineMutation.isPending}
+              />
+            </Modal.Footer>
+          </>
+        ) : (
+          <form onSubmit={handleSubmit(form)} className="contents">
+            <div className="flex h-full flex-col gap-lg overflow-y-scroll p-xl">
+              {screening.request ? <SearchInput request={screening.request} /> : null}
+              <form.Field name="entityType" listeners={{ onChange: onSearchEntityChange }}>
+                {(field) => (
+                  <Field label={t('screenings:search_entity_type')}>
+                    <EntitySelect name={field.name} value={field.state.value} onChange={field.handleChange} />
+                  </Field>
+                )}
+              </form.Field>
+              {additionalFields.map((field) => (
+                <form.Field key={field} name={`fields.${field}`}>
+                  {(formField) => (
+                    <Field label={t(`screenings:entity.property.${field}`)}>
+                      <Input
+                        name={formField.name}
+                        value={formField.state.value as string}
+                        onChange={(e) => formField.handleChange(e.target.value)}
+                        className="grow"
+                      />
+                    </Field>
+                  )}
+                </form.Field>
+              ))}
+            </div>
+            <Modal.Footer>
+              <Modal.FooterButton isCloseButton label={t('common:cancel')} />
+              <form.Subscribe selector={(state) => [state.isPristine, state.canSubmit, state.isSubmitting]}>
+                {([isPristine, canSubmit, isSubmitting]) => (
+                  <Modal.FooterButton
+                    label={isSubmitting ? '...' : t('screenings:refine_modal.test_search')}
+                    type="submit"
+                    disabled={isPristine || !canSubmit}
+                    isLoading={isSubmitting}
+                  />
+                )}
+              </form.Subscribe>
+            </Modal.Footer>
+          </form>
+        )}
+      </Modal.Content>
+    </Modal.Root>
+  );
+}
+
+type FieldProps = {
+  label: string;
+  children: ReactNode;
+};
+
+function Field({ label, children }: FieldProps) {
+  return (
+    <div className="flex flex-col gap-sm">
+      <span>{label}</span>
+      <div className="flex gap-sm">{children}</div>
+    </div>
+  );
+}
+
+export type EntitySelectProps = {
+  name: string;
+  value: SearchableSchema | '';
+  onChange: (value: SearchableSchema) => void;
+};
+
+export function EntitySelect({ name, value, onChange }: EntitySelectProps) {
+  const { t } = useTranslation(screeningsI18n);
+  const schemas = R.keys(SEARCH_ENTITIES);
+  const lowerCasedSchema = value?.toLowerCase() as Lowercase<typeof value>;
+
+  const handleChange = (v: SearchableSchema) => {
+    if (v) {
+      onChange(v);
+    }
+  };
+
+  return (
+    <Select.Root name={name} value={value} onValueChange={handleChange}>
+      <Select.Trigger className="grow">
+        <Select.Value align="start" placeholder={'Select'}>
+          {lowerCasedSchema ? t(`screenings:refine_modal.schema.${lowerCasedSchema}`) : ''}
+        </Select.Value>
+        <Select.Arrow />
+      </Select.Trigger>
+      <Select.Content className="min-w-(--radix-select-trigger-width)" align="start">
+        <Select.Viewport>
+          {schemas.map((schema) => {
+            const schemaKey = schema.toLowerCase() as Lowercase<typeof schema>;
+            const fieldForSchema = SEARCH_ENTITIES[schema].fields;
+
+            return (
+              <Select.Item key={schema} value={schema}>
+                <div className="flex items-center gap-sm p-sm">
+                  <Icon icon="plus" className="size-5" />
+                  <div className="flex flex-col">
+                    <span>{t(`screenings:refine_modal.schema.${schemaKey}`)}</span>
+                    <span className="text-grey-secondary text-xs">
+                      {t('screenings:refine_modal.search_by')}{' '}
+                      {fieldForSchema.map((f) => t(`screenings:entity.property.${f}`)).join(', ')}
+                    </span>
+                  </div>
+                </div>
+              </Select.Item>
+            );
+          })}
+        </Select.Viewport>
+      </Select.Content>
+    </Select.Root>
+  );
+}
+
+function SearchInput({ request }: { request: NonNullable<Screening['request']> }) {
+  const { t } = useTranslation(['screenings']);
+  const searchInputs = R.pipe(
+    R.values(request.queries),
+    R.flatMap((query) => R.values(query.properties)),
+    R.flat(),
+  );
+
+  return (
+    <Field label={t('screenings:refine_modal.search_input_label')}>
+      {searchInputs.map((input, i) => (
+        <div key={i} className="border-grey-border flex items-center gap-sm rounded-sm border p-sm">
+          <span className="bg-grey-background size-6 rounded-xs p-xs">
+            <Icon icon="string" className="size-4" />
+          </span>
+          {input}
+        </div>
+      ))}
+    </Field>
+  );
+}

@@ -1,0 +1,148 @@
+import { useLoaderRevalidator } from '@app-builder/contexts/LoaderRevalidatorContext';
+import { MAX_FILE_SIZE } from '@app-builder/hooks/useFormDropzone';
+import * as Sentry from '@sentry/tanstackstart-react';
+import clsx from 'clsx';
+import { useState } from 'react';
+import { useDropzone } from 'react-dropzone-esm';
+import { toast } from 'react-hot-toast';
+import { useTranslation } from 'react-i18next';
+import * as R from 'remeda';
+import { Button, Modal } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+
+export function UploadFile({
+  uploadFileEndpoint,
+  children,
+}: {
+  uploadFileEndpoint: UploadFileContentProps['uploadFileEndpoint'];
+  children: React.ReactElement;
+}) {
+  const [open, setOpen] = useState(false);
+  const revalidate = useLoaderRevalidator();
+
+  return (
+    <Modal.Root open={open} onOpenChange={setOpen}>
+      <Modal.Trigger asChild>{children}</Modal.Trigger>
+      <Modal.Content>
+        <UploadFileContent
+          uploadFileEndpoint={uploadFileEndpoint}
+          setOpen={setOpen}
+          onUploadCompleted={() => {
+            setOpen(false);
+            revalidate();
+          }}
+        />
+      </Modal.Content>
+    </Modal.Root>
+  );
+}
+
+export type UploadFileContentProps = {
+  uploadFileEndpoint: (formData: FormData) => Promise<Response>;
+  setOpen: (open: boolean) => void;
+  onUploadCompleted: (success: boolean) => void;
+};
+
+function UploadFileContent({ uploadFileEndpoint, setOpen, onUploadCompleted }: UploadFileContentProps) {
+  const { t } = useTranslation(['common', 'cases']);
+  const [loading, setLoading] = useState(false);
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop: (acceptedFiles) => {
+      void onDrop(acceptedFiles);
+    },
+    accept: {
+      'image/*': ['.png', '.jpg', '.jpeg', '.gif'],
+      'application/pdf': ['.pdf'],
+      'application/zip': ['.zip'],
+      'application/msword': ['.doc', '.docx'],
+      'application/vnd.openxmlformats-officedocument.*': ['.docx', '.xlsx'],
+      'application/vnd.ms-excel': ['.xls'],
+      'text/*': ['.csv', '.txt'],
+    },
+    multiple: true,
+    maxSize: MAX_FILE_SIZE,
+  });
+
+  const onDrop = async (acceptedFiles: File[]) => {
+    if (!R.hasAtLeast(acceptedFiles, 1)) {
+      toast.error('Please select a file');
+      // toastError(
+      //   `Please select a file of an accepted type and of size less than ${MAX_FILE_SIZE_MB} MB`,
+      // );
+      return;
+    }
+
+    let success = false;
+    try {
+      setLoading(true);
+
+      const formData = new FormData();
+      acceptedFiles.forEach((file) => {
+        formData.append('file[]', file);
+      });
+
+      const response = await uploadFileEndpoint(formData);
+
+      if (!response.ok) {
+        Sentry.captureException(await response.text());
+        toast.error('An error occurred while trying to upload the file.');
+        return;
+      }
+
+      setLoading(false);
+      setOpen(false);
+      success = true;
+    } catch (error) {
+      Sentry.captureException(error);
+      toast.error('An error occurred while trying to upload the file.');
+    } finally {
+      setLoading(false);
+    }
+
+    onUploadCompleted(success);
+  };
+
+  return (
+    <div>
+      <Modal.Title>{t('cases:add_file')}</Modal.Title>
+      <div className="flex flex-col gap-lg p-lg">
+        <div
+          {...getRootProps()}
+          className={clsx(
+            'text-s flex h-60 flex-col items-center justify-center gap-md rounded-sm border-2 border-dashed',
+            isDragActive ? 'bg-purple-background border-purple-disabled opacity-90' : 'border-grey-placeholder',
+          )}
+        >
+          <input {...getInputProps()} />
+          {loading ? <Loading className="border-none" /> : null}
+          {!loading ? (
+            <>
+              <p className="text-center">{t('cases:drop_file_cta')}</p>
+              <p>{t('cases:drop_file_accepted_types')}</p>
+              <p className="text-grey-secondary uppercase">{t('common:or')}</p>
+              <Button>
+                <Icon icon="plus" className="size-5" />
+                {t('cases:pick_file_cta')}
+              </Button>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const Loading = ({ className }: { className?: string }) => {
+  const { t } = useTranslation(['common']);
+  return (
+    <div
+      className={clsx(
+        className,
+        'border-grey-placeholder flex h-60 flex-col items-center justify-center gap-md rounded-sm border-2 border-dashed',
+      )}
+    >
+      {t('common:loading')}
+    </div>
+  );
+};

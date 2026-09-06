@@ -1,0 +1,125 @@
+package dto
+
+import (
+	"fmt"
+
+	"github.com/checkmarble/marble-backend/dto"
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/pubapi/types"
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/google/uuid"
+)
+
+type Decision struct {
+	Id               uuid.UUID        `json:"id"`
+	BatchExecutionId *string          `json:"batch_execution_id,omitempty"`
+	Case             *Ref             `json:"case,omitempty"`
+	CreatedAt        types.DateTime   `json:"created_at"`
+	TriggerObject    map[string]any   `json:"trigger_object"`
+	Outcome          string           `json:"outcome"`
+	ReviewStatus     *string          `json:"review_status"`
+	Scenario         DecisionScenario `json:"scenario"`
+	Score            int              `json:"score"`
+	Rules            []DecisionRule   `json:"rules,omitzero"`
+	Screenings       []Screening      `json:"screenings,omitzero"`
+}
+
+func (Decision) ApiVersion() string {
+	return "v1"
+}
+
+type DecisionScenario struct {
+	Id          string `json:"id"`
+	IterationId string `json:"iteration_id"`
+	Version     string `json:"version"`
+}
+
+type DecisionRule struct {
+	Id            string             `json:"id"`
+	RuleId        string             `json:"rule_id"`
+	Name          string             `json:"name"`
+	Outcome       string             `json:"outcome"`
+	ScoreModifier int                `json:"score_modifier"`
+	Error         *DecisionRuleError `json:"error,omitempty"`
+}
+
+type DecisionRuleError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+func AdaptDecision(
+	includeRules bool,
+	ruleExecutions []models.RuleExecution,
+	screening []models.ScreeningWithMatches,
+) func(models.Decision) Decision {
+	return func(model models.Decision) Decision {
+		d := Decision{
+			Id:               model.DecisionId,
+			CreatedAt:        types.DateTime(model.CreatedAt),
+			TriggerObject:    model.ClientObject.Data,
+			Outcome:          model.Outcome.String(),
+			ReviewStatus:     model.ReviewStatus,
+			Score:            model.Score,
+			BatchExecutionId: model.ScheduledExecutionId,
+			Scenario: DecisionScenario{
+				Id:          model.ScenarioId.String(),
+				IterationId: model.ScenarioIterationId.String(),
+				Version:     fmt.Sprintf("%d", model.ScenarioVersion),
+			},
+		}
+
+		if model.Case != nil {
+			d.Case = utils.Ptr(AdaptIdRef(model.Case.Id))
+		}
+
+		if includeRules {
+			d.Rules = []DecisionRule{}
+			d.Screenings = []Screening{}
+
+			if ruleExecutions != nil {
+				d.Rules = pure_utils.Map(ruleExecutions, AdaptDecisionRule)
+			}
+
+			if screening != nil {
+				d.Screenings = pure_utils.Map(screening, AdaptScreening(false))
+			}
+		}
+
+		return d
+	}
+}
+
+func AdaptDecisionRule(rule models.RuleExecution) DecisionRule {
+	var ruleError *DecisionRuleError
+
+	if rule.ExecutionError.String() != "" {
+		ruleError = &DecisionRuleError{
+			Code:    int(rule.ExecutionError),
+			Message: rule.ExecutionError.String(),
+		}
+	}
+
+	out := DecisionRule{
+		Id:            rule.Rule.Id,
+		RuleId:        rule.Rule.StableRuleId,
+		Name:          rule.Rule.Name,
+		Outcome:       rule.Outcome,
+		ScoreModifier: rule.ResultScoreModifier,
+		Error:         ruleError,
+	}
+
+	return out
+}
+
+func AdaptDecisionsMetadata(stats dto.DecisionsAggregateMetadata) map[string]any {
+	return map[string]any{
+		"total":            stats.Count.Total,
+		"approve":          stats.Count.Approve,
+		"review":           stats.Count.Review,
+		"block_and_review": stats.Count.BlockAndReview,
+		"decline":          stats.Count.Decline,
+		"skipped":          stats.Count.Skipped,
+	}
+}

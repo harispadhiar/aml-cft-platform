@@ -1,0 +1,58 @@
+package repositories
+
+import (
+	"context"
+	"net/http"
+	"testing"
+
+	"github.com/checkmarble/marble-backend/infra"
+	"github.com/h2non/gock"
+	"github.com/stretchr/testify/assert"
+)
+
+func getMockedNameRecognitionRepository() NameRecognitionRepository {
+	client := &http.Client{Transport: &http.Transport{}}
+
+	gock.InterceptClient(client)
+
+	gock.New("https://api.opensanctions.org").
+		Get("/-/version").
+		Reply(http.StatusNotFound)
+
+	os := infra.InitializeScreening(context.TODO(), client, "", "", "")
+	os.WithNameRecognition("http://name.recognition/detect", "apikey")
+
+	return NameRecognitionRepository{
+		Client:                  client,
+		NameRecognitionProvider: os.NameRecognition(),
+	}
+}
+
+func TestNoNameRecognitionIfNotConfigured(t *testing.T) {
+	provider := NameRecognitionRepository{}
+	matches, err := provider.PerformNameRecognition(context.TODO(), "anything")
+
+	assert.False(t, gock.HasUnmatchedRequest())
+	assert.NoError(t, err)
+	assert.Len(t, matches, 0)
+}
+
+func TestNameRecognitionCalled(t *testing.T) {
+	response := `[{"type":"Person","text":"joe finnigan"}]`
+
+	gock.New("http://name.recognition/detect").
+		Post("/detect").
+		MatchHeader("authorization", "Bearer apikey").
+		BodyString(`{"text": "dinner with joe finnigan"}`).
+		Reply(http.StatusOK).
+		BodyString(response)
+
+	provider := getMockedNameRecognitionRepository()
+	matches, err := provider.PerformNameRecognition(context.TODO(), "dinner with joe finnigan")
+
+	assert.False(t, gock.HasUnmatchedRequest())
+	assert.NoError(t, err)
+	assert.Len(t, matches, 1)
+	assert.Equal(t, "Person", matches[0].Type)
+	assert.Equal(t, "joe finnigan", matches[0].Text)
+}

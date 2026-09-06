@@ -1,0 +1,28 @@
+import {
+  type AddToCasePayload,
+  addToCasePayloadSchema,
+  existingCaseSchema,
+  newCaseSchema,
+} from '@app-builder/schemas/cases';
+import { addToCaseFn } from '@app-builder/server-fns/cases';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useServerFn } from '@tanstack/react-start';
+import toast from 'react-hot-toast';
+
+export { type AddToCasePayload, addToCasePayloadSchema, existingCaseSchema, newCaseSchema };
+
+export const useAddToCaseMutation = () => {
+  const addToCase = useServerFn(addToCaseFn);
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationKey: ['cases', 'add-to-case'],
+    mutationFn: async (payload: AddToCasePayload) => addToCase({ data: payload }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cases'] });
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+};

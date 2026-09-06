@@ -1,0 +1,33 @@
+{
+  "fmu_schema_version": "SBP-FMU-v2.1",
+  "report_type": "STR",
+  "filing_reference": "STR-CASE-00024-202609061108",
+  "filing_timestamp": "2026-09-06T11:08:40.867090+00:00",
+  "reporting_entity": {
+    "name": "Pilot Commercial Bank Pakistan",
+    "sbp_code": "SBP-PILOT-001",
+    "jurisdiction": "PK",
+    "branch": "Compliance Division, Head Office, Karachi"
+  },
+  "subject": {
+    "customer_id": "CUST-009321",
+    "customer_name": "Kazi Najeeb",
+    "cnic": "57588-8868052-1",
+    "location": "Islamabad",
+    "risk_tier": "High",
+    "screening_hit": "None"
+  },
+  "transaction_pattern": "7 cash deposits of ~PKR 950,000 within 48 hours.",
+  "narrative": "Suspicious Activity Report (SAR) / Suspicious Transaction Report (STR)\nDate: 2026-09-03\n\nWho: The subject of this report is Kazi Najeeb, holding CNIC 57588-8868052-1, residing at 6412 Tali Pass, Islamabad. The customer profile was reviewed in accordance with SBP AML/CFT Regulations 2020.\n\nWhat & When: Anomaly detected during routine transaction monitoring. The subject exhibited the following pattern: 7 cash deposits of ~PKR 950,000 within 48 hours.\n\nWhere: Transactions occurred within the jurisdiction of Pakistan, utilizing local branch and digital channels.\n\nWhy: The activity is considered suspicious as it deviates significantly from the established customer profile. The behavior is indicative of potential structuring (smurfing) designed to evade cash transaction reporting (CTR) thresholds as outlined in FATF Typologies and SBP Circulars.\n\nHow: Funds were received via cash and internal transfers, followed by rapid dissipation. We are submitting this STR to the FMU for further investigation.",
+  "ai_model_metadata": {
+    "base_model": "mistralai/Mistral-7B-Instruct-v0.2",
+    "quantisation": "4-bit NF4 (QLoRA)",
+    "adapter_checkpoint": "checkpoints/aml-cft-lora",
+    "human_reviewed": true,
+    "verification_status": "APPROVED_FOR_FILING"
+  },
+  "audit_chain_verification": {
+    "latest_block_hash": "77a56c21842890f94b9cc0624b40627574ee1fec78d893cd8859ce8fc0cda508",
+    "tamper_evident": true
+  }
+}

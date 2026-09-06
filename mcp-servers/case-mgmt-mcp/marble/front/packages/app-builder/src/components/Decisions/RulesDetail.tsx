@@ -1,0 +1,183 @@
+import { decisionsI18n, Paper } from '@app-builder/components';
+import { type AstNode } from '@app-builder/models';
+import { type RuleExecution } from '@app-builder/models/decision';
+import { NewNodeEvaluation, type NodeEvaluation } from '@app-builder/models/node-evaluation';
+import { type ScenarioIterationRule } from '@app-builder/models/scenario/iteration-rule';
+import { generateFlatEvaluation } from '@app-builder/server-fns/scenarios';
+import { formatNumber, useFormatLanguage } from '@app-builder/utils/format';
+import * as React from 'react';
+import { Trans, useTranslation } from 'react-i18next';
+import { Collapsible, Switch } from 'ui-design-system';
+
+import { AstBuilder } from '../AstBuilder';
+import {
+  RuleExecutionCollapsible,
+  RuleExecutionContent,
+  RuleExecutionDescription,
+  RuleExecutionTitle,
+  RulesExecutionsContainer,
+} from './RulesExecutions/RulesExecutions';
+
+export function RulesDetail({
+  scenarioId,
+  ruleExecutions,
+  rules,
+  isIterationArchived = false,
+}: {
+  scenarioId: string;
+  ruleExecutions: RuleExecution[];
+  rules: ScenarioIterationRule[];
+  isIterationArchived?: boolean;
+}) {
+  const { t } = useTranslation(decisionsI18n);
+
+  return (
+    <Collapsible.Container className="bg-surface-card">
+      <Collapsible.Title>{t('decisions:rules.title')}</Collapsible.Title>
+      <Collapsible.Content>
+        <RulesExecutionsContainer>
+          {ruleExecutions.map((ruleExecution) => {
+            return (
+              <RuleExecutionCollapsible key={ruleExecution.ruleId}>
+                <RuleExecutionTitle ruleExecution={ruleExecution} />
+                <RuleExecutionContent>
+                  <RuleExecutionDescription description={ruleExecution.description} />
+                  <RuleExecutionDetail
+                    scenarioId={scenarioId}
+                    ruleExecution={ruleExecution}
+                    rules={rules}
+                    isIterationArchived={isIterationArchived}
+                  />
+                </RuleExecutionContent>
+              </RuleExecutionCollapsible>
+            );
+          })}
+        </RulesExecutionsContainer>
+      </Collapsible.Content>
+    </Collapsible.Container>
+  );
+}
+
+export function RuleExecutionDetail({
+  scenarioId,
+  ruleExecution,
+  rules,
+  isIterationArchived = false,
+}: {
+  scenarioId: string;
+  ruleExecution: RuleExecution;
+  rules: ScenarioIterationRule[];
+  isIterationArchived?: boolean;
+}) {
+  const { t } = useTranslation(decisionsI18n);
+  const language = useFormatLanguage();
+  const currentRule = React.useMemo(
+    () => rules.find((rule) => rule.id === ruleExecution.ruleId),
+    [rules, ruleExecution.ruleId],
+  );
+  const [showValues, setShowValues] = React.useState(false);
+
+  if (!currentRule || !currentRule.formula) {
+    return (
+      <p className="bg-red-background text-s text-red-primary flex h-8 items-center justify-center rounded-sm px-xs py-2xs font-medium">
+        {t('decisions:rules.error.not_found')}
+      </p>
+    );
+  }
+
+  // When the scenario iteration is archived, show simplified view without formula
+  if (isIterationArchived) {
+    return (
+      <div className="flex w-full items-center gap-md">
+        <div className="bg-purple-background text-s text-purple-primary inline-flex h-8 w-fit shrink-0 items-center justify-center whitespace-pre rounded-sm border border-transparent px-xs font-normal dark:bg-transparent dark:border-purple-primary">
+          <Trans
+            t={t}
+            i18nKey="scenarios:rules.consequence.score_modifier"
+            components={{
+              Score: <span className="font-semibold" />,
+            }}
+            values={{
+              score: formatNumber(currentRule.scoreModifier, {
+                language,
+                signDisplay: 'always',
+              }),
+            }}
+          />
+        </div>
+        <p className="text-grey-primary text-s">{t('decisions:rules.archived_no_details')}</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="flex w-full items-center justify-between gap-sm">
+        <div className="bg-purple-background text-s text-purple-primary inline-flex h-8 w-fit items-center justify-center whitespace-pre rounded-sm border border-transparent px-xs font-normal dark:bg-transparent dark:border-purple-primary">
+          <Trans
+            t={t}
+            i18nKey="scenarios:rules.consequence.score_modifier"
+            components={{
+              Score: <span className="font-semibold" />,
+            }}
+            values={{
+              score: formatNumber(currentRule.scoreModifier, {
+                language,
+                signDisplay: 'always',
+              }),
+            }}
+          />
+        </div>
+        {ruleExecution.evaluation ? <DisplayReturnValuesSwitch value={showValues} onChange={setShowValues} /> : null}
+      </div>
+
+      <RuleFormula
+        scenarioId={scenarioId}
+        formula={currentRule.formula}
+        evaluation={ruleExecution.evaluation}
+        showValues={showValues}
+      />
+    </>
+  );
+}
+
+function DisplayReturnValuesSwitch({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  const { t } = useTranslation(decisionsI18n);
+
+  const id = React.useId();
+
+  return (
+    <div className="flex flex-row justify-between gap-sm">
+      <label htmlFor={id} className="text-s select-none font-medium">
+        {t('decisions:rules.show_contextual_values')}
+      </label>
+      <Switch id={id} checked={value} onCheckedChange={onChange} />
+    </div>
+  );
+}
+
+function RuleFormula({
+  scenarioId,
+  formula,
+  evaluation,
+  showValues,
+}: {
+  scenarioId: string;
+  formula: AstNode;
+  evaluation?: NodeEvaluation;
+  showValues: boolean;
+}) {
+  const validation = React.useMemo(
+    () => ({
+      errors: [],
+      evaluation: generateFlatEvaluation(formula, evaluation ?? NewNodeEvaluation()),
+    }),
+    [formula, evaluation],
+  );
+  return (
+    <Paper.Container className="bg-surface-card @container">
+      <AstBuilder.Provider scenarioId={scenarioId} mode="view" showValues={showValues}>
+        <AstBuilder.Root node={formula} validation={validation} />
+      </AstBuilder.Provider>
+    </Paper.Container>
+  );
+}

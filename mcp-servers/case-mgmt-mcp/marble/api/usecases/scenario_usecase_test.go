@@ -1,0 +1,221 @@
+package usecases
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+
+	"github.com/checkmarble/marble-backend/mocks"
+	"github.com/checkmarble/marble-backend/models"
+)
+
+type ScenarioUsecaseTestSuite struct {
+	suite.Suite
+	exec               *mocks.Executor
+	transaction        *mocks.Transaction
+	transactionFactory *mocks.TransactionFactory
+	executorFactory    *mocks.ExecutorFactory
+	enforceSecurity    *mocks.EnforceSecurity
+	scenarioRepository *mocks.ScenarioRepository
+	orgRepository      *mocks.OrganizationRepository
+
+	organizationId uuid.UUID
+	scenarioId     string
+	scenario       models.Scenario
+	securityError  error
+	ctx            context.Context
+}
+
+func (suite *ScenarioUsecaseTestSuite) SetupTest() {
+	suite.exec = new(mocks.Executor)
+	suite.transaction = new(mocks.Transaction)
+	suite.enforceSecurity = new(mocks.EnforceSecurity)
+	suite.transactionFactory = &mocks.TransactionFactory{TxMock: suite.transaction}
+	suite.executorFactory = new(mocks.ExecutorFactory)
+	suite.scenarioRepository = new(mocks.ScenarioRepository)
+	suite.orgRepository = new(mocks.OrganizationRepository)
+
+	suite.securityError = errors.New("some security error")
+	suite.organizationId = uuid.MustParse("25ab6323-1657-4a52-923a-ef6983fe4532")
+	suite.scenarioId = "c5968ff7-6142-4623-a6b3-1539f345e5fa"
+	suite.scenario = models.Scenario{
+		Id:             suite.scenarioId,
+		OrganizationId: suite.organizationId,
+	}
+	suite.ctx = context.Background()
+}
+
+func (suite *ScenarioUsecaseTestSuite) makeUsecase() *ScenarioUsecase {
+	return &ScenarioUsecase{
+		transactionFactory: suite.transactionFactory,
+		executorFactory:    suite.executorFactory,
+		enforceSecurity:    suite.enforceSecurity,
+		repository:         suite.scenarioRepository,
+		orgRepository:      suite.orgRepository,
+	}
+}
+
+func (suite *ScenarioUsecaseTestSuite) AssertExpectations() {
+	t := suite.T()
+	suite.transaction.AssertExpectations(t)
+	suite.enforceSecurity.AssertExpectations(t)
+	suite.transactionFactory.AssertExpectations(t)
+	suite.scenarioRepository.AssertExpectations(t)
+	suite.orgRepository.AssertExpectations(t)
+}
+
+func (suite *ScenarioUsecaseTestSuite) TestListScenarios() {
+	expected := []models.Scenario{suite.scenario}
+	suite.executorFactory.On("NewExecutor").Once().Return(suite.transaction)
+	suite.enforceSecurity.On("OrgId").Return(suite.organizationId)
+	suite.orgRepository.On("GetOrganizationById", suite.ctx, suite.transaction, mock.Anything).
+		Return(models.Organization{Id: suite.organizationId}, nil)
+	suite.scenarioRepository.On("ListScenariosOfOrganization", suite.ctx, suite.transaction,
+		suite.organizationId, mock.Anything).Return(expected, nil)
+	suite.enforceSecurity.On("ReadScenario", suite.scenario).Return(nil)
+
+	result, err := suite.makeUsecase().ListScenarios(suite.ctx, suite.organizationId)
+
+	t := suite.T()
+	assert.NoError(t, err)
+	assert.Equal(t, expected, result)
+
+	suite.AssertExpectations()
+}
+
+func (suite *ScenarioUsecaseTestSuite) TestListScenarios_security() {
+	suite.executorFactory.On("NewExecutor").Once().Return(suite.transaction)
+	suite.enforceSecurity.On("OrgId").Return(suite.organizationId)
+	suite.orgRepository.On("GetOrganizationById", suite.ctx, suite.transaction, mock.Anything).
+		Return(models.Organization{Id: suite.organizationId}, nil)
+	suite.scenarioRepository.On("ListScenariosOfOrganization", suite.ctx, suite.transaction,
+		suite.organizationId, mock.Anything).Return([]models.Scenario{suite.scenario}, nil)
+	suite.enforceSecurity.On("ReadScenario", suite.scenario).Return(suite.securityError)
+
+	_, err := suite.makeUsecase().ListScenarios(suite.ctx, suite.organizationId)
+
+	assert.ErrorIs(suite.T(), err, suite.securityError)
+	suite.AssertExpectations()
+}
+
+func (suite *ScenarioUsecaseTestSuite) TestGetScenario() {
+	suite.executorFactory.On("NewExecutor").Once().Return(suite.transaction)
+	suite.enforceSecurity.On("OrgId").Return(suite.organizationId)
+	suite.orgRepository.On("GetOrganizationById", suite.ctx, suite.transaction, mock.Anything).
+		Return(models.Organization{Id: suite.organizationId}, nil)
+	suite.scenarioRepository.On("GetScenarioById", suite.ctx, suite.transaction, suite.scenarioId, mock.Anything).Return(suite.scenario, nil)
+	suite.enforceSecurity.On("ReadScenario", suite.scenario).Return(nil)
+
+	result, err := suite.makeUsecase().GetScenario(suite.ctx, suite.scenarioId)
+
+	t := suite.T()
+	assert.NoError(t, err)
+	assert.Equal(t, suite.scenario, result)
+
+	suite.AssertExpectations()
+}
+
+func (suite *ScenarioUsecaseTestSuite) TestGetScenario_security() {
+	suite.executorFactory.On("NewExecutor").Once().Return(suite.transaction)
+	suite.enforceSecurity.On("OrgId").Return(suite.organizationId)
+	suite.orgRepository.On("GetOrganizationById", suite.ctx, suite.transaction, mock.Anything).
+		Return(models.Organization{Id: suite.organizationId}, nil)
+	suite.scenarioRepository.On("GetScenarioById", suite.ctx, suite.transaction, suite.scenarioId, mock.Anything).Return(suite.scenario, nil)
+	suite.enforceSecurity.On("ReadScenario", suite.scenario).Return(suite.securityError)
+
+	_, err := suite.makeUsecase().GetScenario(suite.ctx, suite.scenarioId)
+
+	assert.ErrorIs(suite.T(), err, suite.securityError)
+	suite.AssertExpectations()
+}
+
+func (suite *ScenarioUsecaseTestSuite) TestUpdateScenario() {
+	scenarioInput := models.UpdateScenarioInput{
+		Id: suite.scenarioId,
+	}
+
+	updatedScenario := models.Scenario{
+		Id:   suite.scenarioId,
+		Name: "updated scenario",
+	}
+
+	suite.transactionFactory.On("Transaction", suite.ctx, mock.Anything).Return(nil)
+	suite.enforceSecurity.On("OrgId").Return(suite.organizationId)
+	suite.orgRepository.On("GetOrganizationById", suite.ctx, suite.transaction, mock.Anything).
+		Return(models.Organization{Id: suite.organizationId}, nil)
+	suite.scenarioRepository.On("GetScenarioById", suite.ctx, suite.transaction, suite.scenarioId, mock.Anything).Return(suite.scenario, nil).Once()
+	suite.enforceSecurity.On("UpdateScenario", suite.scenario).Return(nil)
+
+	suite.scenarioRepository.On("UpdateScenario", suite.transaction, scenarioInput).Return(nil)
+	suite.scenarioRepository.On("GetScenarioById", suite.ctx, suite.transaction, suite.scenarioId, mock.Anything).Return(updatedScenario, nil).Once()
+
+	result, err := suite.makeUsecase().UpdateScenario(suite.ctx, scenarioInput)
+
+	t := suite.T()
+	assert.NoError(t, err)
+	assert.Equal(t, updatedScenario, result)
+
+	suite.AssertExpectations()
+}
+
+func (suite *ScenarioUsecaseTestSuite) TestUpdateScenario_security() {
+	scenarioInput := models.UpdateScenarioInput{
+		Id: suite.scenarioId,
+	}
+
+	suite.transactionFactory.On("Transaction", suite.ctx, mock.Anything).Return(nil)
+	suite.enforceSecurity.On("OrgId").Return(suite.organizationId)
+	suite.orgRepository.On("GetOrganizationById", suite.ctx, suite.transaction, mock.Anything).
+		Return(models.Organization{Id: suite.organizationId}, nil)
+	suite.scenarioRepository.On("GetScenarioById", suite.ctx, suite.transaction, suite.scenarioId, mock.Anything).Return(suite.scenario, nil).Once()
+	suite.enforceSecurity.On("UpdateScenario", suite.scenario).Return(suite.securityError)
+
+	_, err := suite.makeUsecase().UpdateScenario(suite.ctx, scenarioInput)
+
+	assert.ErrorIs(suite.T(), err, suite.securityError)
+	suite.AssertExpectations()
+}
+
+func (suite *ScenarioUsecaseTestSuite) TestCreateScenario() {
+	createScenarioInput := models.CreateScenarioInput{
+		Name:           "new scenario",
+		OrganizationId: suite.organizationId,
+	}
+
+	suite.enforceSecurity.On("CreateScenario", suite.organizationId).Return(nil)
+
+	suite.enforceSecurity.On("OrgId").Return(suite.organizationId)
+	suite.orgRepository.On("GetOrganizationById", suite.ctx, suite.transaction, mock.Anything).
+		Return(models.Organization{Id: suite.organizationId}, nil)
+	suite.scenarioRepository.On("CreateScenario", suite.transaction, suite.organizationId,
+		createScenarioInput, mock.Anything).Return(nil)
+	suite.scenarioRepository.On("GetScenarioById", suite.ctx, suite.transaction, mock.Anything, mock.Anything).Return(suite.scenario, nil).Once()
+	suite.transactionFactory.On("Transaction", suite.ctx, mock.Anything).Return(nil)
+	result, err := suite.makeUsecase().CreateScenario(suite.ctx, createScenarioInput)
+
+	t := suite.T()
+	assert.NoError(t, err)
+	assert.Equal(t, suite.scenario, result)
+
+	suite.AssertExpectations()
+}
+
+func (suite *ScenarioUsecaseTestSuite) TestCreateScenario_security() {
+	suite.enforceSecurity.On("CreateScenario", suite.organizationId).Return(suite.securityError)
+
+	_, err := suite.makeUsecase().CreateScenario(context.Background(), models.CreateScenarioInput{
+		OrganizationId: suite.organizationId,
+	})
+	assert.ErrorIs(suite.T(), err, suite.securityError)
+
+	suite.AssertExpectations()
+}
+
+func TestScenarioUsecase(t *testing.T) {
+	suite.Run(t, new(ScenarioUsecaseTestSuite))
+}

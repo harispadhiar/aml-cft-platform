@@ -1,0 +1,306 @@
+package mocks
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/mock"
+
+	"github.com/checkmarble/marble-backend/models"
+)
+
+type EnforceSecurity struct {
+	mock.Mock
+}
+
+func (e *EnforceSecurity) ReadOrganization(organizationId uuid.UUID) error {
+	args := e.Called(organizationId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) Permission(permission models.Permission) error {
+	args := e.Called(permission)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) Permissions(permissions []models.Permission) error {
+	args := e.Called(permissions)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) OrgId() uuid.UUID {
+	args := e.Called()
+	return args.Get(0).(uuid.UUID)
+}
+
+func (e *EnforceSecurity) UserId() *string {
+	args := e.Called()
+	return args.Get(0).(*string)
+}
+
+func (e *EnforceSecurity) ApiKeyId() *string {
+	args := e.Called()
+	return args.Get(0).(*string)
+}
+
+func (e *EnforceSecurity) ReadDecision(decision models.Decision) error {
+	args := e.Called(decision)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadScheduledExecution(scheduledExecution models.ScheduledExecution) error {
+	args := e.Called(scheduledExecution)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) CreateDecision(organizationId uuid.UUID) error {
+	args := e.Called(organizationId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) CreateScheduledExecution(scenario models.Scenario) error {
+	args := e.Called(scenario)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadScenario(scenario models.Scenario) error {
+	args := e.Called(scenario)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadScenarioIteration(scenarioIteration models.ScenarioIterationMetadata) error {
+	args := e.Called(scenarioIteration)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadScenarioPublication(scenarioPublication models.ScenarioPublication) error {
+	args := e.Called(scenarioPublication)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) PublishScenario(scenario models.Scenario) error {
+	args := e.Called(scenario)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) UpdateScenario(scenario models.Scenario) error {
+	args := e.Called(scenario)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ListScenarios(organizationId uuid.UUID) error {
+	args := e.Called(organizationId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ListTestRuns(organizationId uuid.UUID) error {
+	args := e.Called(organizationId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadTestRun(organizationId uuid.UUID) error {
+	args := e.Called(organizationId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) CreateScenario(organizationId uuid.UUID) error {
+	args := e.Called(organizationId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) CreateRule(scenarioIteration models.ScenarioIteration) error {
+	args := e.Called(scenarioIteration)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadInbox(i models.Inbox) error {
+	args := e.Called(i)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadInboxMetadata(i models.Inbox) error {
+	args := e.Called(i)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) CreateInbox(organizationId uuid.UUID) error {
+	args := e.Called(organizationId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) UpdateInbox(inbox models.Inbox) error {
+	args := e.Called(inbox)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadInboxUser(inboxUser models.InboxUser, actorInboxUsers []models.InboxUser) error {
+	args := e.Called(inboxUser, actorInboxUsers)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) CreateInboxUser(i models.CreateInboxUserInput,
+	actorInboxUsers []models.InboxUser, targetInbox models.Inbox, targetUser models.User,
+) error {
+	args := e.Called(i, actorInboxUsers, targetInbox, targetUser)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) UpdateInboxUser(inboxUser models.InboxUser, actorInboxUsers []models.InboxUser) error {
+	args := e.Called(inboxUser, actorInboxUsers)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadApiKey(apiKey models.ApiKey) error {
+	args := e.Called()
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) CreateApiKey(organizationId uuid.UUID) error {
+	args := e.Called(organizationId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) DeleteApiKey(apiKey models.ApiKey) error {
+	args := e.Called(apiKey)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) CreateOrganization() error {
+	args := e.Called()
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) EditOrganization(org models.Organization) error {
+	args := e.Called(org)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) EditOrganizationScreeningProvider(org models.Organization, isManagedMarble bool) error {
+	args := e.Called(org, isManagedMarble)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) DeleteOrganization() error {
+	args := e.Called()
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ListOrganization() error {
+	args := e.Called()
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadDataModel() error {
+	args := e.Called()
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) CreateTestRun(organizationId uuid.UUID) error {
+	args := e.Called(organizationId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) WriteDataModel(organizationId uuid.UUID) error {
+	args := e.Called(organizationId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) WriteDataModelIndexes(organizationId uuid.UUID) error {
+	args := e.Called(organizationId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) CanIngest(orgId uuid.UUID) error {
+	args := e.Called(orgId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadContinuousScreeningConfig(config models.ContinuousScreeningConfig) error {
+	args := e.Called(config)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) WriteContinuousScreeningConfig(orgId uuid.UUID) error {
+	args := e.Called(orgId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) WriteContinuousScreeningObject(orgId uuid.UUID) error {
+	args := e.Called(orgId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadContinuousScreeningObject(orgId uuid.UUID) error {
+	args := e.Called(orgId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadContinuousScreeningHit(hit models.ContinuousScreeningWithMatches) error {
+	args := e.Called(hit)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) WriteContinuousScreeningHit(orgId uuid.UUID) error {
+	args := e.Called(orgId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) DismissContinuousScreeningHits(orgId uuid.UUID) error {
+	args := e.Called(orgId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadOrUpdateCase(c models.CaseMetadata, availableInboxIds []uuid.UUID) error {
+	args := e.Called(c, availableInboxIds)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) CreateCase(input models.CreateCaseAttributes, availableInboxIds []uuid.UUID) error {
+	args := e.Called(input, availableInboxIds)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadWhitelist(ctx context.Context) error {
+	args := e.Called(ctx)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) WriteWhitelist(ctx context.Context) error {
+	args := e.Called(ctx)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) PerformFreeformSearch(ctx context.Context) error {
+	args := e.Called(ctx)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadFreeformSearch(s models.FreeformSearch) error {
+	args := e.Called(s)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) SaveFreeformSearch(s models.FreeformSearch) error {
+	args := e.Called(s)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) ReadRecordScore(score models.ScoringScore) error {
+	args := e.Called(score)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) UpdateSettings(orgId uuid.UUID) error {
+	args := e.Called(orgId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) UpdateRuleset(orgId uuid.UUID) error {
+	args := e.Called(orgId)
+	return args.Error(0)
+}
+
+func (e *EnforceSecurity) OverrideScore(ref models.ScoringRecordRef) error {
+	args := e.Called(ref)
+	return args.Error(0)
+}

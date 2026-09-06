@@ -1,0 +1,53 @@
+version: "2"
+linters:
+  enable:
+    - durationcheck
+    - errorlint
+    - loggercheck
+    - sloglint
+    - tagliatelle
+    - unconvert
+    - staticcheck
+  settings:
+    tagliatelle:
+      case:
+        rules:
+          avro: snake
+          bson: camel
+          env: upperSnake
+          envconfig: upperSnake
+          json: snake
+          mapstructure: kebab
+          toml: camel
+          xml: camel
+          yaml: camel
+        use-field-name: true
+    staticcheck:
+      checks:
+        - all
+        - -S1001
+        - -ST1003
+        - -ST1006
+        - -ST1020
+        - -ST1021
+        - -QF1001
+        - -QF1002
+        - -QF1003
+        - -QF1008
+        - -QF1012
+  exclusions:
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

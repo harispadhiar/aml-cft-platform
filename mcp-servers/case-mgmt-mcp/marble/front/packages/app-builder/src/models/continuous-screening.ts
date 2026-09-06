@@ -1,0 +1,489 @@
+import {
+  getCanonicalSelectedKeys,
+  sanitizeTruthyDatasets,
+} from '@app-builder/components/ListAndTopicConfiguration/dataset-selection-provider-utils';
+import {
+  ContinuousScreeningClientDataIndexingDto,
+  ContinuousScreeningClientDataIndexingResponseDto,
+  ContinuousScreeningConfigDto,
+  ContinuousScreeningDatasetUpdateSummaryDto,
+  ContinuousScreeningDto,
+  ContinuousScreeningJobErrorDto,
+  ContinuousScreeningMappingConfigDto,
+  ContinuousScreeningMatchBaseDto,
+  ContinuousScreeningMatchMarbleDto,
+  ContinuousScreeningMatchScreeningEntityDto,
+  ContinuousScreeningObjectDto,
+  ContinuousScreeningRequestDto,
+  ContinuousScreeningUpdateJobSummaryDto,
+  CreateContinuousScreeningConfigDto,
+  FtmEntity,
+  OpenSanctionsEntityDto,
+  ScreeningQueryDto,
+} from 'marble-api';
+import * as R from 'remeda';
+import {
+  adaptScreeningMatchPayload,
+  isKnownEntitySchema,
+  matchEntitySchemas,
+  OpenSanctionEntitySchema,
+  ScreeningMatchPayload,
+} from './screening';
+import { createScreeningFilters, getDatasetFromFilters } from './screening-config';
+
+export type ContinuousScreeningConfig = {
+  id: string;
+  stableId: string;
+  name: string;
+  description?: string;
+  inboxId: string;
+  objectTypes: string[];
+  algorithm: string;
+  datasets: string[];
+  matchThreshold: number;
+  matchLimit: number;
+  enabled: boolean;
+};
+
+export function adaptContinuousScreeningConfig(config: ContinuousScreeningConfigDto): ContinuousScreeningConfig {
+  const datasets = config.filters ? getDatasetFromFilters(config.filters) : (config.datasets ?? []);
+  return {
+    id: config.id,
+    stableId: config.stable_id,
+    name: config.name,
+    description: config.description,
+    inboxId: config.inbox_id,
+    objectTypes: config.object_types,
+    algorithm: config.algorithm,
+    datasets,
+    matchThreshold: config.match_threshold,
+    matchLimit: config.match_limit,
+    enabled: config.enabled,
+  };
+}
+
+export type ContinuousScreeningDatasetUpdateSummary = {
+  id: string;
+  datasetName: string;
+  version: string;
+  liveVersion: string;
+  title: string;
+  isCurrent: boolean;
+  totalItems: number;
+  status: ContinuousScreeningUpdateJobStatus;
+  completion: ContinuousScreeningDatasetUpdateCompletion;
+  createdAt: string;
+};
+
+export type ContinuousScreeningDatasetUpdateCompletion = {
+  completed: number;
+  processing: number;
+  pending: number;
+  failed: number;
+  total: number;
+  itemsProcessed: number;
+  itemsTotal: number;
+};
+
+export type ListContinuousScreeningDatasetUpdatesParams = {
+  offsetId?: string;
+  limit?: number;
+  order?: 'ASC' | 'DESC';
+  sorting?: string;
+};
+
+export function adaptContinuousScreeningDatasetUpdateSummary(
+  dto: ContinuousScreeningDatasetUpdateSummaryDto,
+): ContinuousScreeningDatasetUpdateSummary {
+  return {
+    id: dto.id,
+    datasetName: dto.dataset_name,
+    version: dto.version,
+    liveVersion: dto.live_version,
+    title: dto.title,
+    isCurrent: dto.is_current,
+    totalItems: dto.total_items,
+    status: dto.status,
+    completion: {
+      completed: dto.completion.completed,
+      processing: dto.completion.processing,
+      pending: dto.completion.pending,
+      failed: dto.completion.failed,
+      total: dto.completion.total,
+      itemsProcessed: dto.completion.items_processed,
+      itemsTotal: dto.completion.items_total,
+    },
+    createdAt: dto.created_at,
+  };
+}
+
+export type ContinuousScreeningUpdateJobStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+export type ContinuousScreeningJobError = {
+  details: { error: string };
+  createdAt: string;
+};
+
+export type ContinuousScreeningUpdateJobSummary = {
+  id: string;
+  status: ContinuousScreeningUpdateJobStatus;
+  jobStart: string;
+  jobEnd: string;
+  configName: string;
+  description: string;
+  totalItems: number;
+  receptionTime: string;
+  version: string;
+  itemsProcessed: number | null;
+  errors: ContinuousScreeningJobError[];
+};
+
+export type ListContinuousScreeningUpdateJobsParams = {
+  offsetId?: string;
+  limit?: number;
+  order?: 'ASC' | 'DESC';
+  sorting?: string;
+};
+
+function adaptJobErrorDetails(details: ContinuousScreeningJobErrorDto['details']): { error: string } {
+  if (typeof details === 'object' && details !== null) {
+    if ('error' in details && typeof details.error === 'string') {
+      return { error: details.error };
+    }
+    if ('message' in details && typeof details.message === 'string') {
+      return { error: details.message };
+    }
+  }
+
+  return { error: JSON.stringify(details) };
+}
+
+export function adaptContinuousScreeningJobError(dto: ContinuousScreeningJobErrorDto): ContinuousScreeningJobError {
+  return {
+    details: adaptJobErrorDetails(dto.details),
+    createdAt: dto.created_at,
+  };
+}
+
+export function adaptContinuousScreeningUpdateJobSummary(
+  dto: ContinuousScreeningUpdateJobSummaryDto,
+): ContinuousScreeningUpdateJobSummary {
+  return {
+    id: dto.id,
+    status: dto.status,
+    jobStart: dto.job_start,
+    jobEnd: dto.job_end,
+    configName: dto.config_name,
+    description: dto.description,
+    totalItems: dto.total_items,
+    receptionTime: dto.reception_time,
+    version: dto.version,
+    itemsProcessed: dto.items_processed ?? null,
+    errors: (dto.errors ?? []).map(adaptContinuousScreeningJobError),
+  };
+}
+
+export type ContinuousScreeningClientDataIndexing = {
+  id: string;
+  jobDate: string;
+  totalItems: number;
+  version: string;
+};
+
+export type ContinuousScreeningClientDataIndexingResponse = {
+  version: string;
+  indexVersion: string | null;
+  indexCurrent: boolean;
+  pendingItems: number;
+  items: ContinuousScreeningClientDataIndexing[];
+  hasNextPage: boolean;
+};
+
+export type ListContinuousScreeningClientDataIndexingParams = {
+  offsetId?: string;
+  limit?: number;
+  order?: 'ASC' | 'DESC';
+  sorting?: string;
+};
+
+export function adaptContinuousScreeningClientDataIndexing(
+  dto: ContinuousScreeningClientDataIndexingDto,
+): ContinuousScreeningClientDataIndexing {
+  return {
+    id: dto.id,
+    jobDate: dto.job_date,
+    totalItems: dto.total_items,
+    version: dto.version,
+  };
+}
+
+export function adaptContinuousScreeningClientDataIndexingResponse(
+  dto: ContinuousScreeningClientDataIndexingResponseDto,
+): ContinuousScreeningClientDataIndexingResponse {
+  return {
+    version: dto.version,
+    indexVersion: dto.index_version,
+    indexCurrent: dto.index_current,
+    pendingItems: dto.pending_items,
+    items: dto.items.map(adaptContinuousScreeningClientDataIndexing),
+    hasNextPage: dto.has_next_page,
+  };
+}
+export type ContinuousScreeningObject = {
+  id: string;
+  objectType: string;
+  objectId: string;
+  configStableId: string;
+  createdAt: string;
+};
+
+export function adaptContinuousScreeningObject(object: ContinuousScreeningObjectDto): ContinuousScreeningObject {
+  return {
+    id: object.id,
+    objectType: object.object_type,
+    objectId: object.object_id,
+    configStableId: object.config_stable_id,
+    createdAt: object.created_at,
+  };
+}
+export type CreateMappingConfig = {
+  objectType: string;
+  ftmEntity: FtmEntity;
+  fieldMapping: Record<string, string | null>;
+};
+
+export type PrevalidationCreateContinuousScreeningConfig = {
+  name: string;
+  description: string;
+  inboxId: string | null;
+  inboxName: string | null;
+  datasets: Record<string, boolean>;
+  matchThreshold: number;
+  matchLimit: number;
+  algorithm?: string;
+  mappingConfigs: CreateMappingConfig[];
+};
+
+export type CreateContinuousScreeningConfig = {
+  name: string;
+  description: string;
+  inboxId: string;
+  datasets: Record<string, boolean>;
+  matchThreshold: number;
+  matchLimit: number;
+  algorithm?: string;
+  mappingConfigs: CreateMappingConfig[];
+};
+
+export function adaptCreateContinuousScreeningConfigDto(
+  configuration: CreateContinuousScreeningConfig,
+): CreateContinuousScreeningConfigDto {
+  const truthyDatasets = sanitizeTruthyDatasets(configuration.datasets);
+  const datasetKeys = getCanonicalSelectedKeys(truthyDatasets);
+  return {
+    name: configuration.name,
+    description: configuration.description,
+    object_types: configuration.mappingConfigs.map((mc) => mc.objectType),
+    algorithm: configuration.algorithm,
+    datasets: [],
+    filters: createScreeningFilters(datasetKeys),
+    inbox_id: configuration.inboxId,
+    match_threshold: configuration.matchThreshold,
+    match_limit: configuration.matchLimit,
+    mapping_configs: configuration.mappingConfigs.map<ContinuousScreeningMappingConfigDto>((mc) => {
+      return {
+        object_type: mc.objectType,
+        ftm_entity: mc.ftmEntity,
+        object_field_mappings: R.pipe(
+          Object.entries(mc.fieldMapping),
+          R.filter((fieldMapping): fieldMapping is [string, string] => fieldMapping[1] !== null),
+          R.map(([objectFieldId, ftmProperty]) => {
+            return { object_field_id: objectFieldId, ftm_property: ftmProperty };
+          }),
+        ),
+      };
+    }),
+  };
+}
+
+export type ContinuousScreeningBase = {
+  id: string;
+  organizationId: string;
+  continuousScreeningConfigId: string;
+  continuousScreeningConfigStableId: string;
+  caseId?: string;
+  status: 'in_review' | 'confirmed_hit' | 'no_hit';
+  request: ContinuousScreeningRequest;
+  partial: boolean;
+  numberOfMatches: number;
+};
+
+export type ContinuousScreeningMarbleToScreeningEntity = ContinuousScreeningBase & {
+  triggerType: 'object_added' | 'object_updated';
+  objectType: string;
+  objectId: string;
+  objectInternalId: string;
+  matches: ContinuousScreeningMatchScreeningEntity[];
+};
+
+export type OpenSanctionEntityPayload = {
+  id: string;
+  caption: string;
+  schema: OpenSanctionEntitySchema;
+  properties: Record<string, string[]>;
+  datasets: string[];
+};
+
+export type ContinuousScreeningScreeningEntityToMarble = ContinuousScreeningBase & {
+  triggerType: 'dataset_updated';
+  opensanctionEntityId: string;
+  opensanctionEntityPayload: OpenSanctionEntityPayload;
+  matches: ContinuousScreeningMatchMarble[];
+};
+
+export type ContinuousScreening =
+  | ContinuousScreeningMarbleToScreeningEntity
+  | ContinuousScreeningScreeningEntityToMarble;
+
+export type ContinuousScreeningRequest = {
+  searchInput: {
+    queries: {
+      [key: string]: ScreeningQueryDto;
+    };
+  };
+};
+
+export type ContinuousScreeningMatchBase = {
+  id: string;
+  continuousScreeningId: string;
+  status: ContinuousScreeningMatchBaseDto['status'];
+  payload: ContinuousScreeningMatchPayload;
+};
+
+export type ContinuousScreeningMatchScreeningEntity = ContinuousScreeningMatchBase & {
+  opensanctionEntityId: string;
+};
+
+export type ContinuousScreeningMatchMarble = ContinuousScreeningMatchBase & {
+  objectType: string;
+  objectId: string;
+};
+
+export type ContinuousScreeningMatch = ContinuousScreeningMatchScreeningEntity | ContinuousScreeningMatchMarble;
+
+export type ContinuousScreeningMatchPayload = ScreeningMatchPayload & {
+  datasets: string[];
+  target: boolean;
+};
+
+export function adaptContinuousScreening(dto: ContinuousScreeningDto): ContinuousScreening {
+  const baseContinuousScreening: ContinuousScreeningBase = {
+    id: dto.id,
+    organizationId: dto.org_id,
+    continuousScreeningConfigId: dto.continuous_screening_config_id,
+    continuousScreeningConfigStableId: dto.continuous_screening_config_stable_id,
+    caseId: dto.case_id,
+    status: dto.status,
+    request: adaptContinuousScreeningRequest(dto.request),
+    partial: dto.partial,
+    numberOfMatches: dto.number_of_matches,
+  };
+
+  if (dto.trigger_type === 'dataset_updated') {
+    return {
+      ...baseContinuousScreening,
+      triggerType: 'dataset_updated',
+      opensanctionEntityId: dto.opensanction_entity_id,
+      opensanctionEntityPayload: adaptOpenSanctionsEntityPayload(dto.opensanction_entity_payload),
+      matches: dto.matches.map(adaptContinuousScreeningMatchMarble),
+    };
+  }
+
+  return {
+    ...baseContinuousScreening,
+    triggerType: dto.trigger_type,
+    objectType: dto.object_type,
+    objectId: dto.object_id,
+    objectInternalId: dto.object_internal_id,
+    matches: dto.matches.map(adaptContinuousScreeningMatchScreeningEntity),
+  };
+}
+
+export function adaptContinuousScreeningRequest(dto: ContinuousScreeningRequestDto): ContinuousScreeningRequest {
+  return {
+    searchInput: {
+      queries: dto.search_input.queries,
+    },
+  };
+}
+
+export function adaptContinuousScreeningMatchMarble(
+  dto: ContinuousScreeningMatchMarbleDto,
+): ContinuousScreeningMatchMarble {
+  return {
+    id: dto.id,
+    continuousScreeningId: dto.continuous_screening_id,
+    status: dto.status,
+    objectType: dto.object_type,
+    objectId: dto.object_id,
+    payload: {
+      ...adaptScreeningMatchPayload(dto.payload),
+      target: dto.payload.target,
+      datasets: dto.payload.datasets,
+    },
+  };
+}
+
+export function adaptContinuousScreeningMatchScreeningEntity(
+  dto: ContinuousScreeningMatchScreeningEntityDto,
+): ContinuousScreeningMatchScreeningEntity {
+  return {
+    id: dto.id,
+    continuousScreeningId: dto.continuous_screening_id,
+    status: dto.status,
+    opensanctionEntityId: dto.opensanction_entity_id,
+    payload: {
+      ...adaptScreeningMatchPayload(dto.payload),
+      target: dto.payload.target,
+      datasets: dto.payload.datasets,
+    },
+  };
+}
+
+export function adaptOpenSanctionsEntityPayload(dto: OpenSanctionsEntityDto): OpenSanctionEntityPayload {
+  return {
+    ...dto,
+    schema: isKnownEntitySchema(dto.schema, matchEntitySchemas) ? dto.schema : 'Thing',
+  };
+}
+
+export const isDirectContinuousScreening = (
+  screening: ContinuousScreening,
+): screening is ContinuousScreeningMarbleToScreeningEntity => {
+  return screening.triggerType === 'object_added' || screening.triggerType === 'object_updated';
+};
+
+export const isIndirectContinuousScreening = (
+  screening: ContinuousScreening,
+): screening is ContinuousScreeningScreeningEntityToMarble => {
+  return screening.triggerType === 'dataset_updated';
+};
+
+export const isDirectContinuousScreeningMatch = (
+  match: ContinuousScreeningMatch,
+): match is ContinuousScreeningMatchScreeningEntity => {
+  return 'opensanctionEntityId' in match;
+};
+
+export const isIndirectContinuousScreeningMatch = (
+  match: ContinuousScreeningMatch,
+): match is ContinuousScreeningMatchMarble => {
+  return 'objectType' in match && 'objectId' in match;
+};
+
+export const getMatchEntityType = (screeningMatch: ContinuousScreeningMatch): string => {
+  if (isIndirectContinuousScreeningMatch(screeningMatch)) {
+    return screeningMatch.objectType;
+  }
+  return screeningMatch.payload.schema;
+};

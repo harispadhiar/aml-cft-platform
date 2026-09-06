@@ -1,0 +1,45 @@
+package dbmodels
+
+import (
+	"time"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/google/uuid"
+)
+
+const TABLE_ORGANIZATION_FEATURE_ACCESS = "organization_feature_access"
+
+var SelectOrganizationFeatureAccessColumn = utils.ColumnList[DBOrganizationFeatureAccess]()
+
+type DBOrganizationFeatureAccess struct {
+	Id                  string    `db:"id"`
+	OrganizationId      uuid.UUID `db:"org_id"`
+	TestRun             string    `db:"test_run"`
+	Sanctions           string    `db:"sanctions"`
+	CaseAutoAssign      string    `db:"case_auto_assign"`
+	CaseAiAssist        string    `db:"case_ai_assist"`
+	ContinuousScreening string    `db:"continuous_screening"`
+	AiRuleBuilding      string    `db:"ai_rule_building"`
+	UserScoring         string    `db:"user_scoring"`
+	LexisNexis          string    `db:"lexisnexis"`
+	CreatedAt           time.Time `db:"created_at"`
+	UpdatedAt           time.Time `db:"updated_at"`
+}
+
+func AdaptOrganizationFeatureAccess(db DBOrganizationFeatureAccess) (models.DbStoredOrganizationFeatureAccess, error) {
+	return models.DbStoredOrganizationFeatureAccess{
+		Id:                  db.Id,
+		OrganizationId:      db.OrganizationId,
+		TestRun:             models.FeatureAccessFrom(db.TestRun),
+		Sanctions:           models.FeatureAccessFrom(db.Sanctions),
+		CaseAutoAssign:      models.FeatureAccessFrom(db.CaseAutoAssign),
+		CaseAiAssist:        models.FeatureAccessFrom(db.CaseAiAssist),
+		ContinuousScreening: models.FeatureAccessFrom(db.ContinuousScreening),
+		AiRuleBuilding:      models.FeatureAccessFrom(db.AiRuleBuilding),
+		UserScoring:         models.FeatureAccessFrom(db.UserScoring),
+		LexisNexis:          models.FeatureAccessFrom(db.LexisNexis),
+		CreatedAt:           db.CreatedAt,
+		UpdatedAt:           db.UpdatedAt,
+	}, nil
+}

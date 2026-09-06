@@ -1,0 +1,63 @@
+import { ScoringRulesetPage } from '@app-builder/components/UserScoring/ScoringRulesetPage';
+import { authMiddleware } from '@app-builder/middlewares/auth-middleware';
+import { isNotFoundHttpError } from '@app-builder/models';
+import { type ScenarioPublicationStatus } from '@app-builder/models/scenario/publication';
+import { type ScoringRulesetWithRules } from '@app-builder/models/scoring';
+import { hasAnyEntitlement } from '@app-builder/services/feature-access';
+import { createFileRoute, redirect, useLoaderData } from '@tanstack/react-router';
+import { createServerFn } from '@tanstack/react-start';
+
+const scoringRulesetLoader = createServerFn()
+  .middleware([authMiddleware])
+  .validator((input: { params?: Record<string, string> } | undefined) => input)
+  .handler(async function scoringRulesetLoader({ data, context }) {
+    const { userScoring, customListsRepository, entitlements } = context.authInfo;
+
+    const recordType = data?.params?.['recordType'] ?? '';
+    const version = data?.params?.['version'] ?? '';
+
+    let ruleset: ScoringRulesetWithRules | null = null;
+    try {
+      ruleset = await userScoring.getRulesetWithRules(recordType, version);
+    } catch (err) {
+      if (isNotFoundHttpError(err)) {
+        throw redirect({ to: '/user-scoring/overview' });
+      }
+      throw err;
+    }
+
+    const customLists = await customListsRepository.listCustomLists();
+
+    let preparationStatus: ScenarioPublicationStatus | null = null;
+    if (ruleset.status === 'draft') {
+      preparationStatus = await userScoring.getRulesetPreparationStatus(recordType);
+    }
+
+    return { ruleset, customLists, preparationStatus, hasValidLicense: hasAnyEntitlement(entitlements) };
+  });
+
+export const Route = createFileRoute('/_app/_builder/user-scoring/$recordType/$version')({
+  loader: ({ params }) => scoringRulesetLoader({ data: { params } }),
+  component: UserScoringRulesetRoute,
+});
+
+function UserScoringRulesetRoute() {
+  const loaderData = Route.useLoaderData();
+  const parentData = useLoaderData({ from: '/_app/_builder/user-scoring' });
+
+  // During router.invalidate(), loader data can be temporarily undefined
+  if (!loaderData || !parentData?.settings) return null;
+
+  const { ruleset, customLists, preparationStatus, hasValidLicense } = loaderData;
+  const { settings } = parentData;
+
+  return (
+    <ScoringRulesetPage
+      ruleset={ruleset}
+      settings={settings}
+      customLists={customLists}
+      preparationStatus={preparationStatus}
+      hasValidLicense={hasValidLicense}
+    />
+  );
+}

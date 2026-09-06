@@ -1,0 +1,29 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Intermediate training checkpoints (keeps only the final adapter)
+checkpoints/**/checkpoint-*/
+**/optimizer.pt
+**/rng_state.pth
+**/scheduler.pt
+**/training_args.bin
+
+# Test & framework caches
+.pytest_cache/
+.gradio/
+
+# Environment files
+.env
+.venv
+env/
+venv/
+ENV/
+
+# System and editor files
+.DS_Store
+Thumbs.db
+*.tmp
+.idea/
+.vscode/

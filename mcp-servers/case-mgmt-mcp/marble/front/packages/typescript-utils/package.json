@@ -1,0 +1,16 @@
+{
+  "name": "typescript-utils",
+  "version": "1.0.0",
+  "description": "",
+  "sideEffect": false,
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "25.6.2"
+  },
+  "scripts": {
+    "lint": "biome lint",
+    "type-check": "tsc --noEmit"
+  },
+  "author": "",
+  "license": "ISC"
+}

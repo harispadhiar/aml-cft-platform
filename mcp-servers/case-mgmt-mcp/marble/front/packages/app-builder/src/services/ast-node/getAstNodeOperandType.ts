@@ -1,0 +1,64 @@
+import { type EnumValue, type IdLessAstNode, isUndefinedAstNode } from '@app-builder/models';
+import { isAggregation } from '@app-builder/models/astNode/aggregation';
+import { isConstant } from '@app-builder/models/astNode/constant';
+import { isCustomListAccess } from '@app-builder/models/astNode/custom-list';
+import { isDataAccessorAstNode } from '@app-builder/models/astNode/data-accessor';
+import { isIpHasFlag } from '@app-builder/models/astNode/ip';
+import { isMonitoringListCheckAstNode } from '@app-builder/models/astNode/monitoring-list-check';
+import { isIsMultipleOf } from '@app-builder/models/astNode/multiple-of';
+import { isFuzzyMatchComparator, isStringTemplateAstNode } from '@app-builder/models/astNode/strings';
+import { isTimeAdd, isTimeNow, isTimestampExtract } from '@app-builder/models/astNode/time';
+import { type OperandType } from '@app-builder/models/operand-type';
+import * as R from 'remeda';
+
+export function getAstNodeOperandType(
+  astNode: IdLessAstNode,
+  context: {
+    // To distinguish between Enum and Constant operands
+    enumValues?: EnumValue[];
+  },
+): OperandType {
+  if (isConstant(astNode)) {
+    const { constant } = astNode;
+    if (
+      R.isDefined(context.enumValues) &&
+      context.enumValues.length > 0 &&
+      (R.isNumber(constant) || R.isString(constant)) &&
+      context.enumValues.includes(constant)
+    ) {
+      return 'Enum';
+    }
+    return 'Constant';
+  }
+
+  if (isCustomListAccess(astNode)) {
+    return 'CustomList';
+  }
+
+  if (isMonitoringListCheckAstNode(astNode)) {
+    return 'ClientRisk';
+  }
+
+  if (isDataAccessorAstNode(astNode)) {
+    return 'Field';
+  }
+
+  if (
+    isAggregation(astNode) ||
+    isTimeAdd(astNode) ||
+    isTimeNow(astNode) ||
+    isFuzzyMatchComparator(astNode) ||
+    isTimestampExtract(astNode) ||
+    isIsMultipleOf(astNode) ||
+    isStringTemplateAstNode(astNode) ||
+    isIpHasFlag(astNode)
+  ) {
+    return 'Function';
+  }
+
+  if (isUndefinedAstNode(astNode)) {
+    return 'Undefined';
+  }
+
+  return 'unknown';
+}

@@ -1,0 +1,49 @@
+package mocks
+
+import (
+	"context"
+
+	"github.com/stretchr/testify/mock"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/usecases/auth"
+)
+
+type FirebaseTokenVerifier struct {
+	mock.Mock
+}
+
+func (m *FirebaseTokenVerifier) VerifyFirebaseToken(ctx context.Context, firebaseToken string) (models.FirebaseIdentity, error) {
+	args := m.Called(ctx, firebaseToken)
+	return args.Get(0).(models.FirebaseIdentity), args.Error(1)
+}
+
+func (m *FirebaseTokenVerifier) Verify(ctx context.Context, creds auth.Credentials) (models.IntoCredentials, models.IdentityClaims, error) {
+	args := m.Called(ctx, creds)
+
+	if args.Get(2) != nil {
+		return nil, nil, args.Error(2)
+	}
+
+	return args.Get(0).(models.IntoCredentials), args.Get(1).(models.FirebaseIdentity), args.Error(2)
+}
+
+type FirebaseAdminClient struct {
+	mock.Mock
+}
+
+func (m *FirebaseAdminClient) CreateUser(ctx context.Context, email, name string) error {
+	args := m.Called(ctx, email, name)
+
+	return args.Error(0)
+}
+
+func (m *FirebaseAdminClient) ListMfaEnrollment(ctx context.Context, emails []string) (map[string]bool, error) {
+	args := m.Called(ctx, emails)
+
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+
+	return args.Get(0).(map[string]bool), args.Error(1)
+}

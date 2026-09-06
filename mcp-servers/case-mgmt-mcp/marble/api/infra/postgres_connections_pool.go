@@ -1,0 +1,107 @@
+package infra
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/avast/retry-go/v4"
+	"github.com/exaring/otelpgx"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	pgxgeom "github.com/twpayne/pgx-geom"
+	"go.opentelemetry.io/otel/trace"
+)
+
+const (
+	DEFAULT_MAX_CONNECTIONS  = 40
+	MAX_CONNECTION_IDLE_TIME = 5 * time.Minute
+)
+
+type ClientDbConfig struct {
+	ConnectionString string `json:"connection_string"`
+	MaxConns         int    `json:"max_conns"`
+	SchemaName       string `json:"schema_name"`
+	ImpersonateRole  string `json:"impersonate_role"`
+}
+
+func NewPostgresConnectionPool(
+	ctx context.Context,
+	appName string,
+	connectionString string,
+	tp trace.TracerProvider,
+	maxConnections int,
+	impersonateRole string,
+) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(connectionString)
+	if err != nil {
+		return nil, fmt.Errorf("create connection pool: %w", err)
+	}
+	ops := []otelpgx.Option{}
+	if tp != nil {
+		ops = append(ops, otelpgx.WithTracerProvider(tp))
+	}
+	cfg.ConnConfig.Tracer = otelpgx.NewTracer(ops...)
+	cfg.MaxConns = int32(maxConnections)
+	if cfg.MaxConns == 0 {
+		cfg.MaxConns = DEFAULT_MAX_CONNECTIONS
+	}
+	cfg.MaxConnIdleTime = MAX_CONNECTION_IDLE_TIME
+	cfg.MaxConnLifetimeJitter = 5 * time.Minute
+
+	cfg.ConnConfig.RuntimeParams = map[string]string{
+		"application_name": appName,
+	}
+
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		if impersonateRole != "" {
+			if _, err := conn.Exec(ctx, "SET ROLE "+impersonateRole); err != nil {
+				return err
+			}
+		}
+
+		if err := pgxgeom.Register(ctx, conn); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create connection pool: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	return pool, retry.Do(
+		func() error {
+			if err := pool.Ping(ctx); err != nil {
+				return fmt.Errorf("NewPostgresConnectionPool.Ping error: %w", err)
+			}
+			return err
+		},
+		retry.Attempts(3),
+		retry.LastErrorOnly(true),
+	)
+}
+
+func ParseClientDbConfig(filename string) (map[string]ClientDbConfig, error) {
+	if filename == "" {
+		return nil, nil
+	}
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	clientDbConfigs := make(map[string]ClientDbConfig)
+	if err := json.NewDecoder(file).Decode(&clientDbConfigs); err != nil {
+		return nil, err
+	}
+	return clientDbConfigs, nil
+}

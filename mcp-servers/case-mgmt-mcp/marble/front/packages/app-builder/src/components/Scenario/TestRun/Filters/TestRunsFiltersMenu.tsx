@@ -1,0 +1,86 @@
+import { FiltersDropdownMenu } from '@app-builder/components/Filters';
+import { ScenarioIterationSummaryWithType } from '@app-builder/models/scenario/iteration';
+import { forwardRef, useCallback, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Icon } from 'ui-icons';
+import { FilterDetail } from './FilterDetail';
+import { getFilterIcon, getFilterTKey, type TestRunFilterName } from './filters';
+import { useTestRunsFiltersContext } from './TestRunsFiltersContext';
+
+export function TestRunsFiltersMenu({
+  children,
+  filterNames,
+  scenarioIterations,
+}: {
+  children: React.ReactNode;
+  filterNames: readonly TestRunFilterName[];
+  scenarioIterations: ScenarioIterationSummaryWithType[];
+}) {
+  const { onTestRunsFilterClose: onCasesFilterClose } = useTestRunsFiltersContext();
+
+  const onOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        onCasesFilterClose();
+      }
+    },
+    [onCasesFilterClose],
+  );
+
+  return (
+    <FiltersDropdownMenu.Root onOpenChange={onOpenChange}>
+      <FiltersDropdownMenu.Trigger asChild>{children}</FiltersDropdownMenu.Trigger>
+      <FiltersDropdownMenu.Content>
+        <FilterContent filterNames={filterNames} scenarioIterations={scenarioIterations} />
+      </FiltersDropdownMenu.Content>
+    </FiltersDropdownMenu.Root>
+  );
+}
+
+const FiltersMenuItem = forwardRef<
+  HTMLDivElement,
+  React.ComponentProps<typeof FiltersDropdownMenu.Item> & {
+    filterName: TestRunFilterName;
+  }
+>(({ filterName, ...props }, ref) => {
+  const { t } = useTranslation(['scenarios', 'common']);
+  const icon = getFilterIcon(filterName);
+  const tKey = getFilterTKey(filterName);
+
+  return (
+    <FiltersDropdownMenu.Item {...props} ref={ref}>
+      <Icon icon={icon} className="size-5" />
+      <span className="text-s text-grey-primary font-normal first-letter:capitalize">{t(tKey)}</span>
+    </FiltersDropdownMenu.Item>
+  );
+});
+FiltersMenuItem.displayName = 'FiltersMenuItem';
+
+function FilterContent({
+  filterNames,
+  scenarioIterations,
+}: {
+  filterNames: readonly TestRunFilterName[];
+  scenarioIterations: ScenarioIterationSummaryWithType[];
+}) {
+  const [selectedFilter, setSelectedFilter] = useState<TestRunFilterName>();
+
+  if (selectedFilter) {
+    return <FilterDetail filterName={selectedFilter} scenarioIterations={scenarioIterations} />;
+  }
+
+  return (
+    <div className="flex flex-col gap-xs p-sm">
+      {filterNames.map((filterName) => (
+        <FiltersMenuItem
+          key={filterName}
+          filterName={filterName}
+          onClick={(e) => {
+            e.preventDefault();
+            setSelectedFilter(filterName);
+          }}
+        />
+      ))}
+    </div>
+  );
+}

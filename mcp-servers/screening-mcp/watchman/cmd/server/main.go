@@ -1,0 +1,251 @@
+// Copyright 2022 The Moov Authors
+// Use of this source code is governed by an Apache License
+// license that can be found in the LICENSE file.
+
+package main
+
+import (
+	"cmp"
+	"context"
+	"crypto/tls"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/moov-io/base/admin"
+	"github.com/moov-io/base/log"
+	"github.com/moov-io/base/telemetry"
+	"github.com/moov-io/watchman"
+	"github.com/moov-io/watchman/internal/config"
+	"github.com/moov-io/watchman/internal/db"
+	"github.com/moov-io/watchman/internal/download"
+	"github.com/moov-io/watchman/internal/geocoding"
+	"github.com/moov-io/watchman/internal/index"
+	"github.com/moov-io/watchman/internal/ingest"
+	"github.com/moov-io/watchman/internal/mcp"
+	"github.com/moov-io/watchman/internal/metrics"
+	"github.com/moov-io/watchman/internal/postalpool"
+
+	"github.com/moov-io/watchman/internal/search"
+	"github.com/moov-io/watchman/internal/webui"
+	"github.com/moov-io/watchman/pkg/address"
+
+	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/automaxprocs/maxprocs"
+)
+
+func main() {
+	logger := log.NewDefaultLogger().With(log.Fields{
+		"app":     log.String("watchman"),
+		"version": log.String(watchman.Version),
+	})
+	logger.Log("Starting watchman server")
+
+	// Set runtime.GOMAXPROCS
+	maxprocs.Set(maxprocs.Logger(logger.Info().Logf))
+
+	conf, err := config.LoadConfig(logger)
+	if err != nil {
+		logger.Fatal().LogErrorf("problem loading config: %v", err)
+		os.Exit(1)
+	}
+
+	// Setup telemetry
+	telemetryShutdownFunc, err := telemetry.SetupTelemetry(context.Background(), conf.Telemetry, watchman.Version)
+	if err != nil {
+		logger.Fatal().LogErrorf("setting up telemetry failed: %w", err)
+		os.Exit(1)
+	}
+	defer telemetryShutdownFunc()
+
+	// Setup signal listener
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
+
+	// Set up a channel to listen for system interrupt signals
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Listen for errors
+	errs := make(chan error, 1)
+
+	// Warm up libpostal (if configured). On a multi-CPU host this runs
+	// concurrently with the initial data load below. Both are heavy,
+	// independent startup steps, so overlapping them shortens startup. With a
+	// single CPU there is nothing to overlap, so run it inline. When started
+	// concurrently the warm-up is joined before the HTTP server serves (below).
+	warmUpLibpostal := func() {
+		start := time.Now()
+		got := address.ParseAddress(ctx, "123 First St Anytown CA 90210")
+		logger.Debug().Logf("parsing init address (%s) took %v", got.Format(), time.Since(start))
+	}
+
+	libpostalWarm := make(chan struct{})
+	go func() {
+		defer close(libpostalWarm)
+		warmUpLibpostal()
+	}()
+
+	// Setup database
+	database, shutdown, err := db.New(conf.Database, logger)
+	if err != nil {
+		logger.Fatal().LogErrorf("problem setting up database: %v", err)
+		os.Exit(1)
+	}
+	defer shutdown()
+
+	// Setup geocoding service (optional)
+	geocodingService, err := geocoding.NewService(logger, conf.Geocoding, database)
+	if err != nil {
+		logger.Fatal().LogErrorf("problem setting up geocoding service: %v", err)
+		os.Exit(1)
+	}
+
+	downloader, err := download.NewDownloader(logger, conf.Download, geocodingService)
+	if err != nil {
+		logger.Fatal().LogErrorf("problem setting up downloader: %v", err)
+		os.Exit(1)
+	}
+
+	// Setup ingest services
+	ingestRepository := ingest.NewRepository(database)
+	ingestService := ingest.NewService(logger, conf.Ingest, ingestRepository)
+
+	// Setup search service and endpoints
+	indexedLists := index.NewLists(ingestRepository)
+	searchService, err := search.NewService(logger, conf.Search, database, indexedLists)
+	if err != nil {
+		logger.Fatal().LogErrorf("problem setting up search service: %v", err)
+		os.Exit(1)
+	}
+	refreshManager := download.NewRefresher(ctx, logger, downloader, indexedLists, searchService)
+	err = setupPeriodicRefreshing(ctx, logger, errs, conf.Download, refreshManager)
+	if err != nil {
+		logger.Fatal().LogErrorf("problem during initial download: %v", err)
+		os.Exit(1)
+	}
+
+	// If the warm-up was started concurrently, block until it finishes so the
+	// first search request does not pay the model load. This has overlapped
+	// with the data load above.
+	if libpostalWarm != nil {
+		<-libpostalWarm
+	}
+
+	router := mux.NewRouter()
+
+	// Time every request and publish it on the admin server's /metrics. Attached before
+	// the routes so it wraps all of them, including the webui's catch-all.
+	httpMetrics := metrics.NewHTTPMetrics(prometheus.DefaultRegisterer)
+	router.Use(httpMetrics.Middleware)
+	router.NotFoundHandler = httpMetrics.Middleware(http.NotFoundHandler())
+
+	addPingRoute(router)
+
+	// Add MCP endpoint if enabled
+	if conf.MCP.Enabled {
+		mcpServer, err := mcp.NewServer(logger, searchService, conf.MCP)
+		if err != nil {
+			logger.Fatal().LogErrorf("problem starting MCP server: %v", err)
+			os.Exit(1)
+		}
+		router.PathPrefix("/mcp").Handler(http.StripPrefix("/mcp", mcpServer.Handler()))
+	}
+
+	addressParsingPool, err := postalpool.NewService(logger, conf.PostalPool)
+	if err != nil {
+		logger.Fatal().LogErrorf("problem setting up address parsing pool: %v", err)
+		os.Exit(1)
+	}
+	searchController := search.NewController(logger, searchService, addressParsingPool)
+	searchController.AppendRoutes(router)
+
+	refreshController := download.NewRefreshController(logger, refreshManager)
+	refreshController.AppendRoutes(router)
+
+	ingestController := ingest.NewController(logger, ingestService)
+	ingestController.AppendRoutes(router)
+
+	// Add the Webui last
+	webuiController := webui.NewController(logger, conf.Webui)
+	webuiController.AppendRoutes(router)
+
+	// Start Admin server (with Prometheus metrics)
+	adminServer, err := admin.New(admin.Opts{
+		Addr: conf.Servers.AdminAddress,
+	})
+	if err != nil {
+		errs <- fmt.Errorf("problem starting admin server: %v", err)
+	} else {
+		adminServer.AddVersionHandler(watchman.Version) // Setup 'GET /version'
+	}
+	go func() {
+		if adminServer == nil {
+			return
+		}
+
+		logger.Logf("listening on %s", adminServer.BindAddr())
+
+		if err := adminServer.Listen(); err != nil {
+			errs <- logger.Error().LogErrorf("admin server shutdown: %v", err).Err()
+		}
+	}()
+	defer func() {
+		if adminServer != nil {
+			adminServer.Shutdown()
+		}
+	}()
+
+	// Setup HTTP server
+	defaultTimeout := 20 * time.Second
+	serve := &http.Server{
+		Addr:    conf.Servers.BindAddress,
+		Handler: router,
+		TLSConfig: &tls.Config{
+			InsecureSkipVerify:       false,
+			PreferServerCipherSuites: true,
+			MinVersion:               tls.VersionTLS12,
+		},
+		ReadTimeout:       defaultTimeout,
+		ReadHeaderTimeout: defaultTimeout,
+		WriteTimeout:      defaultTimeout,
+		IdleTimeout:       defaultTimeout,
+	}
+	shutdownServer := func() {
+		if serve != nil {
+			serve.Shutdown(context.TODO())
+		}
+	}
+
+	// Start business logic HTTP server
+	go func() {
+		certFile := cmp.Or(os.Getenv("HTTPS_CERT_FILE"), conf.Servers.TLSCertFile)
+		keyFile := cmp.Or(os.Getenv("HTTPS_KEY_FILE"), conf.Servers.TLSKeyFile)
+
+		if certFile != "" && keyFile != "" {
+			logger.Logf("binding to %s for secure HTTP server", conf.Servers.BindAddress)
+			errs <- serve.ListenAndServeTLS(certFile, keyFile)
+		} else {
+			logger.Logf("binding to %s for HTTP server", conf.Servers.BindAddress)
+			errs <- serve.ListenAndServe()
+		}
+	}()
+
+	// Block/Wait for an error
+	if err := <-errs; err != nil {
+		shutdownServer()
+		logger.LogErrorf("final exit: %v", err)
+	}
+}
+
+func addPingRoute(r *mux.Router) {
+	r.Methods("GET").Path("/ping").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("PONG"))
+	})
+}

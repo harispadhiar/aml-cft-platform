@@ -1,0 +1,14 @@
+version: 2
+enable-beta-ecosystems: true
+updates:
+  # Root workspace dependencies
+  - package-ecosystem: "bun"
+    directories: ["/", "packages/*"]
+    schedule:
+      interval: "weekly"
+    groups:
+      patch:
+        update-types:
+          - "patch"
+    cooldown:
+      default-days: 14

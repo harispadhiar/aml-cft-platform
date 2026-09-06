@@ -1,0 +1,88 @@
+import { IngestedObjectDetailModal } from '@app-builder/components/Data/IngestedObjectDetailModal';
+import { TagPreview } from '@app-builder/components/Tags/TagPreview';
+import { type EntityAnnotatedEvent } from '@app-builder/models/cases';
+import { useOrganizationObjectTags } from '@app-builder/services/organization/organization-object-tags';
+import { useOrganizationUsers } from '@app-builder/services/organization/organization-users';
+import { getFullName } from '@app-builder/services/user';
+import { type ReactNode, useMemo, useState } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
+import { match } from 'ts-pattern';
+import { Code } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+
+import { casesI18n } from '../cases-i18n';
+import { EventTime } from './Time';
+
+type EntityAnnotatedProps = {
+  event: EntityAnnotatedEvent;
+};
+
+const ClickableCode = ({ children, onClick }: { children: ReactNode; onClick: () => void }) => {
+  return (
+    <Code>
+      <button onClick={onClick}>{children}</button>
+    </Code>
+  );
+};
+
+export function EntityAnnotated({ event }: EntityAnnotatedProps) {
+  const { getOrgUserById } = useOrganizationUsers();
+  const { getTagById } = useOrganizationObjectTags();
+  const { t } = useTranslation(casesI18n);
+  const [open, setOpen] = useState(false);
+
+  const user = useMemo(() => (event.userId ? getOrgUserById(event.userId) : undefined), [event.userId, getOrgUserById]);
+
+  return (
+    <div key={event.id} className="flex w-full items-start gap-sm">
+      <div className="bg-surface-card border-grey-border flex size-6 shrink-0 grow-0 items-center justify-center rounded-full border">
+        <Icon icon="comment" className="text-grey-primary size-3" />
+      </div>
+      <div className="flex flex-col gap-xs">
+        <span className="text-grey-primary inline-flex h-full items-center whitespace-pre text-xs">
+          <Trans
+            t={t}
+            i18nKey="case_detail.history.event_detail.entity_annotated"
+            components={{
+              Actor: <span className="font-bold capitalize" />,
+              ObjectType: <ClickableCode onClick={() => setOpen(true)}>dummyChild</ClickableCode>,
+              Type: <span className="font-bold" />,
+            }}
+            values={{
+              actor: user ? getFullName(user) : 'Workflow',
+              objectType: event.annotation.object_type,
+              type: event.annotation.type,
+            }}
+          />
+        </span>
+        <span>
+          {match(event.annotation)
+            .with({ type: 'tag' }, (annotation) => {
+              const tag = getTagById(annotation.payload.tag_id);
+              return tag ? <TagPreview name={tag.name} className="ms-sm" /> : null;
+            })
+            .with({ type: 'file' }, (annotation) => {
+              return (
+                <span className="border-grey-border ms-sm flex items-center gap-xs rounded-sm border px-xs py-2xs text-xs font-medium">
+                  {annotation.payload.files[0]?.filename}
+                </span>
+              );
+            })
+            .with({ type: 'comment' }, (annotation) => {
+              return <span className="border-grey-border ms-sm border-l ps-sm">{annotation.payload.text}</span>;
+            })
+            .exhaustive()}
+        </span>
+        {open ? (
+          <IngestedObjectDetailModal
+            dataModel={[]}
+            tableName={event.annotation.object_type}
+            objectId={event.annotation.object_id}
+            onClose={() => setOpen(false)}
+          />
+        ) : null}
+      </div>
+      <EventTime time={event.createdAt} />
+    </div>
+  );
+}

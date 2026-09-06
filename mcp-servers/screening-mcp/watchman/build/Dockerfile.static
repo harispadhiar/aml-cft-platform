@@ -1,0 +1,4 @@
+ARG VERSION
+FROM moov/watchman:${VERSION}
+COPY ./test/testdata/ /data/static/
+ENV INITIAL_DATA_DIRECTORY=/data/static

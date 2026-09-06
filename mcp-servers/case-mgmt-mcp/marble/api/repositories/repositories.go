@@ -1,0 +1,169 @@
+package repositories
+
+import (
+	"fmt"
+	"net/http"
+
+	"github.com/Masterminds/squirrel"
+	"github.com/checkmarble/marble-backend/infra"
+	lago_repository "github.com/checkmarble/marble-backend/repositories/lago"
+	"github.com/checkmarble/marble-backend/repositories/screening"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
+	"go.opentelemetry.io/otel/trace"
+)
+
+type options struct {
+	metabase            Metabase
+	clientDbConfig      map[string]infra.ClientDbConfig
+	redisClient         *RedisClient
+	openSanctions       infra.Screening
+	riverClient         *river.Client[pgx.Tx]
+	tp                  trace.TracerProvider
+	bigQueryInfra       *infra.BigQueryInfra
+	withCache           bool
+	similarityThreshold float64
+	lagoConfig          infra.LagoConfig
+}
+
+type Option func(*options)
+
+func getOptions(opts []Option) *options {
+	o := &options{}
+	for _, opt := range opts {
+		opt(o)
+	}
+	return o
+}
+
+func WithRedisClient(client *RedisClient) Option {
+	return func(o *options) {
+		o.redisClient = client
+	}
+}
+
+func WithMetabase(metabase Metabase) Option {
+	return func(o *options) {
+		o.metabase = metabase
+	}
+}
+
+func WithOpenSanctions(openSanctionsConfig infra.Screening) Option {
+	return func(o *options) {
+		o.openSanctions = openSanctionsConfig
+	}
+}
+
+func WithRiverClient(client *river.Client[pgx.Tx]) Option {
+	return func(o *options) {
+		o.riverClient = client
+	}
+}
+
+func WithClientDbConfig(clientDbConfig map[string]infra.ClientDbConfig) Option {
+	return func(o *options) {
+		o.clientDbConfig = clientDbConfig
+	}
+}
+
+func WithTracerProvider(tp trace.TracerProvider) Option {
+	return func(o *options) {
+		o.tp = tp
+	}
+}
+
+func WithBigQueryInfra(bigQueryInfra *infra.BigQueryInfra) Option {
+	return func(o *options) {
+		o.bigQueryInfra = bigQueryInfra
+	}
+}
+
+func WithCache(withCache bool) Option {
+	return func(o *options) {
+		o.withCache = withCache
+	}
+}
+
+func WithSimilarityThreshold(threshold float64) Option {
+	return func(o *options) {
+		o.similarityThreshold = threshold
+	}
+}
+
+func WithLagoConfig(lagoConfig infra.LagoConfig) Option {
+	return func(o *options) {
+		o.lagoConfig = lagoConfig
+	}
+}
+
+type Repositories struct {
+	ExecutorGetter                ExecutorGetter
+	RedisClient                   *RedisClient
+	IngestionRepository           IngestionRepository
+	IngestedDataReadRepository    IngestedDataReadRepository
+	MarbleDbRepository            *MarbleDbRepository
+	ClientDbRepository            ClientDbRepository
+	ScenarioPublicationRepository ScenarioPublicationRepository
+	OrganizationSchemaRepository  OrganizationSchemaRepository
+	BlobRepository                BlobRepository
+	CustomListRepository          CustomListRepository
+	UploadLogRepository           UploadLogRepository
+	MarbleAnalyticsRepository     MarbleAnalyticsRepository
+	OpenSanctionsRepository       screening.OpenSanctionsRepository
+	NameRecognitionRepository     NameRecognitionRepository
+	TaskQueueRepository           TaskQueueRepository
+	MetricsIngestionRepository    MetricsIngestionRepository
+	LagoRepository                lago_repository.LagoRepository
+}
+
+func NewQueryBuilder() squirrel.StatementBuilderType {
+	return squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)
+}
+
+func WithUnionAll(builder squirrel.SelectBuilder, unionAllQuery squirrel.SelectBuilder) (squirrel.SelectBuilder, error) {
+	query, params, err := unionAllQuery.ToSql()
+	if err != nil {
+		return builder, fmt.Errorf("union all query failed: %w", err)
+	}
+	return builder.Suffix("UNION ALL "+query, params...), nil
+}
+
+func NewRepositories(
+	marbleConnectionPool *pgxpool.Pool,
+	gcpConfig infra.GcpConfig,
+	opts ...Option,
+) Repositories {
+	options := getOptions(opts)
+
+	executorGetter := NewExecutorGetter(marbleConnectionPool, options.clientDbConfig, options.redisClient, options.tp)
+
+	blobRepository := NewBlobRepository(gcpConfig)
+
+	return Repositories{
+		ExecutorGetter:                executorGetter,
+		RedisClient:                   options.redisClient,
+		IngestionRepository:           &IngestionRepositoryImpl{},
+		IngestedDataReadRepository:    &IngestedDataReadRepositoryImpl{},
+		MarbleDbRepository:            NewMarbleDbRepository(options.withCache, options.similarityThreshold),
+		ClientDbRepository:            ClientDbRepository{},
+		ScenarioPublicationRepository: &ScenarioPublicationRepositoryPostgresql{},
+		OrganizationSchemaRepository:  &OrganizationSchemaRepositoryPostgresql{},
+		CustomListRepository:          &CustomListRepositoryPostgresql{},
+		UploadLogRepository:           &UploadLogRepositoryImpl{},
+		BlobRepository:                blobRepository,
+		MarbleAnalyticsRepository: MarbleAnalyticsRepository{
+			metabase: options.metabase,
+		},
+		OpenSanctionsRepository: screening.OpenSanctionsRepository{
+			Config: options.openSanctions,
+		},
+		NameRecognitionRepository: NameRecognitionRepository{
+			NameRecognitionProvider: options.openSanctions.NameRecognition(),
+			Client:                  http.DefaultClient,
+		},
+		TaskQueueRepository:        NewTaskQueueRepository(options.riverClient),
+		MetricsIngestionRepository: NewMetricsIngestionRepository(options.bigQueryInfra),
+		LagoRepository:             lago_repository.NewLagoRepository(http.DefaultClient, options.lagoConfig),
+	}
+}

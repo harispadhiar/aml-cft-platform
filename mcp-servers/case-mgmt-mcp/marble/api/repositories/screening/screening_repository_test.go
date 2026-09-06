@@ -1,0 +1,527 @@
+package screening
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/checkmarble/marble-backend/infra"
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/h2non/gock"
+	"github.com/stretchr/testify/assert"
+)
+
+func getMockedOpenSanctionsRepository(host, authMethod, apiKey string) OpenSanctionsRepository {
+	client := &http.Client{Transport: &http.Transport{}}
+
+	gock.CleanUnmatchedRequest()
+	gock.InterceptClient(client)
+
+	featureDetectionHost := host
+	if host == "" {
+		featureDetectionHost = infra.OPEN_SANCTIONS_API_HOST
+	}
+
+	gock.New(featureDetectionHost).
+		Get("/-/version").
+		Reply(http.StatusNotFound)
+
+	return OpenSanctionsRepository{
+		Config: infra.InitializeScreening(context.TODO(), client, host, authMethod, apiKey),
+	}
+}
+
+func TestOpenSanctionsSelfHostedApi(t *testing.T) {
+	defer gock.Off()
+
+	repo := getMockedOpenSanctionsRepository("https://yente.local", "", "")
+	cfg := models.ScreeningConfig{}
+	query := models.OpenSanctionsQuery{
+		Config: cfg,
+		Queries: []models.OpenSanctionsCheckQuery{
+			{
+				Type: "Thing",
+				Filters: models.OpenSanctionsFilter{
+					"name": []string{"bob"},
+				},
+			},
+		},
+		OrgConfig: models.OrganizationOpenSanctionsConfig{},
+	}
+
+	gock.New("https://yente.local").
+		Post("/match/default").
+		Reply(http.StatusBadRequest)
+
+	_, err := repo.Search(context.TODO(), models.ScreeningProviderOpenSanctions, query)
+
+	assert.False(t, gock.HasUnmatchedRequest())
+	assert.Error(t, err)
+}
+
+func TestOpenSanctionsSelfHostedAndApiKey(t *testing.T) {
+	defer gock.Off()
+
+	repo := getMockedOpenSanctionsRepository("https://yente.local", "", "abcdef")
+	cfg := models.ScreeningConfig{}
+	query := models.OpenSanctionsQuery{
+		Config: cfg,
+		Queries: []models.OpenSanctionsCheckQuery{
+			{
+				Type: "Thing",
+				Filters: models.OpenSanctionsFilter{
+					"name": []string{"bob"},
+				},
+			},
+		},
+		OrgConfig: models.OrganizationOpenSanctionsConfig{},
+	}
+
+	gock.New("https://yente.local").
+		Post("/match/default").
+		MatchParam("api_key", "abcdef").
+		Reply(http.StatusBadRequest)
+
+	_, err := repo.Search(context.TODO(), models.ScreeningProviderOpenSanctions, query)
+
+	assert.False(t, gock.HasUnmatchedRequest())
+	assert.Error(t, err)
+}
+
+func TestOpenSanctionsSaaSAndApiKey(t *testing.T) {
+	defer gock.Off()
+
+	repo := getMockedOpenSanctionsRepository("", "", "abcdef")
+	cfg := models.ScreeningConfig{}
+	query := models.OpenSanctionsQuery{
+		Config: cfg,
+		Queries: []models.OpenSanctionsCheckQuery{
+			{
+				Type: "Thing",
+				Filters: models.OpenSanctionsFilter{
+					"name": []string{"bob"},
+				},
+			},
+		},
+		OrgConfig: models.OrganizationOpenSanctionsConfig{},
+	}
+
+	gock.New(infra.OPEN_SANCTIONS_API_HOST).
+		Post("/match/default").
+		MatchParam("api_key", "abcdef").
+		Reply(http.StatusBadRequest)
+
+	_, err := repo.Search(context.TODO(), models.ScreeningProviderOpenSanctions, query)
+
+	assert.False(t, gock.HasUnmatchedRequest())
+	assert.Error(t, err)
+}
+
+func TestOpenSanctionsSelfHostedAndBearerToken(t *testing.T) {
+	defer gock.Off()
+
+	repo := getMockedOpenSanctionsRepository("https://yente.local", "bearer", "abcdef")
+	cfg := models.ScreeningConfig{}
+	query := models.OpenSanctionsQuery{
+		Config: cfg,
+		Queries: []models.OpenSanctionsCheckQuery{
+			{
+				Type: "Thing",
+				Filters: models.OpenSanctionsFilter{
+					"name": []string{"bob"},
+				},
+			},
+		},
+		OrgConfig: models.OrganizationOpenSanctionsConfig{},
+	}
+
+	gock.New("https://yente.local").
+		Post("/match/default").
+		MatchHeader("authorization", "Bearer abcdef").
+		Reply(http.StatusBadRequest)
+
+	_, err := repo.Search(context.TODO(), models.ScreeningProviderOpenSanctions, query)
+
+	assert.False(t, gock.HasUnmatchedRequest())
+	assert.Error(t, err)
+}
+
+func TestOpenSanctionsSelfHostedAndBasicAuth(t *testing.T) {
+	defer gock.Off()
+
+	repo := getMockedOpenSanctionsRepository("https://yente.local", "basic", "abcdef:helloworld")
+	cfg := models.ScreeningConfig{}
+	query := models.OpenSanctionsQuery{
+		Config: cfg,
+		Queries: []models.OpenSanctionsCheckQuery{
+			{
+				Type: "Thing",
+				Filters: models.OpenSanctionsFilter{
+					"name": []string{"bob"},
+				},
+			},
+		},
+		OrgConfig: models.OrganizationOpenSanctionsConfig{},
+	}
+
+	gock.New("https://yente.local").
+		Post("/match/default").
+		MatchHeader("authorization", "Basic YWJjZGVmOmhlbGxvd29ybGQ=").
+		Reply(http.StatusBadRequest)
+
+	_, err := repo.Search(context.TODO(), models.ScreeningProviderOpenSanctions, query)
+
+	assert.False(t, gock.HasUnmatchedRequest())
+	assert.Error(t, err)
+}
+
+func TestOpenSanctionsError(t *testing.T) {
+	defer gock.Off()
+
+	repo := getMockedOpenSanctionsRepository("", "", "")
+	cfg := models.ScreeningConfig{}
+	query := models.OpenSanctionsQuery{
+		Config: cfg,
+		Queries: []models.OpenSanctionsCheckQuery{
+			{
+				Type: "Thing",
+				Filters: models.OpenSanctionsFilter{
+					"name": []string{"bob"},
+				},
+			},
+		},
+		OrgConfig: models.OrganizationOpenSanctionsConfig{},
+	}
+
+	gock.New(infra.OPEN_SANCTIONS_API_HOST).
+		Post("/match/default").
+		Reply(http.StatusBadRequest)
+
+	_, err := repo.Search(context.TODO(), models.ScreeningProviderOpenSanctions, query)
+
+	assert.False(t, gock.HasUnmatchedRequest())
+	assert.Error(t, err)
+}
+
+func TestOpenSanctionsSuccessfulPartialResponse(t *testing.T) {
+	defer gock.Off()
+
+	repo := getMockedOpenSanctionsRepository("", "", "")
+	cfg := models.ScreeningConfig{}
+	query := models.OpenSanctionsQuery{
+		Config: cfg,
+		Queries: []models.OpenSanctionsCheckQuery{
+			{
+				Type: "Thing",
+				Filters: models.OpenSanctionsFilter{
+					"name": []string{"bob"},
+				},
+			},
+		},
+		OrgConfig: models.OrganizationOpenSanctionsConfig{},
+	}
+
+	body, _ := os.ReadFile("../fixtures/opensanctions/response_partial.json")
+
+	gock.New(infra.OPEN_SANCTIONS_API_HOST).
+		Post("/match/default").
+		Reply(http.StatusOK).
+		BodyString(string(body))
+
+	matches, err := repo.Search(context.TODO(), models.ScreeningProviderOpenSanctions, query)
+
+	assert.False(t, gock.HasUnmatchedRequest())
+	assert.NoError(t, err)
+	assert.Len(t, matches.Matches, 1)
+	assert.Equal(t, true, matches.Partial)
+	assert.Contains(t, string(matches.Matches[0].Payload), "Joe")
+}
+
+func TestOpenSanctionsSuccessfulFullResponse(t *testing.T) {
+	defer gock.Off()
+
+	repo := getMockedOpenSanctionsRepository("", "", "")
+	cfg := models.ScreeningConfig{}
+	query := models.OpenSanctionsQuery{
+		Config: cfg,
+		Queries: []models.OpenSanctionsCheckQuery{
+			{
+				Type: "Thing",
+				Filters: models.OpenSanctionsFilter{
+					"name": []string{"bob"},
+				},
+			},
+		},
+		OrgConfig: models.OrganizationOpenSanctionsConfig{MatchThreshold: 70},
+	}
+
+	body, _ := os.ReadFile("../fixtures/opensanctions/response_full.json")
+
+	gock.New(infra.OPEN_SANCTIONS_API_HOST).
+		Post("/match/default").
+		Reply(http.StatusOK).
+		BodyString(string(body))
+
+	matches, err := repo.Search(context.TODO(), models.ScreeningProviderOpenSanctions, query)
+
+	assert.False(t, gock.HasUnmatchedRequest())
+	assert.NoError(t, err)
+	assert.Len(t, matches.Matches, 2)
+	assert.Equal(t, false, matches.Partial)
+	assert.Equal(t, 70, matches.EffectiveThreshold)
+
+	for idx := range 2 {
+		if !strings.Contains(string(matches.Matches[idx].Payload), "Joe") &&
+			!strings.Contains(string(matches.Matches[idx].Payload), "ACME Inc.") {
+			t.Error("payloads did not contain required text")
+		}
+	}
+}
+
+func TestOpenSanctionsSuccessfulFullResponseWithThresholdOverride(t *testing.T) {
+	defer gock.Off()
+
+	repo := getMockedOpenSanctionsRepository("", "", "")
+	cfg := models.ScreeningConfig{Threshold: utils.Ptr(30)}
+	query := models.OpenSanctionsQuery{
+		Config: cfg,
+		Queries: []models.OpenSanctionsCheckQuery{
+			{
+				Type: "Thing",
+				Filters: models.OpenSanctionsFilter{
+					"name": []string{"bob"},
+				},
+			},
+		},
+		OrgConfig: models.OrganizationOpenSanctionsConfig{MatchThreshold: 70},
+	}
+
+	body, _ := os.ReadFile("../fixtures/opensanctions/response_full.json")
+
+	gock.New(infra.OPEN_SANCTIONS_API_HOST).
+		Post("/match/default").
+		Reply(http.StatusOK).
+		BodyString(string(body))
+
+	matches, err := repo.Search(context.TODO(), models.ScreeningProviderOpenSanctions, query)
+
+	for _, r := range gock.GetUnmatchedRequests() {
+		fmt.Printf("%#v\n", *r)
+	}
+
+	assert.False(t, gock.HasUnmatchedRequest())
+	assert.NoError(t, err)
+	assert.Len(t, matches.Matches, 2)
+	assert.Equal(t, false, matches.Partial)
+	assert.Equal(t, 30, matches.EffectiveThreshold)
+
+	for idx := range 2 {
+		if !strings.Contains(string(matches.Matches[idx].Payload), "Joe") &&
+			!strings.Contains(string(matches.Matches[idx].Payload), "ACME Inc.") {
+			t.Error("payloads did not contain required text")
+		}
+	}
+}
+
+func TestOpenSanctionsMultiQueryResponseTruncatedToLimit(t *testing.T) {
+	defer gock.Off()
+
+	repo := getMockedOpenSanctionsRepository("", "", "")
+	// Two subqueries mirror the two-subquery fixture: each produces its own response
+	// key, resulting in 5 unique entities (ENTITY2 duplicated) before truncation.
+	query := models.OpenSanctionsQuery{
+		Config: models.ScreeningConfig{},
+		Queries: []models.OpenSanctionsCheckQuery{
+			{
+				Type:    "Person",
+				Filters: models.OpenSanctionsFilter{"name": []string{"test"}},
+			},
+			{
+				Type:    "Organization",
+				Filters: models.OpenSanctionsFilter{"name": []string{"test"}},
+			},
+		},
+		OrgConfig: models.OrganizationOpenSanctionsConfig{MatchThreshold: 50},
+	}
+
+	body, _ := os.ReadFile("../fixtures/opensanctions/response_multi_query.json")
+
+	gock.New(infra.OPEN_SANCTIONS_API_HOST).
+		Post("/match/default").
+		Reply(http.StatusOK).
+		BodyString(string(body))
+
+	matches, err := repo.Search(context.TODO(), models.ScreeningProviderOpenSanctions, query)
+
+	assert.False(t, gock.HasUnmatchedRequest())
+	assert.NoError(t, err)
+
+	// The fixture has 2 subqueries with 3 results each, ENTITY2 duplicated → 5 unique entities.
+	// The fixture sets "limit": 3, so the merged list is truncated to the top 3 by score.
+	fixtureLimit := 3
+	assert.Len(t, matches.Matches, fixtureLimit)
+	assert.Equal(t, fixtureLimit, matches.Count)
+	// Neither subquery has total > returned count, so partial stays false
+	assert.Equal(t, false, matches.Partial)
+	// Top 3 by score desc: ENTITY1 (0.95), ENTITY2 (0.85), ENTITY3 (0.75); ENTITY4 and ENTITY5 dropped
+	assert.Equal(t, "ENTITY1", matches.Matches[0].EntityId)
+	assert.Equal(t, "ENTITY2", matches.Matches[1].EntityId)
+	assert.Equal(t, "ENTITY3", matches.Matches[2].EntityId)
+}
+
+func TestOpenSanctionsSearchRequest_ObjectTypesFilter(t *testing.T) {
+	repo := getMockedOpenSanctionsRepository("", "", "")
+	provider := repo.GetProvider(models.ScreeningProviderOpenSanctions)
+
+	baseQuery := models.OpenSanctionsQuery{
+		Queries: []models.OpenSanctionsCheckQuery{
+			{
+				Type:    "Person",
+				Filters: models.OpenSanctionsFilter{"name": []string{"John Doe"}},
+			},
+		},
+		OrgConfig: models.OrganizationOpenSanctionsConfig{},
+	}
+
+	t.Run("sets programId filter when ObjectTypes is non-empty", func(t *testing.T) {
+		query := baseQuery
+		query.ObjectTypes = []string{"person_A", "person_B"}
+
+		_, body, err := provider.SearchRequest(context.TODO(), &query)
+		assert.NoError(t, err)
+
+		var req openSanctionsRequest
+		assert.NoError(t, json.Unmarshal(body, &req))
+		assert.Len(t, req.Queries, 1)
+		for _, subquery := range req.Queries {
+			assert.Equal(t,
+				[][]string{{"person_A", "person_B"}},
+				subquery.Filters["properties."+models.ContinuousScreeningObjectTypeProperty],
+			)
+		}
+	})
+
+	t.Run("omits programId filter when ObjectTypes is empty", func(t *testing.T) {
+		query := baseQuery
+		query.ObjectTypes = nil
+
+		_, body, err := provider.SearchRequest(context.TODO(), &query)
+		assert.NoError(t, err)
+
+		var req openSanctionsRequest
+		assert.NoError(t, json.Unmarshal(body, &req))
+		for _, subquery := range req.Queries {
+			assert.Empty(t, subquery.Filters)
+		}
+	})
+}
+
+func TestDatasetOutdatedDetector(t *testing.T) {
+	type spec struct {
+		schedule        string
+		upstreamVersion string
+		lastChange      time.Time
+		localVersion    string
+		updatedAt       time.Time
+		expected        bool
+	}
+
+	now := func() time.Time {
+		return time.Date(2025, 1, 23, 11, 0, 0, 0, time.UTC)
+	}
+
+	hr := func(offset int) time.Time {
+		return now().Add(time.Duration(offset) * time.Hour)
+	}
+
+	tts := []spec{
+		{"", "v1", hr(0), "v1", hr(-1000), true},
+		{"* * * * *", "v2", hr(0), "v1", hr(-1000), false},
+		{"0 */2 * * *", "v2", hr(0), "v1", hr(-1), true},
+		{"0 */2 * * *", "v2", hr(-6), "v1", hr(-7), false},
+		{"0 */12 * * *", "v2", hr(-6), "v1", hr(-7), true},
+		{"0 */12 * * *", "v2", hr(-6), "v1", hr(-20), false},
+		{"0 */12 * * *", "v2", hr(0), "v1", hr(-25), false},
+	}
+
+	for _, tt := range tts {
+		dataset := models.OpenSanctionsDatasetFreshness{
+			Version:    tt.localVersion,
+			LastExport: tt.updatedAt,
+			Upstream: models.OpenSanctionsUpstreamDatasetFreshness{
+				Version:    tt.upstreamVersion,
+				Schedule:   tt.schedule,
+				LastExport: tt.lastChange,
+			},
+		}
+
+		assert.NoError(t, dataset.CheckIsUpToDate(now))
+		assert.Equal(t, tt.expected, dataset.UpToDate)
+	}
+}
+
+func TestOpenSanctionsSearch_PartialSubqueryFailure(t *testing.T) {
+	defer gock.Off()
+
+	repo := getMockedOpenSanctionsRepository("", "", "")
+	body, err := os.ReadFile("../fixtures/opensanctions/response_multi_query_partial_error.json")
+	if err != nil {
+		t.Fatalf("failed to read fixture file: %v", err)
+	}
+
+	gock.New(infra.OPEN_SANCTIONS_API_HOST).
+		Post("/match/default").
+		Reply(http.StatusOK).
+		Body(bytes.NewReader(body))
+
+	query := models.OpenSanctionsQuery{
+		Config: models.ScreeningConfig{},
+		Queries: []models.OpenSanctionsCheckQuery{
+			{
+				Type: "Person",
+				Filters: models.OpenSanctionsFilter{
+					"name": []string{"test"},
+				},
+			},
+		},
+		OrgConfig: models.OrganizationOpenSanctionsConfig{MatchThreshold: 70},
+	}
+
+	_, searchErr := repo.Search(context.TODO(), models.ScreeningProviderOpenSanctions, query)
+
+	assert.NotNil(t, searchErr)
+
+	unwrappedErrs := []error{}
+	var joinErr interface{ Unwrap() []error }
+	if errors.As(searchErr, &joinErr) {
+		unwrappedErrs = joinErr.Unwrap()
+	}
+
+	errorsByMessage := make(map[string]*HTTPError)
+	for _, e := range unwrappedErrs {
+		var httpErr *HTTPError
+		assert.True(t, errors.As(e, &httpErr), "expected HTTPError, got %T", e)
+		errorsByMessage[httpErr.Message] = httpErr
+		assert.True(t,
+			strings.Contains(httpErr.Message, "subquery") && strings.Contains(httpErr.Message, "failed"),
+			"expected message format 'subquery <name> failed', got: %s", httpErr.Message)
+	}
+
+	assert.Len(t, errorsByMessage, 2, "expected 2 distinct error messages")
+
+	assert.Contains(t, errorsByMessage, "subquery query_pep failed")
+	assert.Equal(t, http.StatusBadRequest, errorsByMessage["subquery query_pep failed"].StatusCode,
+		"expected query_pep to have status 400")
+
+	assert.Contains(t, errorsByMessage, "subquery query_user failed")
+	assert.Equal(t, http.StatusServiceUnavailable, errorsByMessage["subquery query_user failed"].StatusCode,
+		"expected query_user to have status 503")
+}

@@ -1,0 +1,444 @@
+package indexes
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/models/ast"
+	"github.com/checkmarble/marble-backend/repositories"
+	"github.com/checkmarble/marble-backend/usecases/executor_factory"
+	"github.com/checkmarble/marble-backend/usecases/security"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/google/uuid"
+	"github.com/pkg/errors"
+)
+
+type IngestedDataIndexesRepository interface {
+	ListAllValidIndexes(
+		ctx context.Context,
+		exec repositories.Executor,
+		indexTypes ...models.IndexType,
+	) ([]models.ConcreteIndex, error)
+	ListAllIndexes(
+		ctx context.Context,
+		exec repositories.Executor,
+		indexTypes ...models.IndexType,
+	) ([]models.ConcreteIndex, error)
+	ListAllUniqueIndexes(ctx context.Context, exec repositories.Executor) ([]models.UnicityIndex, error)
+	CreateIndexesBlocking(ctx context.Context, exec repositories.Executor, indexes []models.ConcreteIndex) error
+	CreateIndexesAsync(ctx context.Context, exec repositories.Executor, indexes []models.ConcreteIndex) error
+	CreateIndexesWithCallback(
+		ctx context.Context,
+		exec repositories.Executor,
+		indexes []models.ConcreteIndex,
+		onSuccess models.OnCreateIndexesSuccess,
+	) error
+	CountPendingIndexes(ctx context.Context, exec repositories.Executor) (int, error)
+	CreateUniqueIndexAsync(ctx context.Context, exec repositories.Executor, index models.UnicityIndex) error
+	CreateUniqueIndex(ctx context.Context, exec repositories.Executor, index models.UnicityIndex) error
+	DeleteUniqueIndex(ctx context.Context, exec repositories.Executor, index models.UnicityIndex) error
+	ListIndicesPendingCreation(ctx context.Context, exec repositories.Executor) ([]string, error)
+	ListInvalidIndices(ctx context.Context, exec repositories.Executor) ([]string, error)
+	DeleteIndex(ctx context.Context, exec repositories.Executor, indexName string) error
+}
+
+type ScenarioFetcher interface {
+	FetchScenarioAndIteration(ctx context.Context, exec repositories.Executor, iterationId string) (models.ScenarioAndIteration, error)
+	ListLiveIterationsAndNeighbors(ctx context.Context, exec repositories.Executor, orgId uuid.UUID) ([]models.ScenarioIteration, error)
+}
+
+type ClientDbIndexEditor struct {
+	executorFactory               executor_factory.ExecutorFactory
+	scenarioFetcher               ScenarioFetcher
+	ingestedDataIndexesRepository IngestedDataIndexesRepository
+	enforceSecurity               security.EnforceSecurityScenario
+	enforceSecurityDataModel      security.EnforceSecurityOrganization
+}
+
+func NewClientDbIndexEditor(
+	executorFactory executor_factory.ExecutorFactory,
+	scenarioFetcher ScenarioFetcher,
+	ingestedDataIndexesRepository IngestedDataIndexesRepository,
+	enforceSecurity security.EnforceSecurityScenario,
+	enforceSecurityDataModel security.EnforceSecurityOrganization,
+) ClientDbIndexEditor {
+	return ClientDbIndexEditor{
+		executorFactory:               executorFactory,
+		scenarioFetcher:               scenarioFetcher,
+		ingestedDataIndexesRepository: ingestedDataIndexesRepository,
+		enforceSecurity:               enforceSecurity,
+		enforceSecurityDataModel:      enforceSecurityDataModel,
+	}
+}
+
+func (editor ClientDbIndexEditor) GetIndexesToCreate(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	scenarioIterationId string,
+) (toCreate []models.ConcreteIndex, numPending int, err error) {
+	exec := editor.executorFactory.NewExecutor()
+
+	iterationToActivate, err := editor.scenarioFetcher.FetchScenarioAndIteration(ctx, exec, scenarioIterationId)
+	if err != nil {
+		return toCreate, numPending, err
+	}
+	if err := editor.enforceSecurity.PublishScenario(iterationToActivate.Scenario); err != nil {
+		return toCreate, numPending, err
+	}
+
+	db, err := editor.executorFactory.NewClientDbExecutor(ctx, organizationId)
+	if err != nil {
+		return toCreate, numPending, errors.Wrap(err,
+			"Error while creating client schema executor in CreateDatamodelIndexesForScenarioPublication")
+	}
+
+	existingIndexes, err := editor.ingestedDataIndexesRepository.ListAllValidIndexes(ctx, db, models.IndexTypeAggregation)
+	if err != nil {
+		return toCreate, numPending, errors.Wrap(err,
+			"Error while fetching existing indexes in CreateDatamodelIndexesForScenarioPublication")
+	}
+
+	toCreate, err = indexesToCreateFromScenarioIterations(
+		ctx,
+		[]models.ScenarioIteration{iterationToActivate.Iteration},
+		existingIndexes,
+	)
+	if err != nil {
+		return toCreate, numPending, errors.Wrap(err,
+			"Error while finding indexes to create from scenario iterations in CreateDatamodelIndexesForScenarioPublication")
+	}
+
+	numPending, err = editor.ingestedDataIndexesRepository.CountPendingIndexes(ctx, db)
+	if err != nil {
+		return toCreate, numPending, errors.Wrap(err,
+			"Error while counting pending indexes in CreateDatamodelIndexesForScenarioPublication")
+	}
+
+	return
+}
+
+func (editor ClientDbIndexEditor) GetIndexesToCreateForScoringRuleset(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	ruleset models.ScoringRuleset,
+) (toCreate []models.ConcreteIndex, numPending int, err error) {
+	db, err := editor.executorFactory.NewClientDbExecutor(ctx, organizationId)
+	if err != nil {
+		return toCreate, numPending, errors.Wrap(err,
+			"Error while creating client schema executor in GetIndexesToCreateForScoringRuleset")
+	}
+
+	existingIndexes, err := editor.ingestedDataIndexesRepository.ListAllValidIndexes(ctx, db, models.IndexTypeAggregation)
+	if err != nil {
+		return toCreate, numPending, errors.Wrap(err,
+			"Error while fetching existing indexes in GetIndexesToCreateForScoringRuleset")
+	}
+
+	astNodes := make([]ast.Node, len(ruleset.Rules))
+
+	for idx, rule := range ruleset.Rules {
+		astNodes[idx] = rule.Ast
+	}
+
+	families, err := extractQueryFamiliesFromAstSlice(ctx, astNodes)
+	if err != nil {
+		return nil, 0, errors.Wrap(err, "Error extracting query families from scenario iterations")
+	}
+
+	toCreate = indexesToCreateFromQueryFamilies(families, existingIndexes)
+
+	numPending, err = editor.ingestedDataIndexesRepository.CountPendingIndexes(ctx, db)
+	if err != nil {
+		return toCreate, numPending, errors.Wrap(err,
+			"Error while counting pending indexes in GetIndexesToCreateForScoringRuleset")
+	}
+
+	return
+}
+
+func (editor ClientDbIndexEditor) GetRequiredIndices(
+	ctx context.Context,
+	organizationId uuid.UUID,
+) (requiredIndices []models.AggregateQueryFamily, err error) {
+	exec := editor.executorFactory.NewExecutor()
+	iterations, err := editor.scenarioFetcher.ListLiveIterationsAndNeighbors(ctx, exec, organizationId)
+	if err != nil {
+		return requiredIndices, err
+	}
+
+	for _, iteration := range iterations {
+		required, err := indexFamiliesToCreateFromScenarioIterations(ctx, []models.ScenarioIteration{iteration})
+		if err != nil {
+			return required, errors.Wrap(err,
+				"Error while finding indexes to create from scenario iterations in CreateDatamodelIndexesForScenarioPublication")
+		}
+
+		requiredIndices = append(requiredIndices, required...)
+	}
+
+	return
+}
+
+func (editor ClientDbIndexEditor) CreateIndexesBlocking(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	indexes []models.ConcreteIndex,
+) error {
+	logger := utils.LoggerFromContext(ctx)
+
+	if err := editor.enforceSecurityDataModel.WriteDataModelIndexes(organizationId); err != nil {
+		return err
+	}
+
+	db, err := editor.executorFactory.NewClientDbExecutor(ctx, organizationId)
+	if err != nil {
+		return errors.Wrap(
+			err,
+			"Error while creating client schema executor in StartPublicationPreparation")
+	}
+	err = editor.ingestedDataIndexesRepository.CreateIndexesBlocking(ctx, db, indexes)
+	if err != nil {
+		return errors.Wrap(err, "Error while creating indexes in StartPublicationPreparation")
+	}
+	logger.InfoContext(
+		ctx,
+		fmt.Sprintf("%d indexes pending creation in: %+v", len(indexes), indexes), "org_id", organizationId,
+	)
+	return nil
+}
+
+func (editor ClientDbIndexEditor) CreateIndexesAsync(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	indexes []models.ConcreteIndex,
+) error {
+	logger := utils.LoggerFromContext(ctx)
+
+	if err := editor.enforceSecurityDataModel.WriteDataModelIndexes(organizationId); err != nil {
+		return err
+	}
+
+	db, err := editor.executorFactory.NewClientDbExecutor(ctx, organizationId)
+	if err != nil {
+		return errors.Wrap(
+			err,
+			"Error while creating client schema executor in StartPublicationPreparation")
+	}
+	err = editor.ingestedDataIndexesRepository.CreateIndexesAsync(ctx, db, indexes)
+	if err != nil {
+		return errors.Wrap(err, "Error while creating indexes in StartPublicationPreparation")
+	}
+	logger.InfoContext(
+		ctx,
+		fmt.Sprintf("%d indexes pending creation in: %+v", len(indexes), indexes), "org_id", organizationId,
+	)
+	return nil
+}
+
+func (editor ClientDbIndexEditor) CreateIndexesAsyncForScenarioWithCallback(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	indexes []models.ConcreteIndex,
+	onSuccess models.OnCreateIndexesSuccess,
+) error {
+	logger := utils.LoggerFromContext(ctx)
+
+	if err := editor.enforceSecurityDataModel.WriteDataModelIndexes(organizationId); err != nil {
+		return err
+	}
+
+	db, err := editor.executorFactory.NewClientDbExecutor(ctx, organizationId)
+	if err != nil {
+		return errors.Wrap(
+			err,
+			"Error while creating client schema executor in StartPublicationPreparation")
+	}
+	err = editor.ingestedDataIndexesRepository.CreateIndexesWithCallback(ctx, db, indexes, onSuccess)
+	if err != nil {
+		return errors.Wrap(err, "Error while creating indexes in StartPublicationPreparation")
+	}
+	logger.InfoContext(
+		ctx,
+		fmt.Sprintf("%d indexes pending creation: %+v", len(indexes), indexes), "org_id", organizationId,
+	)
+	return nil
+}
+
+func (editor ClientDbIndexEditor) ListAllUniqueIndexes(ctx context.Context, organizationId uuid.UUID) ([]models.UnicityIndex, error) {
+	if err := editor.enforceSecurityDataModel.ReadDataModel(); err != nil {
+		return nil, err
+	}
+
+	db, err := editor.executorFactory.NewClientDbExecutor(ctx, organizationId)
+	if err != nil {
+		return nil, errors.Wrap(
+			err,
+			"Error while creating client schema executor in ListAllUniqueIndexes")
+	}
+	return editor.ingestedDataIndexesRepository.ListAllUniqueIndexes(ctx, db)
+}
+
+func (editor ClientDbIndexEditor) ListAllIndexes(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	indexTypes ...models.IndexType,
+) ([]models.ConcreteIndex, error) {
+	if err := editor.enforceSecurityDataModel.ReadDataModel(); err != nil {
+		return nil, err
+	}
+
+	db, err := editor.executorFactory.NewClientDbExecutor(ctx, organizationId)
+	if err != nil {
+		return nil, errors.Wrap(
+			err,
+			"Error while creating client schema executor in ListAllIndexes")
+	}
+	return editor.ingestedDataIndexesRepository.ListAllIndexes(ctx, db)
+}
+
+func (editor ClientDbIndexEditor) CreateUniqueIndexAsync(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	index models.UnicityIndex,
+) error {
+	logger := utils.LoggerFromContext(ctx)
+
+	if err := editor.enforceSecurityDataModel.WriteDataModel(organizationId); err != nil {
+		return err
+	}
+
+	db, err := editor.executorFactory.NewClientDbExecutor(ctx, organizationId)
+	if err != nil {
+		return errors.Wrap(
+			err,
+			"Error while creating client schema executor in CreateUniqueIndexAsync")
+	}
+	err = editor.ingestedDataIndexesRepository.CreateUniqueIndexAsync(ctx, db, index)
+	if err != nil {
+		return errors.Wrap(err, "Error while creating unique index in CreateUniqueIndexAsync")
+	}
+	logger.InfoContext(
+		ctx,
+		fmt.Sprintf("Unique index pending creation asynchronously: %+v", index),
+		"org_id", organizationId,
+	)
+	return nil
+}
+
+func (editor ClientDbIndexEditor) CreateUniqueIndex(
+	ctx context.Context,
+	exec repositories.Executor,
+	organizationId uuid.UUID,
+	index models.UnicityIndex,
+) error {
+	logger := utils.LoggerFromContext(ctx)
+
+	if err := editor.enforceSecurityDataModel.WriteDataModel(organizationId); err != nil {
+		return err
+	}
+
+	if exec == nil {
+		var err error
+		exec, err = editor.executorFactory.NewClientDbExecutor(ctx, organizationId)
+		if err != nil {
+			return errors.Wrap(
+				err,
+				"Error while creating client schema executor in CreateUniqueIndex")
+		}
+	}
+
+	if err := editor.ingestedDataIndexesRepository.CreateUniqueIndex(ctx, exec, index); err != nil {
+		return errors.Wrap(err, "Error while creating unique index in CreateUniqueIndex")
+	}
+
+	logger.InfoContext(ctx, fmt.Sprintf("Unique index pending created: %+v", index))
+	return nil
+}
+
+func (editor ClientDbIndexEditor) DeleteUniqueIndex(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	index models.UnicityIndex,
+) error {
+	logger := utils.LoggerFromContext(ctx)
+
+	if err := editor.enforceSecurityDataModel.WriteDataModel(organizationId); err != nil {
+		return err
+	}
+
+	db, err := editor.executorFactory.NewClientDbExecutor(ctx, organizationId)
+	if err != nil {
+		return errors.Wrap(
+			err,
+			"Error while creating client schema executor in DeleteUniqueIndex")
+	}
+	err = editor.ingestedDataIndexesRepository.DeleteUniqueIndex(ctx, db, index)
+	if err != nil {
+		return errors.Wrap(err, "Error while deleting unique index in DeleteUniqueIndex")
+	}
+	logger.InfoContext(
+		ctx,
+		fmt.Sprintf("Unique index deletion: %+v", index),
+	)
+	return nil
+}
+
+func (editor ClientDbIndexEditor) FindNavigationIndexNames(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	tableName string,
+	filterFieldName string,
+) ([]string, error) {
+	if err := editor.enforceSecurityDataModel.ReadDataModel(); err != nil {
+		return nil, err
+	}
+
+	db, err := editor.executorFactory.NewClientDbExecutor(ctx, organizationId)
+	if err != nil {
+		return nil, errors.Wrap(err,
+			"Error while creating client schema executor in FindNavigationIndexNames")
+	}
+
+	allIndexes, err := editor.ingestedDataIndexesRepository.ListAllIndexes(ctx, db, models.IndexTypeNavigation)
+	if err != nil {
+		return nil, errors.Wrap(err, "Error while listing indexes in FindNavigationIndexNames")
+	}
+
+	var names []string
+	for _, index := range allIndexes {
+		// Navigation indexes are always created with Indexed[0] as the filter field name
+		// and Indexed[1] as the ordering field name (see data_model_usecase.go createLink/CreateNavigationIndex)
+		if index.TableName == tableName && len(index.Indexed) > 0 && index.Indexed[0] == filterFieldName {
+			names = append(names, index.Name())
+		}
+	}
+
+	return names, nil
+}
+
+func (editor ClientDbIndexEditor) IngestedObjectsSearchIndexExists(ctx context.Context, orgId uuid.UUID, tableName, fieldName string) (bool, error) {
+	exec, err := editor.executorFactory.NewClientDbExecutor(ctx, editor.enforceSecurity.OrgId())
+	if err != nil {
+		return false, err
+	}
+
+	existingIndexes, err := editor.ingestedDataIndexesRepository.ListAllValidIndexes(ctx, exec, models.IndexTypeIngestedObjectsSearch)
+	if err != nil {
+		return false, err
+	}
+
+	for _, existingIndex := range existingIndexes {
+		if !strings.HasPrefix(existingIndex.Name(), "obj_") {
+			continue
+		}
+
+		if existingIndex.TableName == tableName && slices.Contains(existingIndex.Indexed, fieldName) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}

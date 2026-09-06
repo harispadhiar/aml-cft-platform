@@ -1,0 +1,38 @@
+import { type IdLessAstNode } from '@app-builder/models';
+import { type KnownOperandAstNode } from '@app-builder/models/astNode/builder-ast-node';
+import { type AstBuilderOperandProps } from '@ast-builder/Operand';
+import { OperandDisplayName } from '@ast-builder/styles/OperandDisplayName';
+import { cva } from 'class-variance-authority';
+
+const viewingOperandLabelClassnames = cva(
+  [
+    'group',
+    'size-fit min-h-[40px] min-w-[40px] rounded-sm outline-hidden',
+    'flex flex-row items-center justify-between gap-sm px-xs',
+    'bg-grey-background-light',
+  ],
+  {
+    variants: {
+      validationStatus: {
+        valid: 'border border-transparent',
+        error: 'border border-red-primary',
+        'light-error': 'border border-red-secondary',
+      },
+    },
+    defaultVariants: {
+      validationStatus: 'valid',
+    },
+  },
+);
+
+type ViewingAstBuilderOperandProps = Omit<
+  AstBuilderOperandProps,
+  'node' | 'placeholder' | 'onChange' | 'optionsDataType' | 'coerceDataType'
+> & { node: IdLessAstNode<KnownOperandAstNode> };
+export function ViewingAstBuilderOperand({ validationStatus, ...props }: ViewingAstBuilderOperandProps) {
+  return (
+    <div className={viewingOperandLabelClassnames({ validationStatus })}>
+      <OperandDisplayName interactionMode="viewer" {...props} />
+    </div>
+  );
+}

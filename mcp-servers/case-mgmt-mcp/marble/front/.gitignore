@@ -1,0 +1,59 @@
+# See http://help.github.com/ignore-files/ for more about ignoring files.
+
+# compiled output
+dist
+tmp
+/out-tsc
+
+# dependencies
+node_modules
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+/.cursor/rules
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/.user-settings.sample.json
+
+# misc
+.gitnexus
+/.sass-cache
+/connect.lock
+/coverage
+/libpeerconnection.log
+npm-debug.log
+yarn-error.log
+testem.log
+/typings
+
+# System Files
+.DS_Store
+Thumbs.db
+
+
+# Env files
+**/.env
+
+# Firebase
+firebase-debug.log
+ui-debug.log
+# Sentry Config File
+.sentryclirc
+
+.jj/
+
+# Claude Code
+.claude/settings.local.json
+.claude/hooks/node_modules/
+.claude/hooks/state/

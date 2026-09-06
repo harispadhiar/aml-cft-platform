@@ -1,0 +1,95 @@
+name: Reusable build and deploy job
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        description: "Github environment to use"
+        required: true
+      version:
+        type: string
+        description: "version to deploy"
+        required: true
+      SENTRY_RELEASE:
+        type: string
+        required: true
+        description: "Sentry release name"
+    secrets:
+      SENTRY_AUTH_TOKEN:
+        required: true
+        description: "Sentry Auth Token"
+      SEGMENT_WRITE_KEY_OPENSOURCE:
+        description: write key for segment (open source deployment). Can be overridden at runtime
+
+permissions:
+  contents: read
+  actions: read
+  id-token: "write" # needed for using open id token to authenticate with GCP
+
+jobs:
+  main:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      VERSION: ${{ inputs.version }}
+      IMAGE: europe-west1-docker.pkg.dev/marble-infra/marble/marble-frontend:${{ inputs.version }}
+      SERVICE_ACCOUNT: marble-frontend-cloud-run@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: auth github actions to GCP
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          token_format: access_token
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ vars.SERVICE_ACCOUNT_EMAIL}}
+
+      - name: Login to Google Artifact Registry
+        uses: docker/login-action@v4
+        with:
+          registry: europe-west1-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Extract version from tag
+        id: version
+        run: echo "MARBLE_VERSION=$(git describe --tags)" >> "$GITHUB_OUTPUT"
+
+      # source: https://github.com/docker/build-push-action
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          target: app-builder
+          tags: ${{ env.IMAGE }}
+          file: ./Dockerfile
+          build-args: |
+            SENTRY_PROJECT=marble-frontend
+            SENTRY_RELEASE=${{ inputs.SENTRY_RELEASE }}
+            APP_VERSION=${{ steps.version.outputs.MARBLE_VERSION }}
+            SEGMENT_WRITE_KEY_OPENSOURCE=${{ secrets.SEGMENT_WRITE_KEY_OPENSOURCE }}
+          secrets: |
+            SENTRY_AUTH_TOKEN=${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - name: "Set up Cloud SDK"
+        uses: "google-github-actions/setup-gcloud@v3"
+        with:
+          install_components: beta
+
+      - name: Deploy server
+        run: |
+          gcloud run deploy marble-frontend \
+            --quiet \
+            --region="europe-west1" \
+            --image="$IMAGE"

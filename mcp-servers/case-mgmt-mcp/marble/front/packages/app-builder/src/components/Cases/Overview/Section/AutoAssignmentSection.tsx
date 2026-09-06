@@ -1,0 +1,150 @@
+import { Panel } from '@app-builder/components/Panel';
+import { Spinner } from '@app-builder/components/Spinner';
+import { type InboxWithCasesCount } from '@app-builder/models/inbox';
+import { useGetInboxesQuery } from '@app-builder/queries/cases/get-inboxes';
+import { isAccessible, isRestricted } from '@app-builder/services/feature-access';
+import { type FeatureAccessLevelDto } from 'marble-api/generated/feature-access-api';
+import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { match } from 'ts-pattern';
+import { Button, cn, Tag } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+import { InboxUserRow } from '../InboxUserRow';
+import { AutoAssignmentPanelContent } from '../Panel/AutoAssignmentPanelContent';
+import { UpsaleModal } from '../UpsaleModal';
+
+const MAX_DISPLAYED_INBOXES = 3;
+
+interface AutoAssignmentSectionProps {
+  currentUserId?: string;
+  isGlobalAdmin: boolean;
+  access: FeatureAccessLevelDto;
+}
+
+export const AutoAssignmentSection = ({ currentUserId, isGlobalAdmin, access }: AutoAssignmentSectionProps) => {
+  const { t } = useTranslation(['cases']);
+  const inboxesQuery = useGetInboxesQuery();
+  const [autoAssignPanelOpen, setAutoAssignPanelOpen] = useState(false);
+  const [expandedInboxIds, setExpandedInboxIds] = useState<string[]>([]);
+
+  const restricted = isRestricted(access);
+  const hasAccess = isAccessible(access);
+  const canEdit = hasAccess && isGlobalAdmin;
+
+  // Check if user is a member of the inbox (any role)
+  const isInboxMember = (inbox: InboxWithCasesCount) => inbox.users.some((u) => u.userId === currentUserId);
+
+  const handleOpenPanel = () => {
+    setAutoAssignPanelOpen(true);
+  };
+
+  const toggleInbox = (inboxId: string) => {
+    setExpandedInboxIds((prev) => (prev.includes(inboxId) ? prev.filter((id) => id !== inboxId) : [...prev, inboxId]));
+  };
+
+  return (
+    <div
+      className={cn('border rounded-lg p-md flex flex-col gap-md', {
+        'border-purple-secondary bg-purple-background-light': restricted,
+        'border-grey-border bg-surface-card': !restricted,
+      })}
+    >
+      <div className="flex items-center gap-md">
+        <span className="flex-1 font-medium text-s">{t('cases:overview.panel.auto_assignment.title')}</span>
+        {match({ restricted, canEdit })
+          .with({ restricted: true }, () => (
+            <UpsaleModal
+              title={t('cases:overview.upsale.auto_assignment.title')}
+              description={t('cases:overview.upsale.auto_assignment.description')}
+            />
+          ))
+          .with({ canEdit: true }, () => (
+            <Icon
+              icon="edit"
+              className="size-5 cursor-pointer text-purple-primary hover:text-purple-50"
+              onClick={handleOpenPanel}
+            />
+          ))
+          .otherwise(() => (
+            <Icon icon="eye" className="size-5 cursor-pointer text-purple-primary" onClick={handleOpenPanel} />
+          ))}
+      </div>
+      {!restricted ? (
+        <div className="flex flex-col gap-sm">
+          {match(inboxesQuery)
+            .with({ isPending: true }, () => (
+              <div className="flex items-center justify-center py-sm">
+                <Spinner className="size-6" />
+              </div>
+            ))
+            .with({ isError: true }, () => (
+              <div className="text-s text-grey-secondary">{t('cases:overview.config.error_loading')}</div>
+            ))
+            .with({ isSuccess: true }, ({ data }) => {
+              const allInboxes = data?.inboxes ?? [];
+              // Global admin sees all inboxes, others see only their inboxes (where they are a member)
+              const inboxes = isGlobalAdmin ? allInboxes : allInboxes.filter(isInboxMember);
+              const displayedInboxes = inboxes.slice(0, MAX_DISPLAYED_INBOXES);
+              const hasMore = inboxes.length > MAX_DISPLAYED_INBOXES;
+
+              return (
+                <>
+                  {displayedInboxes.map((inbox) => {
+                    const isExpanded = expandedInboxIds.includes(inbox.id);
+                    const hasUsers = inbox.users?.length > 0;
+
+                    return (
+                      <div key={inbox.id} className="flex flex-col gap-sm">
+                        <div className="flex items-center gap-sm">
+                          <Icon
+                            icon="arrow-down"
+                            className={cn('size-5 text-purple-primary', {
+                              '-rotate-90': !isExpanded,
+                              'cursor-pointer': hasUsers,
+                              invisible: !hasUsers,
+                            })}
+                            onClick={hasUsers ? () => toggleInbox(inbox.id) : undefined}
+                          />
+                          <div className="flex-1 flex items-center gap-xs min-w-0">
+                            <span className="text-s line-clamp-2">{inbox.name}</span>
+                            <Tag color="purple" size="small">
+                              {t('cases:overview.inbox.cases_count', { count: inbox.casesCount })}
+                            </Tag>
+                          </div>
+                          <Tag color={inbox.autoAssignEnabled ? 'green' : 'grey'} size="small">
+                            {inbox.autoAssignEnabled
+                              ? t('cases:overview.config.active')
+                              : t('cases:overview.config.inactive')}
+                          </Tag>
+                        </div>
+                        {isExpanded && hasUsers ? (
+                          <div className="flex flex-col gap-sm">
+                            {inbox.users.map((user) => (
+                              <InboxUserRow key={user.id} user={user} />
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  {hasMore ? (
+                    <Button variant="secondary" appearance="link" onClick={handleOpenPanel}>
+                      {t('cases:overview.config.view_more')}
+                    </Button>
+                  ) : null}
+                </>
+              );
+            })
+            .exhaustive()}
+        </div>
+      ) : null}
+      <Panel.Root open={autoAssignPanelOpen} onOpenChange={setAutoAssignPanelOpen}>
+        <AutoAssignmentPanelContent
+          currentUserId={currentUserId}
+          isGlobalAdmin={isGlobalAdmin}
+          hasEntitlement={hasAccess}
+        />
+      </Panel.Root>
+    </div>
+  );
+};

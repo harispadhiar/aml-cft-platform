@@ -1,0 +1,233 @@
+import { Panel } from '@app-builder/components/Panel';
+import { User } from '@app-builder/models/user';
+import { useGetCaseNameQuery } from '@app-builder/queries/cases/get-name';
+import { useGetAnnotationsQuery } from '@app-builder/queries/data/get-annotations';
+import { useDownloadFile } from '@app-builder/services/DownloadFilesService';
+import { getDateFnsLocale } from '@app-builder/services/i18n/i18n-config';
+import { useOrganizationUsers } from '@app-builder/services/organization/organization-users';
+import { getFullName } from '@app-builder/services/user';
+import { fromUUIDtoSUUID } from '@app-builder/utils/short-uuid';
+import { Link, useRouter } from '@tanstack/react-router';
+import { formatDistanceToNow } from 'date-fns';
+import { FileEntityAnnotationDto } from 'marble-api';
+import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { match } from 'ts-pattern';
+import { Button, CtaV2ClassName, useFormatLanguage } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+import { Spinner } from '../Spinner';
+
+type DocumentsListProps = {
+  objectType: string;
+  objectId: string;
+};
+
+type FileView = {
+  annotation: FileEntityAnnotationDto;
+  fileUrl: string;
+};
+
+export const DocumentsList = ({ objectType, objectId }: DocumentsListProps) => {
+  const { t } = useTranslation(['common', 'client360']);
+  const annotationsQuery = useGetAnnotationsQuery(objectType, objectId, true);
+  const users = useOrganizationUsers();
+  const [currentFileView, setCurrentFileView] = useState<FileView | null>(null);
+
+  return match(annotationsQuery)
+    .with({ isPending: true }, () => (
+      <div className="flex items-center justify-center">
+        <Spinner className="size-6" />
+      </div>
+    ))
+    .with({ isError: true }, () => (
+      <div className="flex items-center justify-center">
+        <span className="text-center">{t('common:generic_fetch_data_error')}</span>
+        <Button variant="secondary" onClick={() => annotationsQuery.refetch()}>
+          {t('common:retry')}
+        </Button>
+      </div>
+    ))
+    .with({ isSuccess: true }, ({ data: { annotations } }) => {
+      const documents = annotations.files;
+      if (documents.length === 0) {
+        return (
+          <div className="flex items-center justify-center">
+            <span>{t('common:no_data_to_display')}</span>
+          </div>
+        );
+      }
+
+      return (
+        <div className="grid grid-cols-1 @[250px]:grid-cols-2 @[500px]:grid-cols-3 @[750px]:grid-cols-4 gap-md">
+          {documents.map((document) => {
+            const annotatedBy = users.getOrgUserById(document.annotated_by);
+
+            return document.payload.files.map((file) => (
+              <FileItem key={file.id} document={document} file={file} annotatedBy={annotatedBy} />
+            ));
+          })}
+          {currentFileView ? (
+            <Panel.Root open onOpenChange={() => setCurrentFileView(null)}>
+              <Panel.Container size="medium">
+                <Panel.Content>
+                  <img src={currentFileView.fileUrl} />
+                </Panel.Content>
+              </Panel.Container>
+            </Panel.Root>
+          ) : null}
+        </div>
+      );
+    })
+    .exhaustive();
+};
+
+const FileItem = ({
+  document,
+  file,
+  annotatedBy,
+}: {
+  document: FileEntityAnnotationDto;
+  file: FileEntityAnnotationDto['payload']['files'][number];
+  annotatedBy: User | undefined;
+}) => {
+  const { t } = useTranslation(['client360']);
+  const language = useFormatLanguage();
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const router = useRouter();
+  const fileEndpoint = router.buildLocation({
+    to: '/ressources/annotations/download-file/$annotationId/$fileId',
+    params: {
+      annotationId: document.id,
+      fileId: file.id,
+    },
+  });
+
+  const { downloadCaseFile, downloadingCaseFile } = useDownloadFile(fileEndpoint.href, {});
+
+  const fetchFile = async (endpoint: string) => {
+    const response = await fetch(endpoint);
+    if (response.ok) {
+      return (await response.json()).url;
+    }
+    return null;
+  };
+
+  const onClickFile = async (
+    annotation: FileEntityAnnotationDto,
+    file: FileEntityAnnotationDto['payload']['files'][number],
+  ) => {
+    const fileEndpoint = router.buildLocation({
+      to: '/ressources/annotations/download-file/$annotationId/$fileId',
+      params: {
+        annotationId: annotation.id,
+        fileId: file.id,
+      },
+    });
+
+    const contentType = file.content_type;
+    if (contentType?.startsWith('image/')) {
+      const url = await fetchFile(fileEndpoint.href);
+      if (!url) {
+        return;
+      }
+
+      setPreviewUrl(url);
+    } else {
+      downloadCaseFile();
+      return;
+    }
+  };
+
+  return (
+    <>
+      <button
+        key={file.id}
+        className="flex gap-sm items-center text-left cursor-pointer"
+        onClick={() => onClickFile(document, file)}
+        disabled={downloadingCaseFile}
+      >
+        <div
+          className="size-20 border border-grey-border rounded-sm bg-cover shrink-0 relative bg-grey-background-light grid place-items-center"
+          style={{ backgroundImage: file.thumbnail_url ? `url(${file.thumbnail_url})` : 'none' }}
+        >
+          {file.thumbnail_url && file.content_type !== 'text/plain' ? null : (
+            <Icon icon="image-placeholder" className="size-4" />
+          )}
+          <div
+            className={CtaV2ClassName({
+              variant: 'secondary',
+              mode: 'icon',
+              className: 'absolute top-xs right-xs',
+            })}
+          >
+            <Icon icon={file.content_type?.startsWith('image/') ? 'eye' : 'download'} className="size-3.5" />
+          </div>
+        </div>
+        <div className="flex flex-col gap-xs text-tiny text-grey-secondary truncate">
+          <div className="font-medium text-default text-grey-primary truncate">{file.filename}</div>
+          {document.case_id ? <CaseLink caseId={document.case_id} /> : null}
+          <span>
+            {t('client360:client_detail.documents.annotated_by', {
+              name: annotatedBy ? getFullName(annotatedBy) : t('client360:client_detail.documents.unknown_user'),
+            })}
+          </span>
+          <span>
+            {formatDistanceToNow(new Date(document.created_at), {
+              locale: getDateFnsLocale(language),
+              addSuffix: true,
+            })}
+          </span>
+        </div>
+      </button>
+      {previewUrl ? (
+        <Panel.Root open onOpenChange={() => setPreviewUrl(null)}>
+          <Panel.Container size="medium">
+            <Panel.Content>
+              <Panel.Header>
+                <div className="flex items-baseline gap-md">
+                  <div>{file.filename}</div>
+                  <span className="text-default text-grey-secondary font-normal flex gap-sm">
+                    <span>
+                      {formatDistanceToNow(new Date(document.created_at), {
+                        locale: getDateFnsLocale(language),
+                        addSuffix: true,
+                      })}
+                    </span>
+                    <span>-</span>
+                    <span>
+                      {t('client360:client_detail.documents.annotated_by', {
+                        name: annotatedBy
+                          ? getFullName(annotatedBy)
+                          : t('client360:client_detail.documents.unknown_user'),
+                      })}
+                    </span>
+                  </span>
+                </div>
+              </Panel.Header>
+              <img src={previewUrl} />
+            </Panel.Content>
+          </Panel.Container>
+        </Panel.Root>
+      ) : null}
+    </>
+  );
+};
+
+const CaseLink = ({ caseId }: { caseId: string }) => {
+  const { t } = useTranslation(['common', 'client360']);
+  const caseQuery = useGetCaseNameQuery(caseId);
+
+  return (
+    <Link
+      to="/cases/$caseId"
+      params={{ caseId: fromUUIDtoSUUID(caseId) }}
+      className="text-purple-primary hover:text-purple-hover truncate"
+    >
+      {match(caseQuery)
+        .with({ isPending: true }, () => <Spinner className="size-4" />)
+        .with({ isError: true }, () => t('common:unknown'))
+        .with({ isSuccess: true }, ({ data }) => data.name)
+        .exhaustive()}
+    </Link>
+  );
+};

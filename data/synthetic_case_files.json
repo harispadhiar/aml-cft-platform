@@ -1,0 +1,4002 @@
+[
+  {
+    "case_id": "CASE-00001",
+    "customer_id": "CUST-008380",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00002",
+    "customer_id": "CUST-008219",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00003",
+    "customer_id": "CUST-007212",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00004",
+    "customer_id": "CUST-007079",
+    "transaction_pattern": "43 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00005",
+    "customer_id": "CUST-005582",
+    "transaction_pattern": "8 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00006",
+    "customer_id": "CUST-006216",
+    "transaction_pattern": "8 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00007",
+    "customer_id": "CUST-004745",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00008",
+    "customer_id": "CUST-009673",
+    "transaction_pattern": "42 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00009",
+    "customer_id": "CUST-007496",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00010",
+    "customer_id": "CUST-001688",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00011",
+    "customer_id": "CUST-003870",
+    "transaction_pattern": "Wire transfer of ~PKR 2 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00012",
+    "customer_id": "CUST-006458",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00013",
+    "customer_id": "CUST-004919",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00014",
+    "customer_id": "CUST-004651",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00015",
+    "customer_id": "CUST-005464",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00016",
+    "customer_id": "CUST-005665",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00017",
+    "customer_id": "CUST-002974",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00018",
+    "customer_id": "CUST-000912",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00019",
+    "customer_id": "CUST-007951",
+    "transaction_pattern": "38 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00020",
+    "customer_id": "CUST-007613",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00021",
+    "customer_id": "CUST-000114",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00022",
+    "customer_id": "CUST-009327",
+    "transaction_pattern": "23 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00023",
+    "customer_id": "CUST-003672",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00024",
+    "customer_id": "CUST-009321",
+    "transaction_pattern": "7 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00025",
+    "customer_id": "CUST-009902",
+    "transaction_pattern": "35 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00026",
+    "customer_id": "CUST-007065",
+    "transaction_pattern": "7 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00027",
+    "customer_id": "CUST-002201",
+    "transaction_pattern": "49 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00028",
+    "customer_id": "CUST-001577",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00029",
+    "customer_id": "CUST-000705",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00030",
+    "customer_id": "CUST-006052",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00031",
+    "customer_id": "CUST-007876",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00032",
+    "customer_id": "CUST-006647",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00033",
+    "customer_id": "CUST-005646",
+    "transaction_pattern": "34 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00034",
+    "customer_id": "CUST-005720",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00035",
+    "customer_id": "CUST-002046",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00036",
+    "customer_id": "CUST-009876",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00037",
+    "customer_id": "CUST-009632",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00038",
+    "customer_id": "CUST-005547",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00039",
+    "customer_id": "CUST-006686",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00040",
+    "customer_id": "CUST-005665",
+    "transaction_pattern": "28 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00041",
+    "customer_id": "CUST-006738",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00042",
+    "customer_id": "CUST-004718",
+    "transaction_pattern": "33 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00043",
+    "customer_id": "CUST-000880",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00044",
+    "customer_id": "CUST-008823",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00045",
+    "customer_id": "CUST-006293",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00046",
+    "customer_id": "CUST-003436",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00047",
+    "customer_id": "CUST-004648",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00048",
+    "customer_id": "CUST-004637",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00049",
+    "customer_id": "CUST-005547",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00050",
+    "customer_id": "CUST-008657",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00051",
+    "customer_id": "CUST-008392",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00052",
+    "customer_id": "CUST-004141",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00053",
+    "customer_id": "CUST-004666",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00054",
+    "customer_id": "CUST-009698",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00055",
+    "customer_id": "CUST-000453",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00056",
+    "customer_id": "CUST-008622",
+    "transaction_pattern": "38 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00057",
+    "customer_id": "CUST-004402",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00058",
+    "customer_id": "CUST-006098",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00059",
+    "customer_id": "CUST-001483",
+    "transaction_pattern": "7 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00060",
+    "customer_id": "CUST-001984",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00061",
+    "customer_id": "CUST-004045",
+    "transaction_pattern": "38 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00062",
+    "customer_id": "CUST-008063",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00063",
+    "customer_id": "CUST-001099",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00064",
+    "customer_id": "CUST-007026",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00065",
+    "customer_id": "CUST-009592",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00066",
+    "customer_id": "CUST-004146",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00067",
+    "customer_id": "CUST-007669",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00068",
+    "customer_id": "CUST-003358",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00069",
+    "customer_id": "CUST-001998",
+    "transaction_pattern": "7 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00070",
+    "customer_id": "CUST-008394",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00071",
+    "customer_id": "CUST-006220",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00072",
+    "customer_id": "CUST-006374",
+    "transaction_pattern": "33 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00073",
+    "customer_id": "CUST-002824",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00074",
+    "customer_id": "CUST-007170",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00075",
+    "customer_id": "CUST-001468",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00076",
+    "customer_id": "CUST-002504",
+    "transaction_pattern": "Wire transfer of ~PKR 4 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00077",
+    "customer_id": "CUST-008390",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00078",
+    "customer_id": "CUST-003476",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00079",
+    "customer_id": "CUST-001644",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00080",
+    "customer_id": "CUST-007292",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00081",
+    "customer_id": "CUST-005216",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00082",
+    "customer_id": "CUST-005111",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00083",
+    "customer_id": "CUST-001388",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00084",
+    "customer_id": "CUST-008607",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00085",
+    "customer_id": "CUST-003469",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00086",
+    "customer_id": "CUST-009880",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00087",
+    "customer_id": "CUST-008456",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00088",
+    "customer_id": "CUST-008112",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00089",
+    "customer_id": "CUST-002138",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00090",
+    "customer_id": "CUST-005680",
+    "transaction_pattern": "30 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00091",
+    "customer_id": "CUST-007026",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00092",
+    "customer_id": "CUST-000064",
+    "transaction_pattern": "Wire transfer of ~PKR 2 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00093",
+    "customer_id": "CUST-002470",
+    "transaction_pattern": "8 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00094",
+    "customer_id": "CUST-004639",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00095",
+    "customer_id": "CUST-009799",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00096",
+    "customer_id": "CUST-007925",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00097",
+    "customer_id": "CUST-009803",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00098",
+    "customer_id": "CUST-005135",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00099",
+    "customer_id": "CUST-002046",
+    "transaction_pattern": "30 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00100",
+    "customer_id": "CUST-006853",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00101",
+    "customer_id": "CUST-003228",
+    "transaction_pattern": "47 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00102",
+    "customer_id": "CUST-009307",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00103",
+    "customer_id": "CUST-009079",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00104",
+    "customer_id": "CUST-009933",
+    "transaction_pattern": "21 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00105",
+    "customer_id": "CUST-006116",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00106",
+    "customer_id": "CUST-007301",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00107",
+    "customer_id": "CUST-008810",
+    "transaction_pattern": "32 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00108",
+    "customer_id": "CUST-003942",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00109",
+    "customer_id": "CUST-004718",
+    "transaction_pattern": "Wire transfer of ~PKR 4 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00110",
+    "customer_id": "CUST-006468",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00111",
+    "customer_id": "CUST-001099",
+    "transaction_pattern": "31 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00112",
+    "customer_id": "CUST-000882",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00113",
+    "customer_id": "CUST-004716",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00114",
+    "customer_id": "CUST-000116",
+    "transaction_pattern": "Wire transfer of ~PKR 2 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00115",
+    "customer_id": "CUST-008202",
+    "transaction_pattern": "25 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00116",
+    "customer_id": "CUST-007457",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00117",
+    "customer_id": "CUST-003836",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00118",
+    "customer_id": "CUST-005685",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00119",
+    "customer_id": "CUST-003332",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00120",
+    "customer_id": "CUST-006007",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00121",
+    "customer_id": "CUST-000739",
+    "transaction_pattern": "8 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00122",
+    "customer_id": "CUST-001404",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00123",
+    "customer_id": "CUST-000924",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00124",
+    "customer_id": "CUST-002390",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00125",
+    "customer_id": "CUST-001267",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00126",
+    "customer_id": "CUST-000334",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00127",
+    "customer_id": "CUST-002639",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00128",
+    "customer_id": "CUST-000859",
+    "transaction_pattern": "8 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00129",
+    "customer_id": "CUST-009321",
+    "transaction_pattern": "29 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00130",
+    "customer_id": "CUST-008188",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00131",
+    "customer_id": "CUST-005304",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00132",
+    "customer_id": "CUST-002303",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00133",
+    "customer_id": "CUST-000645",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00134",
+    "customer_id": "CUST-002515",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00135",
+    "customer_id": "CUST-009442",
+    "transaction_pattern": "31 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00136",
+    "customer_id": "CUST-008499",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00137",
+    "customer_id": "CUST-009698",
+    "transaction_pattern": "41 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00138",
+    "customer_id": "CUST-003313",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00139",
+    "customer_id": "CUST-005578",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00140",
+    "customer_id": "CUST-003012",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00141",
+    "customer_id": "CUST-001559",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00142",
+    "customer_id": "CUST-003444",
+    "transaction_pattern": "48 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00143",
+    "customer_id": "CUST-000445",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00144",
+    "customer_id": "CUST-009475",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00145",
+    "customer_id": "CUST-002187",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00146",
+    "customer_id": "CUST-007856",
+    "transaction_pattern": "Wire transfer of ~PKR 4 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00147",
+    "customer_id": "CUST-000235",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00148",
+    "customer_id": "CUST-009148",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00149",
+    "customer_id": "CUST-000671",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00150",
+    "customer_id": "CUST-005061",
+    "transaction_pattern": "38 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00151",
+    "customer_id": "CUST-005299",
+    "transaction_pattern": "34 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00152",
+    "customer_id": "CUST-000081",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00153",
+    "customer_id": "CUST-005849",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00154",
+    "customer_id": "CUST-007033",
+    "transaction_pattern": "7 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00155",
+    "customer_id": "CUST-001653",
+    "transaction_pattern": "Wire transfer of ~PKR 2 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00156",
+    "customer_id": "CUST-001728",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00157",
+    "customer_id": "CUST-009909",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00158",
+    "customer_id": "CUST-004933",
+    "transaction_pattern": "24 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00159",
+    "customer_id": "CUST-006568",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00160",
+    "customer_id": "CUST-002949",
+    "transaction_pattern": "26 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00161",
+    "customer_id": "CUST-009315",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00162",
+    "customer_id": "CUST-009996",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00163",
+    "customer_id": "CUST-007487",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00164",
+    "customer_id": "CUST-005786",
+    "transaction_pattern": "7 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00165",
+    "customer_id": "CUST-005130",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00166",
+    "customer_id": "CUST-005377",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00167",
+    "customer_id": "CUST-009456",
+    "transaction_pattern": "29 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00168",
+    "customer_id": "CUST-003064",
+    "transaction_pattern": "20 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00169",
+    "customer_id": "CUST-002618",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00170",
+    "customer_id": "CUST-001826",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00171",
+    "customer_id": "CUST-000894",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00172",
+    "customer_id": "CUST-003527",
+    "transaction_pattern": "35 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00173",
+    "customer_id": "CUST-009133",
+    "transaction_pattern": "40 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00174",
+    "customer_id": "CUST-009754",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00175",
+    "customer_id": "CUST-005488",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00176",
+    "customer_id": "CUST-003622",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00177",
+    "customer_id": "CUST-002138",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00178",
+    "customer_id": "CUST-004458",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00179",
+    "customer_id": "CUST-003615",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00180",
+    "customer_id": "CUST-004953",
+    "transaction_pattern": "7 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00181",
+    "customer_id": "CUST-009168",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00182",
+    "customer_id": "CUST-009371",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00183",
+    "customer_id": "CUST-001199",
+    "transaction_pattern": "42 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00184",
+    "customer_id": "CUST-000515",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00185",
+    "customer_id": "CUST-007691",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00186",
+    "customer_id": "CUST-009665",
+    "transaction_pattern": "23 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00187",
+    "customer_id": "CUST-005240",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00188",
+    "customer_id": "CUST-004637",
+    "transaction_pattern": "44 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00189",
+    "customer_id": "CUST-009258",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00190",
+    "customer_id": "CUST-001884",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00191",
+    "customer_id": "CUST-004215",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00192",
+    "customer_id": "CUST-005156",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00193",
+    "customer_id": "CUST-003972",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00194",
+    "customer_id": "CUST-004109",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00195",
+    "customer_id": "CUST-001131",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00196",
+    "customer_id": "CUST-004343",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00197",
+    "customer_id": "CUST-002997",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00198",
+    "customer_id": "CUST-006512",
+    "transaction_pattern": "22 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00199",
+    "customer_id": "CUST-002945",
+    "transaction_pattern": "42 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00200",
+    "customer_id": "CUST-003294",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00201",
+    "customer_id": "CUST-005911",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00202",
+    "customer_id": "CUST-001011",
+    "transaction_pattern": "48 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00203",
+    "customer_id": "CUST-003756",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00204",
+    "customer_id": "CUST-009835",
+    "transaction_pattern": "37 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00205",
+    "customer_id": "CUST-009168",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00206",
+    "customer_id": "CUST-000485",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00207",
+    "customer_id": "CUST-009481",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00208",
+    "customer_id": "CUST-009392",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00209",
+    "customer_id": "CUST-006477",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00210",
+    "customer_id": "CUST-003780",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00211",
+    "customer_id": "CUST-005064",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00212",
+    "customer_id": "CUST-009133",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00213",
+    "customer_id": "CUST-006254",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00214",
+    "customer_id": "CUST-003831",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00215",
+    "customer_id": "CUST-004754",
+    "transaction_pattern": "Wire transfer of ~PKR 2 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00216",
+    "customer_id": "CUST-002567",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00217",
+    "customer_id": "CUST-007800",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00218",
+    "customer_id": "CUST-007272",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00219",
+    "customer_id": "CUST-006562",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00220",
+    "customer_id": "CUST-004976",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00221",
+    "customer_id": "CUST-001041",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00222",
+    "customer_id": "CUST-004173",
+    "transaction_pattern": "43 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00223",
+    "customer_id": "CUST-000432",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00224",
+    "customer_id": "CUST-006856",
+    "transaction_pattern": "33 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00225",
+    "customer_id": "CUST-005135",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00226",
+    "customer_id": "CUST-008931",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00227",
+    "customer_id": "CUST-007425",
+    "transaction_pattern": "24 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00228",
+    "customer_id": "CUST-008588",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00229",
+    "customer_id": "CUST-000644",
+    "transaction_pattern": "50 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00230",
+    "customer_id": "CUST-001618",
+    "transaction_pattern": "39 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00231",
+    "customer_id": "CUST-007270",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00232",
+    "customer_id": "CUST-007848",
+    "transaction_pattern": "Wire transfer of ~PKR 4 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00233",
+    "customer_id": "CUST-001887",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00234",
+    "customer_id": "CUST-008409",
+    "transaction_pattern": "44 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00235",
+    "customer_id": "CUST-007769",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00236",
+    "customer_id": "CUST-003030",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00237",
+    "customer_id": "CUST-005237",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00238",
+    "customer_id": "CUST-001099",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00239",
+    "customer_id": "CUST-005646",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00240",
+    "customer_id": "CUST-005914",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00241",
+    "customer_id": "CUST-009439",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00242",
+    "customer_id": "CUST-002448",
+    "transaction_pattern": "7 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00243",
+    "customer_id": "CUST-007713",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00244",
+    "customer_id": "CUST-004045",
+    "transaction_pattern": "31 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00245",
+    "customer_id": "CUST-000644",
+    "transaction_pattern": "Wire transfer of ~PKR 2 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00246",
+    "customer_id": "CUST-002046",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00247",
+    "customer_id": "CUST-005254",
+    "transaction_pattern": "8 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00248",
+    "customer_id": "CUST-000859",
+    "transaction_pattern": "45 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00249",
+    "customer_id": "CUST-001577",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00250",
+    "customer_id": "CUST-004718",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00251",
+    "customer_id": "CUST-000456",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00252",
+    "customer_id": "CUST-003087",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00253",
+    "customer_id": "CUST-009181",
+    "transaction_pattern": "35 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00254",
+    "customer_id": "CUST-000234",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00255",
+    "customer_id": "CUST-008932",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00256",
+    "customer_id": "CUST-007990",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00257",
+    "customer_id": "CUST-008885",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00258",
+    "customer_id": "CUST-007166",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00259",
+    "customer_id": "CUST-004178",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00260",
+    "customer_id": "CUST-001456",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00261",
+    "customer_id": "CUST-000758",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00262",
+    "customer_id": "CUST-003557",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00263",
+    "customer_id": "CUST-000965",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00264",
+    "customer_id": "CUST-006040",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00265",
+    "customer_id": "CUST-009876",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00266",
+    "customer_id": "CUST-009240",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00267",
+    "customer_id": "CUST-000848",
+    "transaction_pattern": "25 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00268",
+    "customer_id": "CUST-004248",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00269",
+    "customer_id": "CUST-009131",
+    "transaction_pattern": "33 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00270",
+    "customer_id": "CUST-006458",
+    "transaction_pattern": "45 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00271",
+    "customer_id": "CUST-008477",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00272",
+    "customer_id": "CUST-000035",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00273",
+    "customer_id": "CUST-003550",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00274",
+    "customer_id": "CUST-005781",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00275",
+    "customer_id": "CUST-008615",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00276",
+    "customer_id": "CUST-001404",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00277",
+    "customer_id": "CUST-008219",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00278",
+    "customer_id": "CUST-008334",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00279",
+    "customer_id": "CUST-003240",
+    "transaction_pattern": "8 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00280",
+    "customer_id": "CUST-003637",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00281",
+    "customer_id": "CUST-000823",
+    "transaction_pattern": "8 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00282",
+    "customer_id": "CUST-009327",
+    "transaction_pattern": "8 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00283",
+    "customer_id": "CUST-007272",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00284",
+    "customer_id": "CUST-002497",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00285",
+    "customer_id": "CUST-007951",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00286",
+    "customer_id": "CUST-008162",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00287",
+    "customer_id": "CUST-000585",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00288",
+    "customer_id": "CUST-002997",
+    "transaction_pattern": "44 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00289",
+    "customer_id": "CUST-005318",
+    "transaction_pattern": "43 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00290",
+    "customer_id": "CUST-008732",
+    "transaction_pattern": "30 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00291",
+    "customer_id": "CUST-001425",
+    "transaction_pattern": "43 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00292",
+    "customer_id": "CUST-009835",
+    "transaction_pattern": "Wire transfer of ~PKR 4 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00293",
+    "customer_id": "CUST-008868",
+    "transaction_pattern": "45 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00294",
+    "customer_id": "CUST-004202",
+    "transaction_pattern": "25 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00295",
+    "customer_id": "CUST-009555",
+    "transaction_pattern": "8 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00296",
+    "customer_id": "CUST-000585",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00297",
+    "customer_id": "CUST-003273",
+    "transaction_pattern": "40 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00298",
+    "customer_id": "CUST-000995",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00299",
+    "customer_id": "CUST-005985",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00300",
+    "customer_id": "CUST-007796",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00301",
+    "customer_id": "CUST-002583",
+    "transaction_pattern": "39 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00302",
+    "customer_id": "CUST-009748",
+    "transaction_pattern": "34 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00303",
+    "customer_id": "CUST-003942",
+    "transaction_pattern": "20 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00304",
+    "customer_id": "CUST-003087",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00305",
+    "customer_id": "CUST-005102",
+    "transaction_pattern": "40 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00306",
+    "customer_id": "CUST-005623",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00307",
+    "customer_id": "CUST-006279",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00308",
+    "customer_id": "CUST-001351",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00309",
+    "customer_id": "CUST-009438",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00310",
+    "customer_id": "CUST-006480",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00311",
+    "customer_id": "CUST-000123",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00312",
+    "customer_id": "CUST-001458",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00313",
+    "customer_id": "CUST-009665",
+    "transaction_pattern": "46 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00314",
+    "customer_id": "CUST-000081",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00315",
+    "customer_id": "CUST-001984",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00316",
+    "customer_id": "CUST-000772",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00317",
+    "customer_id": "CUST-001371",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00318",
+    "customer_id": "CUST-001657",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00319",
+    "customer_id": "CUST-006303",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00320",
+    "customer_id": "CUST-005781",
+    "transaction_pattern": "8 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00321",
+    "customer_id": "CUST-007511",
+    "transaction_pattern": "Wire transfer of ~PKR 4 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00322",
+    "customer_id": "CUST-008710",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00323",
+    "customer_id": "CUST-006363",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00324",
+    "customer_id": "CUST-001438",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00325",
+    "customer_id": "CUST-000064",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00326",
+    "customer_id": "CUST-009909",
+    "transaction_pattern": "Wire transfer of ~PKR 2 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00327",
+    "customer_id": "CUST-003228",
+    "transaction_pattern": "8 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00328",
+    "customer_id": "CUST-007217",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00329",
+    "customer_id": "CUST-005061",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00330",
+    "customer_id": "CUST-004200",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00331",
+    "customer_id": "CUST-005882",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00332",
+    "customer_id": "CUST-007272",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00333",
+    "customer_id": "CUST-006225",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00334",
+    "customer_id": "CUST-005126",
+    "transaction_pattern": "30 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00335",
+    "customer_id": "CUST-002706",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00336",
+    "customer_id": "CUST-001459",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00337",
+    "customer_id": "CUST-001884",
+    "transaction_pattern": "44 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00338",
+    "customer_id": "CUST-007106",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00339",
+    "customer_id": "CUST-005299",
+    "transaction_pattern": "41 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00340",
+    "customer_id": "CUST-000880",
+    "transaction_pattern": "27 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00341",
+    "customer_id": "CUST-008822",
+    "transaction_pattern": "41 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00342",
+    "customer_id": "CUST-002819",
+    "transaction_pattern": "Wire transfer of ~PKR 4 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00343",
+    "customer_id": "CUST-004530",
+    "transaction_pattern": "35 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00344",
+    "customer_id": "CUST-003446",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00345",
+    "customer_id": "CUST-005639",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00346",
+    "customer_id": "CUST-006004",
+    "transaction_pattern": "Wire transfer of ~PKR 4 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00347",
+    "customer_id": "CUST-002310",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00348",
+    "customer_id": "CUST-002609",
+    "transaction_pattern": "Wire transfer of ~PKR 2 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00349",
+    "customer_id": "CUST-007040",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00350",
+    "customer_id": "CUST-005293",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00351",
+    "customer_id": "CUST-005075",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00352",
+    "customer_id": "CUST-006216",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00353",
+    "customer_id": "CUST-001577",
+    "transaction_pattern": "7 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00354",
+    "customer_id": "CUST-002658",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00355",
+    "customer_id": "CUST-005885",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00356",
+    "customer_id": "CUST-001233",
+    "transaction_pattern": "8 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00357",
+    "customer_id": "CUST-007064",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00358",
+    "customer_id": "CUST-006983",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00359",
+    "customer_id": "CUST-006223",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00360",
+    "customer_id": "CUST-003756",
+    "transaction_pattern": "28 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00361",
+    "customer_id": "CUST-004848",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00362",
+    "customer_id": "CUST-000739",
+    "transaction_pattern": "Wire transfer of ~PKR 2 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00363",
+    "customer_id": "CUST-005195",
+    "transaction_pattern": "39 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00364",
+    "customer_id": "CUST-007095",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00365",
+    "customer_id": "CUST-003614",
+    "transaction_pattern": "40 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00366",
+    "customer_id": "CUST-006445",
+    "transaction_pattern": "42 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00367",
+    "customer_id": "CUST-007974",
+    "transaction_pattern": "7 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00368",
+    "customer_id": "CUST-009857",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00369",
+    "customer_id": "CUST-008848",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00370",
+    "customer_id": "CUST-000895",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00371",
+    "customer_id": "CUST-005295",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00372",
+    "customer_id": "CUST-005051",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00373",
+    "customer_id": "CUST-001580",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00374",
+    "customer_id": "CUST-002896",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00375",
+    "customer_id": "CUST-004743",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00376",
+    "customer_id": "CUST-002567",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00377",
+    "customer_id": "CUST-009954",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00378",
+    "customer_id": "CUST-005372",
+    "transaction_pattern": "Wire transfer of ~PKR 4 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00379",
+    "customer_id": "CUST-009799",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00380",
+    "customer_id": "CUST-003476",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00381",
+    "customer_id": "CUST-004651",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00382",
+    "customer_id": "CUST-002187",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00383",
+    "customer_id": "CUST-006384",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00384",
+    "customer_id": "CUST-007040",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00385",
+    "customer_id": "CUST-009938",
+    "transaction_pattern": "31 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00386",
+    "customer_id": "CUST-002353",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00387",
+    "customer_id": "CUST-001884",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00388",
+    "customer_id": "CUST-007992",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00389",
+    "customer_id": "CUST-001976",
+    "transaction_pattern": "43 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00390",
+    "customer_id": "CUST-007671",
+    "transaction_pattern": "41 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00391",
+    "customer_id": "CUST-002097",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00392",
+    "customer_id": "CUST-008329",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00393",
+    "customer_id": "CUST-006188",
+    "transaction_pattern": "Wire transfer of ~PKR 2 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00394",
+    "customer_id": "CUST-003079",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00395",
+    "customer_id": "CUST-003691",
+    "transaction_pattern": "49 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00396",
+    "customer_id": "CUST-008530",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00397",
+    "customer_id": "CUST-002504",
+    "transaction_pattern": "7 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00398",
+    "customer_id": "CUST-008162",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00399",
+    "customer_id": "CUST-009329",
+    "transaction_pattern": "36 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00400",
+    "customer_id": "CUST-005343",
+    "transaction_pattern": "48 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00401",
+    "customer_id": "CUST-006445",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00402",
+    "customer_id": "CUST-002149",
+    "transaction_pattern": "33 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00403",
+    "customer_id": "CUST-009792",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00404",
+    "customer_id": "CUST-009405",
+    "transaction_pattern": "27 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00405",
+    "customer_id": "CUST-001618",
+    "transaction_pattern": "46 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00406",
+    "customer_id": "CUST-009858",
+    "transaction_pattern": "32 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00407",
+    "customer_id": "CUST-006404",
+    "transaction_pattern": "7 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00408",
+    "customer_id": "CUST-000797",
+    "transaction_pattern": "34 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00409",
+    "customer_id": "CUST-001506",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00410",
+    "customer_id": "CUST-009211",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00411",
+    "customer_id": "CUST-001836",
+    "transaction_pattern": "Wire transfer of ~PKR 2 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00412",
+    "customer_id": "CUST-002616",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00413",
+    "customer_id": "CUST-007294",
+    "transaction_pattern": "7 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00414",
+    "customer_id": "CUST-009754",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00415",
+    "customer_id": "CUST-007745",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00416",
+    "customer_id": "CUST-007064",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00417",
+    "customer_id": "CUST-006404",
+    "transaction_pattern": "48 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00418",
+    "customer_id": "CUST-002988",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00419",
+    "customer_id": "CUST-004509",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00420",
+    "customer_id": "CUST-005909",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00421",
+    "customer_id": "CUST-004144",
+    "transaction_pattern": "21 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00422",
+    "customer_id": "CUST-001066",
+    "transaction_pattern": "Wire transfer of ~PKR 2 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00423",
+    "customer_id": "CUST-007927",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00424",
+    "customer_id": "CUST-004116",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00425",
+    "customer_id": "CUST-008356",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00426",
+    "customer_id": "CUST-007306",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00427",
+    "customer_id": "CUST-007226",
+    "transaction_pattern": "23 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00428",
+    "customer_id": "CUST-000770",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00429",
+    "customer_id": "CUST-009839",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00430",
+    "customer_id": "CUST-007825",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00431",
+    "customer_id": "CUST-000847",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00432",
+    "customer_id": "CUST-003906",
+    "transaction_pattern": "44 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00433",
+    "customer_id": "CUST-007236",
+    "transaction_pattern": "5 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00434",
+    "customer_id": "CUST-003282",
+    "transaction_pattern": "40 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00435",
+    "customer_id": "CUST-003051",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00436",
+    "customer_id": "CUST-009258",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00437",
+    "customer_id": "CUST-007437",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00438",
+    "customer_id": "CUST-005950",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00439",
+    "customer_id": "CUST-001227",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00440",
+    "customer_id": "CUST-002499",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00441",
+    "customer_id": "CUST-008021",
+    "transaction_pattern": "Wire transfer of ~PKR 4 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00442",
+    "customer_id": "CUST-002202",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00443",
+    "customer_id": "CUST-008842",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00444",
+    "customer_id": "CUST-008426",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00445",
+    "customer_id": "CUST-000143",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00446",
+    "customer_id": "CUST-009951",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00447",
+    "customer_id": "CUST-007437",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00448",
+    "customer_id": "CUST-007618",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00449",
+    "customer_id": "CUST-005719",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00450",
+    "customer_id": "CUST-005377",
+    "transaction_pattern": "10 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00451",
+    "customer_id": "CUST-003434",
+    "transaction_pattern": "7 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00452",
+    "customer_id": "CUST-002791",
+    "transaction_pattern": "Wire transfer of ~PKR 3 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00453",
+    "customer_id": "CUST-007832",
+    "transaction_pattern": "50 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00454",
+    "customer_id": "CUST-005318",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00455",
+    "customer_id": "CUST-009112",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00456",
+    "customer_id": "CUST-005308",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00457",
+    "customer_id": "CUST-009371",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00458",
+    "customer_id": "CUST-001157",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00459",
+    "customer_id": "CUST-004050",
+    "transaction_pattern": "Wire transfer of ~PKR 4 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00460",
+    "customer_id": "CUST-009778",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00461",
+    "customer_id": "CUST-005081",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00462",
+    "customer_id": "CUST-006931",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00463",
+    "customer_id": "CUST-003117",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00464",
+    "customer_id": "CUST-002988",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00465",
+    "customer_id": "CUST-006216",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00466",
+    "customer_id": "CUST-005652",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00467",
+    "customer_id": "CUST-002261",
+    "transaction_pattern": "22 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00468",
+    "customer_id": "CUST-005918",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00469",
+    "customer_id": "CUST-005358",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00470",
+    "customer_id": "CUST-001300",
+    "transaction_pattern": "8 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00471",
+    "customer_id": "CUST-002478",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00472",
+    "customer_id": "CUST-002260",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00473",
+    "customer_id": "CUST-001749",
+    "transaction_pattern": "9 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00474",
+    "customer_id": "CUST-007270",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00475",
+    "customer_id": "CUST-002108",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00476",
+    "customer_id": "CUST-005493",
+    "transaction_pattern": "38 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00477",
+    "customer_id": "CUST-009661",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00478",
+    "customer_id": "CUST-000721",
+    "transaction_pattern": "8 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00479",
+    "customer_id": "CUST-002603",
+    "transaction_pattern": "6 cash deposits of ~PKR 950,000 within 48 hours.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00480",
+    "customer_id": "CUST-008162",
+    "transaction_pattern": "21 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00481",
+    "customer_id": "CUST-009093",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00482",
+    "customer_id": "CUST-007559",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00483",
+    "customer_id": "CUST-002382",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00484",
+    "customer_id": "CUST-007864",
+    "transaction_pattern": "Wire transfer of ~PKR 1 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00485",
+    "customer_id": "CUST-006225",
+    "transaction_pattern": "Wire transfer of ~PKR 4 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00486",
+    "customer_id": "CUST-005015",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00487",
+    "customer_id": "CUST-007593",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00488",
+    "customer_id": "CUST-004895",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00489",
+    "customer_id": "CUST-001962",
+    "transaction_pattern": "38 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00490",
+    "customer_id": "CUST-005057",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00491",
+    "customer_id": "CUST-004786",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00492",
+    "customer_id": "CUST-002605",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00493",
+    "customer_id": "CUST-007465",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00494",
+    "customer_id": "CUST-005188",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00495",
+    "customer_id": "CUST-007548",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Medium",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00496",
+    "customer_id": "CUST-000931",
+    "transaction_pattern": "Occasional large deposits consistent with business profile.",
+    "screening_hit": "False Positive on similar name (UN Sanctions).",
+    "risk_score": "Low",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00497",
+    "customer_id": "CUST-001410",
+    "transaction_pattern": "Wire transfer of ~PKR 4 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00498",
+    "customer_id": "CUST-008802",
+    "transaction_pattern": "Normal transaction activity.",
+    "screening_hit": "True Positive NACTA match on entity name.",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00499",
+    "customer_id": "CUST-009603",
+    "transaction_pattern": "Wire transfer of ~PKR 5 million to high-risk jurisdiction.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  },
+  {
+    "case_id": "CASE-00500",
+    "customer_id": "CUST-009421",
+    "transaction_pattern": "38 small/medium transactions in a single day.",
+    "screening_hit": "None",
+    "risk_score": "High",
+    "status": "OPEN"
+  }
+]

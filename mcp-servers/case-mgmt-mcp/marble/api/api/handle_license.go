@@ -1,0 +1,127 @@
+package api
+
+import (
+	"net/http"
+	"strings"
+
+	"github.com/cockroachdb/errors"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+
+	"github.com/checkmarble/marble-backend/dto"
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/checkmarble/marble-backend/usecases"
+)
+
+func handleListLicenses(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		usecase := usecasesWithCreds(ctx, uc).NewLicenseUsecase()
+		licenses, err := usecase.ListLicenses(ctx)
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"licenses": pure_utils.Map(licenses, dto.AdaptLicenseDto),
+		})
+	}
+}
+
+func handleCreateLicense(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		var data dto.CreateLicenseBody
+		if err := c.ShouldBindJSON(&data); err != nil {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+
+		usecase := usecasesWithCreds(ctx, uc).NewLicenseUsecase()
+		license, err := usecase.CreateLicense(ctx, dto.AdaptCreateLicenseInput(data))
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"license": dto.AdaptLicenseDto(license),
+		})
+	}
+}
+
+func handleGetLicenseById(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		licenseId := c.Param("license_id")
+
+		usecase := usecasesWithCreds(ctx, uc).NewLicenseUsecase()
+		license, err := usecase.GetLicenseById(ctx, licenseId)
+		if presentError(ctx, c, err) {
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"license": dto.AdaptLicenseDto(license),
+		})
+	}
+}
+
+func handleUpdateLicense(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		id := c.Param("license_id")
+
+		var data dto.UpdateLicenseBody
+		if err := c.ShouldBindJSON(&data); err != nil {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+
+		usecase := usecasesWithCreds(ctx, uc).NewLicenseUsecase()
+		license, err := usecase.UpdateLicense(ctx, dto.AdaptUpdateLicenseInput(id, data))
+		if presentError(ctx, c, err) {
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"license": dto.AdaptLicenseDto(license),
+		})
+	}
+}
+
+func handleValidateLicense(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		licenseKey := c.Param("license_key")
+		deploymentId := c.Query("deployment_id")
+
+		var deploymentIdUUID uuid.UUID
+		if deploymentId != "" {
+			var err error
+			deploymentIdUUID, err = uuid.Parse(deploymentId)
+			if err != nil {
+				presentError(ctx, c, errors.Wrap(models.BadParameterError, "invalid deployment_id format"))
+				return
+			}
+		}
+
+		usecase := uc.NewLicenseUsecase()
+		licenseValidation, err := usecase.ValidateLicense(
+			ctx,
+			strings.TrimPrefix(licenseKey, "/"),
+			deploymentIdUUID,
+		)
+		if presentError(ctx, c, err) {
+			return
+		}
+		c.JSON(http.StatusOK, dto.AdaptLicenseValidationDto(licenseValidation))
+	}
+}
+
+func handleIsSSOEnabled(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		usecase := uc.NewLicenseUsecase()
+		c.JSON(http.StatusOK, gin.H{
+			"is_sso_enabled": usecase.HasSsoEnabled(),
+		})
+	}
+}

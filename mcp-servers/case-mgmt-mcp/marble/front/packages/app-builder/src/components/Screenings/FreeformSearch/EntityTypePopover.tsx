@@ -1,0 +1,312 @@
+import { SEARCH_ENTITIES, type SearchableSchema } from '@app-builder/constants/screening-entity';
+import { tryCatch } from '@app-builder/utils/tryCatch';
+import CountryFlag from 'country-flag-emojis';
+import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import * as R from 'remeda';
+import {
+  Button,
+  cn,
+  formatCountryName,
+  Input,
+  Popover,
+  SelectCountry,
+  SelectCountryValue,
+  Tag,
+} from 'ui-design-system';
+import { Icon } from 'ui-icons';
+import { screeningsI18n } from '../screenings-i18n';
+import { setAdditionalFields } from '../set-additional-fields';
+import { useEntitySearchForm, useEntitySearchFormStore } from './entity-search-form-context';
+
+export interface EntityTypePopoverProps {
+  disabled: boolean;
+}
+
+export const EntityTypePopover = ({ disabled }: EntityTypePopoverProps) => {
+  const { t } = useTranslation(screeningsI18n);
+  const [open, setOpen] = useState(false);
+  const form = useEntitySearchForm();
+  const value = useEntitySearchFormStore((state) => state.values.entityType);
+  const [additionalFieldsOpenRequest, setAdditionalFieldsOpenRequest] = useState(0);
+
+  const handleSelect = (schema: SearchableSchema) => {
+    form.setFieldValue('entityType', schema);
+    form.setFieldValue('fields', setAdditionalFields(SEARCH_ENTITIES[schema].fields, form.state.values.fields));
+    setOpen(false);
+    if (schema !== 'Thing') {
+      setAdditionalFieldsOpenRequest((count) => count + 1);
+    }
+  };
+
+  const hasSelection = value && value !== 'Thing';
+  const schemas = R.keys(SEARCH_ENTITIES);
+
+  return (
+    <div className="flex items-center gap-sm relative">
+      <Popover.Root open={open} onOpenChange={setOpen}>
+        <Popover.Trigger asChild disabled={disabled}>
+          <div className="flex items-center gap-sm flex-wrap">
+            <Tag
+              color={disabled ? 'grey' : 'purple'}
+              className="cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span className="font-medium">
+                {hasSelection
+                  ? t(`screenings:refine_modal.schema.${value.toLowerCase()}`)
+                  : t('screenings:freeform_search.all_entities')}
+              </span>
+            </Tag>
+          </div>
+        </Popover.Trigger>
+        <Popover.Content
+          className="bg-surface-card border-grey-border z-50 flex w-[400px] flex-col rounded-lg border shadow-lg"
+          sideOffset={4}
+          align="start"
+        >
+          {/* Entity type list */}
+          <div className="max-h-[300px] overflow-y-auto p-sm">
+            {schemas.map((schema) => {
+              const schemaKey = schema.toLowerCase();
+              const fieldForSchema = SEARCH_ENTITIES[schema].fields;
+              const isSelected = value === schema;
+
+              return (
+                <button
+                  key={schema}
+                  type="button"
+                  onClick={() => handleSelect(schema)}
+                  className={cn(
+                    'text-s flex w-full items-center gap-sm rounded px-md py-xs text-left',
+                    isSelected ? 'bg-purple-background-light text-purple-primary' : 'hover:bg-grey-background-light',
+                  )}
+                >
+                  <div className="flex flex-1 flex-col">
+                    <span className="font-medium">{t(`screenings:refine_modal.schema.${schemaKey}`)}</span>
+                    <span className="text-grey-placeholder text-xs">
+                      {t('screenings:refine_modal.search_by')}{' '}
+                      {fieldForSchema.map((f) => t(`screenings:entity.property.${f}`)).join(', ')}
+                    </span>
+                  </div>
+                  {isSelected && <Icon icon="tick" className="text-purple-primary size-4" />}
+                </button>
+              );
+            })}
+          </div>
+        </Popover.Content>
+      </Popover.Root>
+      {hasSelection && <AdditionalEntityTypePopover disabled={disabled} openRequest={additionalFieldsOpenRequest} />}
+    </div>
+  );
+};
+
+function AdditionalEntityTypePopover({ disabled, openRequest }: { disabled: boolean; openRequest: number }) {
+  const [open, setOpen] = useState(false);
+  const form = useEntitySearchForm();
+  const entityType = useEntitySearchFormStore((state) => state.values.entityType);
+  const entityTypeFields =
+    entityType && entityType in SEARCH_ENTITIES
+      ? SEARCH_ENTITIES[entityType].fields.filter((f: string) => f !== 'name')
+      : [];
+  const { t, i18n } = useTranslation(screeningsI18n);
+  const fields = useEntitySearchFormStore((state) => state.values.fields);
+  const lastProcessedOpenRequest = useRef(0);
+  const [localFields, setLocalFields] = useState<Record<string, string>>({});
+  const [birthDateError, setBirthDateError] = useState<string | undefined>(undefined);
+
+  const syncLocalFromForm = () => {
+    const next: Record<string, string> = {};
+    for (const fieldName of entityTypeFields) {
+      next[fieldName] = fields[fieldName] ?? '';
+    }
+    setLocalFields(next);
+    setBirthDateError(undefined);
+  };
+
+  const handleOpenChange = (isOpen: boolean) => {
+    if (disabled) return;
+    if (isOpen) {
+      syncLocalFromForm();
+    } else {
+      setBirthDateError(undefined);
+    }
+    setOpen(isOpen);
+  };
+
+  useEffect(() => {
+    if (openRequest <= lastProcessedOpenRequest.current || disabled) return;
+    lastProcessedOpenRequest.current = openRequest;
+    syncLocalFromForm();
+    setOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openRequest, disabled]);
+
+  const handleApply = () => {
+    const birthDateValue = localFields['birthDate'] ?? '';
+    if (entityTypeFields.includes('birthDate') && birthDateValue) {
+      if (!/^\d{4}(-\d{2}-\d{2})?$/.test(birthDateValue)) {
+        setBirthDateError(t('screenings:freeform_search.birth_date_invalid'));
+        return;
+      }
+    }
+    setBirthDateError(undefined);
+    form.setFieldValue('fields', { ...form.state.values.fields, ...localFields });
+    setOpen(false);
+  };
+
+  const handleCancel = () => {
+    syncLocalFromForm();
+    setOpen(false);
+  };
+
+  const hasSelection = entityType && entityType !== 'Thing';
+
+  const filterTags = hasSelection
+    ? SEARCH_ENTITIES[entityType].fields
+        .filter((f: string) => f !== 'name')
+        .map((fieldName: string) => {
+          const fieldValue = fields[fieldName];
+          if (!fieldValue) return null;
+          const label = getFilterTagLabel(fieldName, fieldValue, t);
+          if (!label) return null;
+          return (
+            <Tag
+              key={fieldName}
+              color={disabled ? 'grey' : 'purple'}
+              className="cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span className="font-medium">{label}</span>
+            </Tag>
+          );
+        })
+        .filter(Boolean)
+    : null;
+
+  return (
+    <Popover.Root open={open} onOpenChange={handleOpenChange}>
+      <Popover.Trigger asChild disabled={disabled}>
+        <button
+          type="button"
+          className="flex items-center gap-sm flex-wrap"
+          aria-label={t('screenings:freeform_search.advanced_filters')}
+        >
+          {filterTags}
+          <Icon
+            icon="plus"
+            className={cn(
+              'size-4 text-purple-primary cursor-pointer ',
+              disabled && 'text-grey-placeholder opacity-50 cursor-not-allowed ',
+            )}
+          />
+        </button>
+      </Popover.Trigger>
+      <Popover.Content
+        className="bg-surface-card border-grey-border z-50 flex w-[400px] flex-col rounded-lg border shadow-lg"
+        sideOffset={8}
+        align="start"
+      >
+        <div className="mt-sm grid grid-cols-2 gap-sm lg:grid-cols-1 p-sm">
+          {entityTypeFields.map((fieldName, index) => {
+            const isLastOdd = index === entityTypeFields.length - 1 && entityTypeFields.length % 2 === 1;
+            const localValue = localFields[fieldName] ?? '';
+
+            if (fieldName === 'country' || fieldName === 'nationality') {
+              return (
+                <SelectCountry
+                  key={fieldName}
+                  name={`fields.${fieldName}`}
+                  rootClassName={cn('w-full', isLastOdd && 'col-span-2 lg:col-span-1')}
+                  className="w-full"
+                  value={countryFormStringToValue(localValue, i18n.language)}
+                  onValueChange={(v) =>
+                    setLocalFields((prev) => ({ ...prev, [fieldName]: countryValueToFormString(v) }))
+                  }
+                  placeholder={t(`screenings:entity.property.${fieldName}`)}
+                />
+              );
+            }
+            if (fieldName === 'birthDate') {
+              return (
+                <div key={fieldName} className={cn('flex flex-col gap-xs', isLastOdd && 'col-span-2 lg:col-span-1')}>
+                  <Input
+                    name={`fields.${fieldName}`}
+                    value={localValue}
+                    onChange={(e) => setLocalFields((prev) => ({ ...prev, [fieldName]: e.target.value }))}
+                    className="w-full"
+                    placeholder={t('screenings:entity.property.birthDate.format')}
+                  />
+                  {birthDateError && <span className="text-red-primary text-xs">{birthDateError}</span>}
+                </div>
+              );
+            }
+            return (
+              <Input
+                key={fieldName}
+                name={`fields.${fieldName}`}
+                value={localValue}
+                onChange={(e) => setLocalFields((prev) => ({ ...prev, [fieldName]: e.target.value }))}
+                className={cn('w-full', isLastOdd && 'col-span-2 lg:col-span-1')}
+                placeholder={t(`screenings:entity.property.${fieldName}`)}
+              />
+            );
+          })}
+        </div>
+        <Popover.Footer>
+          {/* Actions */}
+          <Button type="button" variant="secondary" size="large" onClick={handleCancel}>
+            {t('common:cancel')}
+          </Button>
+          <Button type="button" variant="primary" size="large" onClick={handleApply}>
+            {t('screenings:freeform_search.apply')}
+          </Button>
+        </Popover.Footer>
+      </Popover.Content>
+    </Popover.Root>
+  );
+}
+
+function getFilterTagLabel(
+  fieldName: string,
+  value: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string | null {
+  switch (fieldName) {
+    case 'country':
+    case 'nationality':
+    case 'birthDate':
+      return value;
+    case 'passportNumber':
+      return t('screenings:freeform_search.tag.passport', { value });
+    case 'address': {
+      const truncated = value.length > 15 ? `${value.slice(0, 15)}…` : value;
+      return t('screenings:freeform_search.tag.address', { value: truncated });
+    }
+    case 'registrationNumber':
+      return t('screenings:freeform_search.tag.registration', { value });
+    default:
+      return null;
+  }
+}
+
+function countryFormStringToValue(raw: string, language: string): SelectCountryValue | null {
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  const cc = trimmed.length <= 3 ? trimmed.toUpperCase() : trimmed;
+  const res = tryCatch(() => CountryFlag.byCountryCode(cc));
+  if (res.ok) {
+    const c = res.value;
+    return {
+      isoAlpha2: c.isoAlpha2,
+      isoAlpha3: c.isoAlpha3,
+      name: formatCountryName(c.isoAlpha2, language) ?? c.nameEnglish,
+      isManual: false,
+    };
+  }
+  return { isoAlpha2: '', isoAlpha3: '', name: trimmed, isManual: true };
+}
+
+function countryValueToFormString(v: SelectCountryValue | null): string {
+  if (!v) return '';
+  if (v.isManual) return v.name;
+  return v.isoAlpha3;
+}

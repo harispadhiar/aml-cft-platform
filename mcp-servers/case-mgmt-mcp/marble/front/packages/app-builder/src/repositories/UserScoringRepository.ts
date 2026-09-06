@@ -1,0 +1,109 @@
+import { type MarbleCoreApi } from '@app-builder/infra/marblecore-api';
+import { adaptNodeDto, isNotFoundHttpError } from '@app-builder/models';
+import { adaptScenarioPublicationStatus, ScenarioPublicationStatus } from '@app-builder/models/scenario/publication';
+import {
+  adaptScoringRuleset,
+  adaptScoringRulesetWithRules,
+  adaptScoringSettings,
+  ScoringRuleset,
+  ScoringRulesetWithRules,
+  ScoringSettings,
+  UpdateScoringRuleset,
+} from '@app-builder/models/scoring';
+import { ScoringScore } from 'marble-api';
+
+export type ScoreDistributionItem = { risk_level: number; count: number };
+
+export interface UserScoringRepository {
+  getSettings(): Promise<ScoringSettings | null>;
+  listRulesets(): Promise<ScoringRuleset[]>;
+  listRulesetVersions(recordType: string): Promise<ScoringRuleset[]>;
+  getRulesetWithRules(recordType: string, version?: string | number): Promise<ScoringRulesetWithRules>;
+  updateScoringSettings(args: { maxRiskLevel: number }): Promise<ScoringSettings>;
+  updateScoringRuleset(recordType: string, payload: UpdateScoringRuleset): Promise<ScoringRulesetWithRules>;
+  getRulesetPreparationStatus(recordType: string): Promise<ScenarioPublicationStatus>;
+  prepareScoringRuleset(recordType: string): Promise<void>;
+  commitScoringRuleset(recordType: string): Promise<ScoringRuleset>;
+  getScoreLatest(recordType: string, recordId: string): Promise<ScoringScore | null>;
+  getScoreLatestWithEvaluation(recordType: string, recordId: string): Promise<ScoringScore | null>;
+  getScoreDistribution(recordType: string): Promise<ScoreDistributionItem[]>;
+}
+
+export function makeGetUserScoringRepository() {
+  return (marbleCoreApiClient: MarbleCoreApi): UserScoringRepository => ({
+    async getSettings() {
+      try {
+        return adaptScoringSettings(await marbleCoreApiClient.getScoringSettings());
+      } catch (err) {
+        if (isNotFoundHttpError(err)) {
+          return null;
+        }
+        throw err;
+      }
+    },
+    async listRulesets() {
+      try {
+        const rulesets = await marbleCoreApiClient.listScoringRulesets();
+        return rulesets.map(adaptScoringRuleset);
+      } catch (err) {
+        if (isNotFoundHttpError(err)) {
+          return [];
+        }
+        throw err;
+      }
+    },
+    async listRulesetVersions(recordType) {
+      const versions = await marbleCoreApiClient.listScoringRulesetVersions(recordType);
+      return versions.map(adaptScoringRuleset);
+    },
+    async getRulesetWithRules(recordType, version) {
+      return adaptScoringRulesetWithRules(await marbleCoreApiClient.getScoringRuleset(recordType, { version }));
+    },
+    async updateScoringSettings({ maxRiskLevel }) {
+      return adaptScoringSettings(await marbleCoreApiClient.updateScoringSettings({ max_risk_level: maxRiskLevel }));
+    },
+    async updateScoringRuleset(recordType, payload) {
+      return adaptScoringRulesetWithRules(
+        await marbleCoreApiClient.updateScoringRuleset(recordType, '', {
+          name: payload.name,
+          description: payload.description,
+          thresholds: payload.thresholds,
+          cooldown_seconds: payload.cooldownSeconds,
+          scoring_interval_seconds: payload.scoringIntervalSeconds,
+          rules: payload.rules.map(({ stableId, name, description, riskType, ast }) => ({
+            stable_id: stableId ?? '',
+            name,
+            description,
+            risk_type: riskType,
+            ast: adaptNodeDto(ast),
+          })),
+        }),
+      );
+    },
+    async getRulesetPreparationStatus(recordType) {
+      return adaptScenarioPublicationStatus(await marbleCoreApiClient.getScoringRulesetPreparationStatus(recordType));
+    },
+    async prepareScoringRuleset(recordType) {
+      await marbleCoreApiClient.prepareScoringDraft(recordType);
+    },
+    async commitScoringRuleset(recordType) {
+      return adaptScoringRuleset(await marbleCoreApiClient.commitScoringRuleset(recordType));
+    },
+    async getScoreLatest(recordType, recordId) {
+      return marbleCoreApiClient.getScoreLatest(recordType, recordId, { includeEvaluation: false });
+    },
+    async getScoreLatestWithEvaluation(recordType, recordId) {
+      try {
+        return await marbleCoreApiClient.getScoreLatest(recordType, recordId, { includeEvaluation: true });
+      } catch (err) {
+        if (isNotFoundHttpError(err)) {
+          return null;
+        }
+        throw err;
+      }
+    },
+    async getScoreDistribution(recordType) {
+      return marbleCoreApiClient.getScoreDistribution(recordType);
+    },
+  });
+}

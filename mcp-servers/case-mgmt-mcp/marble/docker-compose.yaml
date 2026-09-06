@@ -1,0 +1,195 @@
+name: marble
+x-backend-image-version: &backend-image-version
+  image: europe-west1-docker.pkg.dev/marble-infra/marble/marble-backend:v1.8.0
+x-frontend-image-version: &frontend-image-version
+  image: europe-west1-docker.pkg.dev/marble-infra/marble/marble-frontend:v1.8.0
+x-shared-environment: &shared-env
+  ENV: ${ENV}
+  SENTRY_DSN: ${SENTRY_DSN}
+  DISABLE_SEGMENT: ${DISABLE_SEGMENT:-false}
+x-backend-environment: &backend-env
+  LICENSE_KEY: ${LICENSE_KEY}
+  MARBLE_APP_URL: ${MARBLE_APP_URL}
+  PG_HOSTNAME: ${PG_HOSTNAME}
+  PG_PORT: ${PG_PORT}
+  PG_USER: ${PG_USER}
+  PG_PASSWORD: ${PG_PASSWORD}
+  PG_SSL_MODE: ${PG_SSL_MODE}
+  PG_CONNECTION_STRING: ${PG_CONNECTION_STRING}
+  AUTHENTICATION_JWT_SIGNING_KEY: ${AUTHENTICATION_JWT_SIGNING_KEY}
+  INGESTION_BUCKET_URL: ${INGESTION_BUCKET_URL}
+  CASE_MANAGER_BUCKET_URL: ${CASE_MANAGER_BUCKET_URL}
+  ANALYTICS_BUCKET_URL: ${ANALYTICS_BUCKET_URL}
+  GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT}
+  GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS}
+  FIREBASE_API_KEY: ${FIREBASE_API_KEY}
+  FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID}
+  REQUEST_LOGGING_LEVEL: ${REQUEST_LOGGING_LEVEL}
+  LOGGING_FORMAT: ${LOGGING_FORMAT}
+  CREATE_ORG_NAME: ${CREATE_ORG_NAME}
+  CREATE_ORG_ADMIN_EMAIL: ${CREATE_ORG_ADMIN_EMAIL}
+  OPENSANCTIONS_API_HOST: ${OPENSANCTIONS_API_HOST}
+  OPENSANCTIONS_AUTH_METHOD: ${OPENSANCTIONS_AUTH_METHOD}
+  OPENSANCTIONS_API_KEY: ${OPENSANCTIONS_API_KEY}
+  OFFLOADING_ENABLED: ${OFFLOADING_ENABLED}
+  OFFLOADING_BUCKET_URL: ${OFFLOADING_BUCKET_URL}
+  OFFLOADING_JOB_INTERVAL: ${OFFLOADING_JOB_INTERVAL}
+  OFFLOADING_BEFORE: ${OFFLOADING_BEFORE}
+  OFFLOADING_BATCH_SIZE: ${OFFLOADING_BATCH_SIZE}
+  OFFLOADING_SAVE_POINTS: ${OFFLOADING_SAVE_POINTS}
+  OFFLOADING_WRITES_PER_SEC: ${OFFLOADING_WRITES_PER_SEC}
+  REDIS_HOST: "redis:6379"
+x-frontend-environment: &frontend-env
+  SESSION_SECRET: ${SESSION_SECRET}
+  SESSION_MAX_AGE: ${SESSION_MAX_AGE}
+  MARBLE_API_URL: ${MARBLE_API_URL}
+services:
+  # NB: the docker compose file includes a postgres image for the sake of completeness, but we strongly
+  # suggest using a production-grade database to run Marble in a production environment
+  db:
+    container_name: marble-postgres
+    image: postgis/postgis:16-3.5-alpine
+    restart: always
+    platform: linux/amd64
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-changeme}
+      POSTGRES_DB: marble
+      PGDATA: /data/postgres
+      PGPORT: ${PG_PORT:-5432}
+    # ports:
+    #   - ${PG_PORT:-5432}:${PG_PORT:-5432}
+    volumes:
+      - marble-db:/data/postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 1s
+      retries: 5
+  migrations:
+    !!merge <<: *backend-image-version
+    container_name: marble-db-migrations
+    platform: linux/amd64
+    restart: on-failure
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["./app", "--migrations"]
+    environment:
+      !!merge <<: [*shared-env, *backend-env]
+  api: &backend
+    !!merge <<: *backend-image-version
+    container_name: marble-api
+    platform: linux/amd64
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+      motiva:
+        condition: service_started
+    entrypoint: ["./app", "--server"]
+    ports:
+      - ${HOST_API_PORT:-8080}:8080
+    volumes:
+      # adapt this line so that the left-hand side is the address of a folder containing:
+      # - the service account key
+      # - optionally the JWT signing RSA key in .pem format
+      - ./local_shared:/shared
+    environment:
+      !!merge <<: [*shared-env, *backend-env]
+  cron:
+    !!merge <<: *backend
+    container_name: marble-api-cron
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    entrypoint: ["./app", "--worker"]
+    healthcheck:
+      disable: true
+    ports: []
+  app:
+    !!merge <<: *frontend-image-version
+    container_name: marble-app
+    platform: linux/amd64
+    restart: always
+    depends_on:
+      api:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - /nodejs/bin/node
+        - --input-type=module
+        - -e
+        - "process.exit((await fetch('http://localhost:8080/healthcheck')).status == 200 ? 0 : 1)"
+      interval: 10s
+      timeout: 60s
+      retries: 1
+      start_period: 30s
+    ports:
+      - ${HOST_APP_PORT:-3000}:8080
+    environment:
+      !!merge <<: [*shared-env, *frontend-env]
+  # NB: the docker compose file includes an elasticsearch image for the sake of completeness, but we strongly
+  # suggest using a production-grade instance to run Marble in a production environment
+  elasticsearch:
+    container_name: marble-es
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.3.1
+    # ports:
+    #   - ${ES_PORT:-9200}:${ES_PORT:-9200}
+    environment:
+      - node.name=es
+      - cluster.name=marble-es
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - marble-es:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+  yente:
+    container_name: yente
+    image: ghcr.io/opensanctions/yente:5.4.0
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    command: ["yente", "reindex"]
+    environment:
+      YENTE_INDEX_TYPE: elasticsearch
+      YENTE_INDEX_URL: ${ELASTICSEARCH_HOST:-http://marble-es:9200}
+  motiva:
+    container_name: marble-motiva
+    image: ghcr.io/apognu/motiva:v0.10.1
+    platform: linux/x86_64
+    # ports:
+    #   - 8000:8000
+    depends_on:
+      yente:
+        condition: service_completed_successfully
+    environment:
+      INDEX_URL: ${ELASTICSEARCH_HOST:-http://marble-es:9200}
+      ENV: production
+  redis:
+    container_name: redis
+    image: redis:8-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 1s
+      retries: 5
+volumes:
+  marble-db:
+    driver: local
+  marble-es:
+    driver: local

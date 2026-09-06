@@ -1,0 +1,160 @@
+package decision_workflows
+
+import (
+	"context"
+	"time"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/repositories"
+	"github.com/checkmarble/marble-backend/usecases/evaluate_scenario"
+	"github.com/checkmarble/marble-backend/usecases/executor_factory"
+	"github.com/checkmarble/marble-backend/usecases/payload_parser"
+	"github.com/google/uuid"
+	"github.com/pkg/errors"
+	"github.com/riverqueue/river"
+)
+
+type decisionWorkflowsUsecase interface {
+	ProcessDecisionWorkflows(
+		ctx context.Context,
+		tx repositories.Transaction,
+		rules []models.Workflow,
+		scenario models.Scenario,
+		decision models.DecisionWithRuleExecutions,
+		evalParams evaluate_scenario.ScenarioEvaluationParameters,
+	) (models.WorkflowExecution, error)
+}
+
+type decisionWorkflowsWorkerRepository interface {
+	DecisionWithRuleExecutionsById(
+		ctx context.Context,
+		exec repositories.Executor,
+		decisionId string,
+	) (models.DecisionWithRuleExecutions, error)
+	GetScenarioById(ctx context.Context, exec repositories.Executor, scenarioId string, screeningProvider models.ScreeningProvider) (models.Scenario, error)
+	ListWorkflowsForScenario(ctx context.Context, exec repositories.Executor, scenarioId uuid.UUID) ([]models.Workflow, error)
+}
+
+type dataModelRepository interface {
+	GetDataModel(ctx context.Context, exec repositories.Executor, organizationID uuid.UUID,
+		fetchEnumValues bool, useCache bool) (models.DataModel, error)
+}
+
+type ingestedDataReadRepository interface {
+	QueryIngestedObject(
+		ctx context.Context,
+		exec repositories.Executor,
+		table models.Table,
+		objectId string,
+		metadataFields ...string,
+	) ([]models.DataModelObject, error)
+}
+
+type decisionReader interface {
+	GetDecision(ctx context.Context, decisionId string) (models.DecisionWithRuleExecutions, error)
+}
+
+type DecisionWorkflowsWorker struct {
+	river.WorkerDefaults[models.DecisionWorkflowArgs]
+
+	executorFactory                   executor_factory.ExecutorFactory
+	transactionFactory                executor_factory.TransactionFactory
+	decisionWorkflowsUsecase          decisionWorkflowsUsecase
+	dataModelRepository               dataModelRepository
+	ingestedDataReadRepository        ingestedDataReadRepository
+	decisionWorkflowsWorkerRepository decisionWorkflowsWorkerRepository
+	decisionReader                    decisionReader
+}
+
+func NewDecisionWorkflowsWorker(
+	executorFactory executor_factory.ExecutorFactory,
+	transactionFactory executor_factory.TransactionFactory,
+	decisionWorkflowsUsecase decisionWorkflowsUsecase,
+	dataModelRepository dataModelRepository,
+	ingestedDataReadRepository ingestedDataReadRepository,
+	decisionWorkflowsWorkerRepository decisionWorkflowsWorkerRepository,
+	decisionReader decisionReader,
+) *DecisionWorkflowsWorker {
+	return &DecisionWorkflowsWorker{
+		executorFactory:                   executorFactory,
+		transactionFactory:                transactionFactory,
+		decisionWorkflowsUsecase:          decisionWorkflowsUsecase,
+		dataModelRepository:               dataModelRepository,
+		ingestedDataReadRepository:        ingestedDataReadRepository,
+		decisionWorkflowsWorkerRepository: decisionWorkflowsWorkerRepository,
+		decisionReader:                    decisionReader,
+	}
+}
+
+func (w *DecisionWorkflowsWorker) Timeout(job *river.Job[models.DecisionWorkflowArgs]) time.Duration {
+	return 10 * time.Second
+}
+
+func (w *DecisionWorkflowsWorker) Work(ctx context.Context, job *river.Job[models.DecisionWorkflowArgs]) error {
+	exec := w.executorFactory.NewExecutor()
+
+	// Fetch/Build data for decision workflows
+	decision, err := w.decisionReader.GetDecision(ctx, job.Args.DecisionId)
+	if err != nil {
+		return errors.Wrap(err, "error getting decision with rule executions")
+	}
+
+	scenario, err := w.decisionWorkflowsWorkerRepository.GetScenarioById(ctx, exec, decision.ScenarioId.String(), "")
+	if err != nil {
+		return errors.Wrap(err, "error getting scenario")
+	}
+
+	dataModel, err := w.dataModelRepository.GetDataModel(
+		ctx,
+		exec,
+		decision.OrganizationId,
+		false,
+		true,
+	)
+	if err != nil {
+		return errors.Wrap(err, "error getting data model")
+	}
+
+	clientObject, err := payload_parser.TypedClientObject(ctx, dataModel, decision.ClientObject)
+	if err != nil {
+		return errors.Wrap(err, "could not type client object from decision payload")
+	}
+
+	evalParams := evaluate_scenario.ScenarioEvaluationParameters{
+		Scenario:     scenario,
+		ClientObject: clientObject,
+		DataModel:    dataModel,
+	}
+
+	scenarioUUID, err := uuid.Parse(scenario.Id)
+	if err != nil {
+		return errors.Wrap(err, "invalid scenario ID: not a valid UUID")
+	}
+	workflowRules, err := w.decisionWorkflowsWorkerRepository.ListWorkflowsForScenario(ctx, exec, scenarioUUID)
+	if err != nil {
+		return errors.Wrap(err, "error getting workflows for scenario")
+	}
+
+	// Create transaction just for ProcessDecisionWorkflows because all functions in there expect a transaction
+	_, err = executor_factory.TransactionReturnValue(ctx, w.transactionFactory, func(
+		tx repositories.Transaction,
+	) (models.WorkflowExecution, error) {
+		workflowExecutions, err := w.decisionWorkflowsUsecase.ProcessDecisionWorkflows(
+			ctx,
+			tx,
+			workflowRules,
+			scenario,
+			decision,
+			evalParams,
+		)
+		if err != nil {
+			return models.WorkflowExecution{}, errors.Wrap(err, "error processing decision workflows")
+		}
+		return workflowExecutions, nil
+	})
+	if err != nil {
+		return errors.Wrap(err, "error processing decision workflows")
+	}
+
+	return nil
+}

@@ -1,0 +1,712 @@
+package cmd
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"maps"
+	"net/http"
+	"net/url"
+	"os"
+	"os/signal"
+	"reflect"
+	"slices"
+	"syscall"
+	"time"
+
+	"github.com/checkmarble/marble-backend/api"
+	"github.com/checkmarble/marble-backend/infra"
+	"github.com/checkmarble/marble-backend/jobs"
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/repositories"
+	"github.com/checkmarble/marble-backend/usecases"
+	"github.com/checkmarble/marble-backend/usecases/continuous_screening"
+	"github.com/checkmarble/marble-backend/usecases/executor_factory"
+	"github.com/checkmarble/marble-backend/usecases/worker_jobs"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/cockroachdb/errors"
+	"github.com/getsentry/sentry-go"
+	"github.com/jackc/pgx/v5"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivertype"
+)
+
+func RunTaskQueue(apiVersion string, only, onlyArgs string) error {
+	appName := fmt.Sprintf("marble-worker %s", apiVersion)
+
+	// This is where we read the environment variables and set up the configuration for the application.
+	pgConfig := infra.PgConfig{
+		ConnectionString:   utils.GetEnv("PG_CONNECTION_STRING", ""),
+		Database:           utils.GetEnv("PG_DATABASE", "marble"),
+		Hostname:           utils.GetEnv("PG_HOSTNAME", ""),
+		Password:           utils.GetEnv("PG_PASSWORD", ""),
+		Port:               utils.GetEnv("PG_PORT", "5432"),
+		User:               utils.GetEnv("PG_USER", ""),
+		MaxPoolConnections: utils.GetEnv("PG_MAX_POOL_SIZE", infra.DEFAULT_MAX_CONNECTIONS),
+		ClientDbConfigFile: utils.GetEnv("CLIENT_DB_CONFIG_FILE", ""),
+		SslMode:            utils.GetEnv("PG_SSL_MODE", "prefer"),
+		ImpersonateRole:    utils.GetEnv("PG_IMPERSONATE_ROLE", ""),
+	}
+	if pgConfig.ConnectionString != "" {
+		if u, err := url.Parse(pgConfig.ConnectionString); err != nil || !u.IsAbs() {
+			switch err {
+			case nil:
+				return errors.New("invalid database connection string")
+			default:
+				return errors.Wrap(err, "invalid database connection string")
+			}
+		}
+	}
+
+	licenseConfig := models.LicenseConfiguration{
+		LicenseKey:             utils.GetEnv("LICENSE_KEY", ""),
+		KillIfReadLicenseError: utils.GetEnv("KILL_IF_READ_LICENSE_ERROR", false),
+	}
+
+	workerConfig := WorkerConfig{
+		appName:                      "marble-backend-worker",
+		env:                          utils.GetEnv("ENV", "production"),
+		failedWebhooksRetryPageSize:  utils.GetEnv("FAILED_WEBHOOKS_RETRY_PAGE_SIZE", 1000),
+		ingestionBucketUrl:           utils.GetRequiredEnv[string]("INGESTION_BUCKET_URL"),
+		loggingFormat:                utils.GetEnv("LOGGING_FORMAT", "text"),
+		sentryDsn:                    utils.GetEnv("SENTRY_DSN", ""),
+		cloudRunProbePort:            utils.GetEnv("CLOUD_RUN_PROBE_PORT", ""),
+		caseReviewTimeout:            utils.GetEnvDuration("AI_CASE_REVIEW_TIMEOUT", 5*time.Minute),
+		caseManagerBucket:            utils.GetEnv("CASE_MANAGER_BUCKET_URL", ""),
+		analyticsBucket:              utils.GetEnv("ANALYTICS_BUCKET_URL", ""),
+		telemetryExporter:            utils.GetEnv("TRACING_EXPORTER", "otlp"),
+		otelSamplingRates:            utils.GetEnv("TRACING_SAMPLING_RATES", ""),
+		enablePrometheus:             utils.GetEnv("ENABLE_PROMETHEUS", false),
+		enableTracing:                utils.GetEnv("ENABLE_TRACING", false),
+		ScanDatasetUpdatesInterval:   utils.GetEnvDuration("SCAN_DATASET_UPDATES_INTERVAL", 4*time.Hour),
+		CreateFullDatasetInterval:    utils.GetEnvDuration("CREATE_FULL_DATASET_INTERVAL", 8*time.Hour),
+		continuousScreeningBucketUrl: utils.GetEnv("CONTINUOUS_SCREENING_BUCKET_URL", ""),
+	}
+
+	logger := utils.NewLogger(workerConfig.loggingFormat)
+	ctx := utils.StoreLoggerInContext(context.Background(), logger)
+
+	openSanctionsConfig := infra.InitializeScreening(
+		ctx,
+		http.DefaultClient,
+		utils.GetEnv("SCREENING_OPENSANCTIONS_API_HOST", ""),
+		utils.GetEnv("SCREENING_OPENSANCTIONS_AUTH_METHOD", ""),
+		utils.GetEnv("SCREENING_OPENSANCTIONS_API_KEY", ""),
+	)
+	if scope := utils.GetEnv("SCREENING_OPENSANCTIONS_SCOPE", ""); scope != "" {
+		openSanctionsConfig.WithScope(scope)
+	}
+	if host := utils.GetEnv("SCREENING_LEXISNEXIS_API_HOST", ""); host != "" {
+		openSanctionsConfig.
+			WithLexisNexisHost(host, utils.GetEnv("SCREENING_LEXISNEXIS_TOKEN", "")).
+			WithLexisNexisScope(utils.GetEnv("SCREENING_LEXISNEXIS_SCOPE", ""))
+	}
+	if apiUrl := utils.GetEnv("NAME_RECOGNITION_API_URL", ""); apiUrl != "" {
+		openSanctionsConfig.WithNameRecognition(apiUrl,
+			utils.GetEnv("NAME_RECOGNITION_API_KEY", ""))
+	}
+
+	gcpConfig, ok := infra.NewGcpConfig(ctx, utils.GetEnv("GOOGLE_CLOUD_PROJECT", ""), false)
+	if !ok {
+		logger.InfoContext(ctx, "could not initialize GCP config")
+	}
+	isMarbleSaasProject := infra.IsMarbleSaasProject()
+
+	offloadingConfig := infra.OffloadingConfig{
+		Enabled:         utils.GetEnv("OFFLOADING_ENABLED", false),
+		BucketUrl:       utils.GetEnv("OFFLOADING_BUCKET_URL", ""),
+		JobInterval:     utils.GetEnvDuration("OFFLOADING_JOB_INTERVAL", 30*time.Minute),
+		OffloadBefore:   utils.GetEnvDuration("OFFLOADING_BEFORE", 7*24*time.Hour),
+		BatchSize:       utils.GetEnv("OFFLOADING_BATCH_SIZE", 1000),
+		SavepointEvery:  utils.GetEnv("OFFLOADING_SAVE_POINTS", 100),
+		WritesPerSecond: utils.GetEnv("OFFLOADING_WRITES_PER_SEC", 200),
+	}
+
+	analyticsConfig, err := infra.InitAnalyticsConfig(pgConfig, workerConfig.analyticsBucket)
+	if err != nil {
+		return err
+	}
+
+	offloadingConfig.ValidateAndFix(ctx)
+
+	metricCollectionConfig := infra.MetricCollectionConfig{
+		Disabled:         utils.GetEnv("DISABLE_TELEMETRY", false),
+		JobInterval:      utils.GetEnvDuration("METRICS_COLLECTION_JOB_INTERVAL", 1*time.Hour),
+		FallbackDuration: utils.GetEnvDuration("METRICS_FALLBACK_DURATION", 30*24*time.Hour),
+	}
+	metricCollectionConfig.Configure(licenseConfig)
+
+	aiAgentConfig := infra.AIAgentConfiguration{
+		MainAgentProviderType: infra.AIAgentProviderTypeFromString(
+			utils.GetEnv("AI_AGENT_MAIN_AGENT_PROVIDER_TYPE", "openai"),
+		),
+		MainAgentURL: utils.GetEnv("AI_AGENT_MAIN_AGENT_URL", ""),
+		MainAgentKey: utils.GetEnv("AI_AGENT_MAIN_AGENT_KEY", ""),
+		MainAgentBackend: infra.AIAgentProviderBackendFromString(
+			utils.GetEnv("AI_AGENT_MAIN_AGENT_BACKEND", ""),
+		),
+		MainAgentProject:         utils.GetEnv("AI_AGENT_MAIN_AGENT_PROJECT", gcpConfig.ProjectId),
+		MainAgentLocation:        utils.GetEnv("AI_AGENT_MAIN_AGENT_LOCATION", ""),
+		PerplexityAPIKey:         utils.GetEnv("AI_AGENT_PERPLEXITY_API_KEY", ""),
+		ModelsConfigOverridePath: utils.GetEnv("AI_AGENT_MODELS_CONFIG_OVERRIDE_FILE", ""),
+	}
+
+	infra.SetupSentry(workerConfig.sentryDsn, workerConfig.env, apiVersion)
+	defer sentry.Flush(3 * time.Second)
+
+	tracingConfig := infra.TelemetryConfiguration{
+		ApplicationName: workerConfig.appName,
+		Enabled:         workerConfig.enableTracing,
+		ProjectID:       gcpConfig.ProjectId,
+		Exporter:        workerConfig.telemetryExporter,
+		SamplingMap:     infra.NewTelemetrySamplingMap(ctx, workerConfig.otelSamplingRates),
+	}
+	telemetryRessources, err := infra.InitTelemetry(tracingConfig, apiVersion)
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+	}
+	ctx = utils.StoreOpenTelemetryTracerInContext(ctx, telemetryRessources.Tracer)
+
+	pool, err := infra.NewPostgresConnectionPool(ctx, appName, pgConfig.GetConnectionString(),
+		telemetryRessources.TracerProvider, pgConfig.MaxPoolConnections, pgConfig.ImpersonateRole)
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+	}
+
+	// First, create an insert-only client to pass to the repos. Later we create another client with a list of queues (org_ids)
+	// but we need working repos first. It's a bit awkward but it's a consequence of the fact that river uses the same client for
+	// job insertion and job running.
+	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+		return err
+	}
+
+	clientDbConfig, err := infra.ParseClientDbConfig(pgConfig.ClientDbConfigFile)
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+		return err
+	}
+
+	redisConfig, err := infra.InitRedisConfig()
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+		return err
+	}
+
+	redisClient, err := repositories.NewRedisClient(redisConfig)
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+		return err
+	}
+
+	var lagoConfig infra.LagoConfig
+	if isMarbleSaasProject {
+		lagoConfig = infra.InitializeLago()
+		if err := lagoConfig.Validate(); err != nil {
+			// Only report Lago configuration errors for production, not staging
+			if infra.IsMarbleProductionProject() {
+				utils.LogAndReportSentryError(ctx, err)
+			}
+		}
+	}
+
+	repositories := repositories.NewRepositories(
+		pool,
+		infra.GcpConfig{},
+		repositories.WithRedisClient(redisClient),
+		repositories.WithRiverClient(riverClient),
+		repositories.WithClientDbConfig(clientDbConfig),
+		repositories.WithTracerProvider(telemetryRessources.TracerProvider),
+		repositories.WithOpenSanctions(openSanctionsConfig),
+		repositories.WithCache(utils.GetEnv("CACHE_ENABLED", false)),
+		repositories.WithLagoConfig(lagoConfig),
+	)
+
+	deploymentMetadata, err := GetDeploymentMetadata(ctx, repositories)
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+		return errors.Wrap(err, "failed to get deployment ID from Marble DB")
+	}
+	license := infra.VerifyLicense(licenseConfig, deploymentMetadata.Value)
+
+	// Start the task queue workers
+	workers := river.NewWorkers()
+	queues, orgPeriodics, err := usecases.QueuesFromOrgs(ctx, appName, repositories.MarbleDbRepository,
+		repositories.ExecutorGetter, offloadingConfig, analyticsConfig, workerConfig.CreateFullDatasetInterval)
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+		return err
+	}
+
+	// For non-org
+	nonOrgQueues := make(map[string]river.QueueConfig)
+	globalPeriodics := []*river.PeriodicJob{}
+
+	maps.Copy(nonOrgQueues, usecases.QueueContinuousScreeningDatasetUpdate())
+	globalPeriodics = append(globalPeriodics,
+		continuous_screening.NewContinuousScreeningUpdateDatasetJob(
+			workerConfig.ScanDatasetUpdatesInterval),
+	)
+	// Webhook cleanup (30 day retention)
+	maps.Copy(nonOrgQueues, usecases.QueueWebhookCleanup())
+	globalPeriodics = append(globalPeriodics, worker_jobs.NewWebhookCleanupPeriodicJob())
+	// Async decision execution cleanup (30 day retention)
+	maps.Copy(nonOrgQueues, usecases.QueueAsyncDecisionCleanup())
+	globalPeriodics = append(globalPeriodics, worker_jobs.NewAsyncDecisionExecutionCleanupPeriodicJob())
+	if !metricCollectionConfig.Disabled {
+		maps.Copy(nonOrgQueues, usecases.QueueMetrics())
+		globalPeriodics = append(globalPeriodics,
+			worker_jobs.NewMetricsCollectionPeriodicJob(metricCollectionConfig))
+	}
+	if analyticsConfig.Enabled {
+		analyticsQueue := usecases.QueueAnalyticsMerge()
+		maps.Copy(nonOrgQueues, analyticsQueue)
+		globalPeriodics = append(globalPeriodics,
+			worker_jobs.NewAnalyticsMergeJob())
+	}
+	if isMarbleSaasProject && lagoConfig.IsConfigured() {
+		maps.Copy(nonOrgQueues, usecases.QueueBilling())
+	}
+	// Merge non-org queues with org queues
+	maps.Copy(queues, nonOrgQueues)
+
+	// Periodics always contain the per-org tasks retrieved above. Add other, non-organization-scoped periodics below
+	periodics := append(
+		orgPeriodics,
+		globalPeriodics...,
+	)
+
+	// Create demo orgs fetcher for cron monitoring middleware
+	execFactory := executor_factory.NewDbExecutorFactory(appName,
+		repositories.MarbleDbRepository, repositories.ExecutorGetter, uuid.Nil)
+	demoOrgsFetcher := func(ctx context.Context) (map[uuid.UUID]struct{}, error) {
+		orgs, err := repositories.MarbleDbRepository.AllOrganizations(ctx, execFactory.NewExecutor())
+		if err != nil {
+			return nil, err
+		}
+		demoOrgs := make(map[uuid.UUID]struct{})
+		for _, org := range orgs {
+			if org.Environment == models.OrganizationEnvironmentDemo {
+				demoOrgs[org.Id] = struct{}{}
+			}
+		}
+		return demoOrgs, nil
+	}
+	cronMonitorMiddleware := jobs.NewCronMonitorMiddleware(demoOrgsFetcher)
+	cronMonitorMiddleware.StartDemoOrgsRefresh(ctx, 1*time.Minute)
+
+	riverClient, err = river.NewClient(riverpgxv5.New(pool), &river.Config{
+		FetchPollInterval: utils.GetEnvDuration("RIVER_FETCH_POLL_INTERVAL", 1*time.Second),
+		Queues:            queues,
+		Logger:            logger,
+
+		// Must be larger than the time it takes to process a job, if the job does not implement Timeout().
+		// Jobs that do not implement this and run for longer than this value will be rescued by the worker, which we should
+		// avoid if it is actually still running.
+		RescueStuckJobsAfter: 2 * time.Minute,
+		WorkerMiddleware: []rivertype.WorkerMiddleware{
+			jobs.NewRecoveredMiddleware(),
+			jobs.NewSentryMiddleware(),
+			cronMonitorMiddleware,
+			jobs.NewTracingMiddleware(telemetryRessources.Tracer),
+			jobs.NewLoggerMiddleware(logger),
+		},
+		Workers:      workers,
+		PeriodicJobs: periodics,
+	},
+	)
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+		return err
+	}
+
+	// Ensure that all global queues are active.
+	if err := ensureGlobalQueuesAreActive(ctx, riverClient, nonOrgQueues); err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+		return err
+	}
+
+	ipEnrichmentDatabase, err := infra.InitIpEnrichmentDatabase(ctx, license)
+	if err != nil {
+		return errors.Wrap(err, "failed to open ip enrichment database")
+	}
+
+	aiPromptsServingDir := utils.GetEnv("AI_PROMPTS_SERVING_DIR", "")
+	aiPromptsFS, aiAgentModelConfig := configAiResources(ctx, license, licenseConfig, aiAgentConfig, aiPromptsServingDir, apiVersion)
+
+	uc := usecases.NewUsecases(repositories,
+		usecases.WithAppName(appName),
+		usecases.WithIngestionBucketUrl(workerConfig.ingestionBucketUrl),
+		usecases.WithOffloadingBucketUrl(offloadingConfig.BucketUrl),
+		usecases.WithOffloading(offloadingConfig),
+		usecases.WithFailedWebhooksRetryPageSize(workerConfig.failedWebhooksRetryPageSize),
+		usecases.WithLicense(license),
+		usecases.WithAllowInsecureWebhookURLs(utils.GetEnv("ENV", "production") == "development"),
+		usecases.WithWebhookIPWhitelist(os.Getenv("WEBHOOK_IP_WHITELIST")),
+		usecases.WithOpensanctions(openSanctionsConfig.IsSet()),
+		usecases.WithApiVersion(apiVersion),
+		usecases.WithMetricsCollectionConfig(metricCollectionConfig),
+		usecases.WithCaseManagerBucketUrl(workerConfig.caseManagerBucket),
+		usecases.WithAIAgentConfig(aiAgentConfig),
+		usecases.WithAnalyticsConfig(analyticsConfig),
+		usecases.WithContinuousScreeningBucketUrl(workerConfig.continuousScreeningBucketUrl),
+		usecases.WithCsCreateFullDatasetInterval(workerConfig.CreateFullDatasetInterval),
+		usecases.WithIpEnrichmentDatabase(ipEnrichmentDatabase),
+		usecases.WithScreeningOffloadingEnabled(utils.GetEnv("SCREENING_OFFLOADING_ENABLED", true)),
+		usecases.WithAIPromptsFS(aiPromptsFS),
+		usecases.WithAIAgentModelConfig(aiAgentModelConfig),
+	)
+	adminUc := jobs.GenerateUsecaseWithCredForMarbleAdmin(ctx, uc)
+
+	if only != "" {
+		if err := singleJobRun(ctx, adminUc, apiVersion, workerConfig, gcpConfig, only, onlyArgs); err != nil {
+			logger.Error(err.Error())
+		}
+
+		return nil
+	}
+
+	river.AddWorker(workers, adminUc.NewAsyncDecisionWorker())
+	river.AddWorker(workers, adminUc.NewNewAsyncScheduledExecWorker())
+	river.AddWorker(workers, adminUc.NewIndexCreationWorker())
+	river.AddWorker(workers, adminUc.NewIndexCreationStatusWorker())
+	river.AddWorker(workers, adminUc.NewIndexCleanupWorker())
+	river.AddWorker(workers, adminUc.NewIndexDeletionWorker())
+	river.AddWorker(workers, adminUc.NewIndexDeletionByNameWorker())
+	river.AddWorker(workers, adminUc.NewTestRunSummaryWorker())
+	river.AddWorker(workers, adminUc.NewMatchEnrichmentWorker())
+	river.AddWorker(workers, adminUc.NewCaseReviewWorker(workerConfig.caseReviewTimeout))
+	river.AddWorker(workers, adminUc.NewScreeningHitSuggestionWorker(workerConfig.caseReviewTimeout))
+	river.AddWorker(workers, adminUc.NewRuleDescriptionWorker(workerConfig.caseReviewTimeout))
+	river.AddWorker(workers, adminUc.NewAutoAssignmentWorker())
+	river.AddWorker(workers, adminUc.NewDecisionWorkflowsWorker())
+	river.AddWorker(workers, adminUc.NewContinuousScreeningDoScreeningWorker())
+	river.AddWorker(workers, adminUc.NewContinuousScreeningRegisterObjectWorker())
+	river.AddWorker(workers, adminUc.NewContinuousScreeningEnsureDeltaTrackWorker())
+	river.AddWorker(workers, adminUc.NewContinuousScreeningApplyDeltaFileWorker())
+	river.AddWorker(workers, adminUc.NewContinuousScreeningScanDatasetUpdatesWorker())
+	river.AddWorker(workers, adminUc.NewCsvIngestionWorker())
+	river.AddWorker(workers, adminUc.NewAsyncUploadWorker())
+	river.AddWorker(workers, adminUc.NewScheduledExecutionWorker())
+	river.AddWorker(workers, adminUc.NewBatchExecutionCoordinatorWorker())
+	river.AddWorker(workers, adminUc.NewContinuousScreeningMatchEnrichmentWorker())
+	river.AddWorker(workers, adminUc.NewGenerateThumbnailWorker())
+
+	if offloadingConfig.Enabled {
+		river.AddWorker(workers, adminUc.NewOffloadingWorker())
+	}
+	if !metricCollectionConfig.Disabled {
+		river.AddWorker(workers, uc.NewMetricsCollectionWorker(licenseConfig))
+	}
+	if analyticsConfig.Enabled {
+		river.AddWorker(workers, adminUc.NewAnalyticsExportWorker())
+		river.AddWorker(workers, adminUc.NewAnalyticsMergeWorker())
+	}
+	if isMarbleSaasProject && lagoConfig.IsConfigured() {
+		river.AddWorker(workers, uc.NewSendBillingEventWorker())
+	}
+	river.AddWorker(workers, uc.NewContinuousScreeningCreateFullDatasetWorker())
+	river.AddWorker(workers, adminUc.NewScheduledScenarioWorker())
+
+	// New webhook delivery system
+	river.AddWorker(workers, adminUc.NewWebhookDispatchWorker())
+	river.AddWorker(workers, adminUc.NewWebhookDeliveryWorker())
+	river.AddWorker(workers, adminUc.NewWebhookCleanupWorker())
+
+	river.AddWorker(workers, adminUc.NewScoreComputationWorker())
+	river.AddWorker(workers, adminUc.NewTriggeredScoreComputationWorker())
+	river.AddWorker(workers, adminUc.NewRulesetDryRunWorker())
+	river.AddWorker(workers, adminUc.NewInitialComputationWorker())
+	river.AddWorker(workers, adminUc.NewInitialInsertionWorker())
+
+	// Async decision execution system
+	river.AddWorker(workers, adminUc.NewAsyncDecisionExecutionWorker())
+	river.AddWorker(workers, adminUc.NewAsyncDecisionExecutionCleanupWorker())
+
+	if err := riverClient.Start(ctx); err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+		return err
+	}
+
+	// run a non-blocking basic http server to respond to Cloud Run http probes, to respect the Cloud Run contract
+	if workerConfig.cloudRunProbePort != "" {
+		runHealthcheckServer(ctx, uc, apiVersion, gcpConfig, workerConfig)
+	}
+
+	logger.InfoContext(ctx, "starting worker", slog.String("version", apiVersion))
+
+	// Asynchronously keep the task queue workers up to date with the orgs in the database
+	taskQueueWorker := uc.NewTaskQueueWorker(riverClient,
+		slices.Collect(maps.Keys(nonOrgQueues)),
+	)
+	go taskQueueWorker.RefreshQueuesFromOrgIds(ctx, offloadingConfig, analyticsConfig, workerConfig.CreateFullDatasetInterval)
+
+	// Teardown sequence
+	sigintOrTerm := make(chan os.Signal, 1)
+	signal.Notify(sigintOrTerm, syscall.SIGINT, syscall.SIGTERM)
+
+	go cleanStop(ctx, sigintOrTerm, riverClient)
+
+	<-riverClient.Stopped()
+	logger.InfoContext(ctx, "River client stopped")
+
+	return nil
+}
+
+func runHealthcheckServer(ctx context.Context, uc usecases.Usecases, apiVersion string, gcpConfig infra.GcpConfig, workerConfig WorkerConfig) {
+	go func() {
+		gin.SetMode(gin.ReleaseMode)
+
+		r := gin.New()
+
+		r.GET("/", func(c *gin.Context) {
+			c.String(http.StatusOK, "OK")
+		})
+		r.GET("/liveness", api.HandleLivenessProbe(uc))
+
+		if workerConfig.enablePrometheus {
+			r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+		}
+
+		if os.Getenv("DEBUG_ENABLE_PROFILING") == "1" {
+			utils.SetupProfilerEndpoints(r, "marble-worker", apiVersion, gcpConfig.ProjectId)
+		}
+
+		if err := r.Run(":" + workerConfig.cloudRunProbePort); err != nil {
+			utils.LogAndReportSentryError(ctx, err)
+		}
+	}()
+}
+
+// This stop goroutine waits for SIGINT/SIGTERM and when received, tries to stop
+// gracefully by allowing a chance for jobs to finish. But if that isn't
+// working, a second SIGINT/SIGTERM will tell it to terminate with prejudice and
+// it'll issue a hard stop that cancels the context of all active jobs. In
+// case that doesn't work, a third SIGINT/SIGTERM ignores River's stop procedure
+// completely and exits uncleanly.
+func cleanStop(ctx context.Context, sigintOrTerm chan os.Signal, riverClient *river.Client[pgx.Tx]) {
+	logger := utils.LoggerFromContext(ctx)
+	<-sigintOrTerm
+	logger.InfoContext(ctx, "Received SIGINT/SIGTERM; initiating soft stop (try to wait for jobs to finish)")
+
+	softStopCtx, softStopCtxCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer softStopCtxCancel()
+
+	go func() {
+		select {
+		case <-sigintOrTerm:
+			logger.InfoContext(ctx, "Received SIGINT/SIGTERM again; initiating hard stop (cancel everything)")
+			softStopCtxCancel()
+		case <-softStopCtx.Done():
+			logger.InfoContext(ctx, "Soft stop timeout; initiating hard stop (cancel everything)")
+		}
+	}()
+
+	err := riverClient.Stop(softStopCtx)
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		logger.ErrorContext(ctx, "Soft stop failed", "error", err)
+		panic(err)
+	}
+	if err == nil {
+		logger.InfoContext(ctx, "Soft stop succeeded")
+		return
+	}
+
+	hardStopCtx, hardStopCtxCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer hardStopCtxCancel()
+
+	// As long as all jobs respect context cancellation, StopAndCancel will
+	// always work. However, in the case of a bug where a job blocks despite
+	// being cancelled, it may be necessary to either ignore River's stop
+	// result (what's shown here) or have a supervisor kill the process.
+	err = riverClient.StopAndCancel(hardStopCtx)
+	if err != nil && errors.Is(err, context.DeadlineExceeded) {
+		logger.InfoContext(ctx, "Hard stop timeout; ignoring stop procedure and exiting unsafely")
+	} else if err != nil {
+		panic(err)
+	}
+	// hard stop succeeded
+}
+
+// Ensure that all global queues are active in river DB, i.e. not paused. This function is more a safety net.
+// River stores the state of the queues in the DB. If a queue exists but is paused, River client will not resume it
+// We have some function which can pause queues, so we need to ensure that all global queues are active
+// cf: riverClient.QueueResume and riverClient.QueuePause
+func ensureGlobalQueuesAreActive(ctx context.Context, riverClient *river.Client[pgx.Tx],
+	nonOrgQueues map[string]river.QueueConfig,
+) error {
+	logger := utils.LoggerFromContext(ctx)
+
+	for queueName := range nonOrgQueues {
+		queueState, err := riverClient.QueueGet(ctx, queueName)
+		if err != nil {
+			if errors.Is(err, river.ErrNotFound) {
+				// Queue will be created when River starts, skip
+				continue
+			}
+			return err
+		}
+
+		// If the queue exists and is paused, resume it
+		if queueState.PausedAt != nil {
+			logger.InfoContext(ctx, "Resuming global queue at startup", "queue", queueName)
+			if err := riverClient.QueueResume(ctx, queueName, &river.QueuePauseOpts{}); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func singleJobRun(ctx context.Context, uc usecases.UsecasesWithCreds, apiVersion string, workerConfig WorkerConfig, gcpConfig infra.GcpConfig, jobName, jobArgs string) error {
+	if workerConfig.cloudRunProbePort != "" {
+		runHealthcheckServer(ctx, uc.Usecases, apiVersion, gcpConfig, workerConfig)
+	}
+
+	switch jobName {
+	case "async_decision":
+		return uc.NewAsyncDecisionWorker().Work(ctx,
+			singleJobCreate[models.AsyncDecisionArgs](ctx, jobArgs))
+	case "scheduled_exec_status":
+		return uc.NewNewAsyncScheduledExecWorker().Work(ctx,
+			singleJobCreate[models.ScheduledExecStatusSyncArgs](ctx, jobArgs))
+	case "auto_assignment":
+		return uc.NewAutoAssignmentWorker().Work(ctx,
+			singleJobCreate[models.AutoAssignmentArgs](ctx, jobArgs))
+	case "index_cleanup":
+		return uc.NewIndexCleanupWorker().Work(ctx,
+			singleJobCreate[models.IndexCleanupArgs](ctx, jobArgs))
+	case "index_creation":
+		return uc.NewIndexCreationWorker().Work(ctx,
+			singleJobCreate[models.IndexCreationArgs](ctx, jobArgs))
+	case "index_creation_status":
+		return uc.NewIndexCreationStatusWorker().Work(ctx,
+			singleJobCreate[models.IndexCreationStatusArgs](ctx, jobArgs))
+	case "index_deletion":
+		return uc.NewIndexDeletionWorker().Work(ctx,
+			singleJobCreate[models.IndexDeletionArgs](ctx, jobArgs))
+	case "index_deletion_by_name":
+		return uc.NewIndexDeletionByNameWorker().Work(ctx,
+			singleJobCreate[models.IndexDeletionByNameArgs](ctx, jobArgs))
+	case "match_enrichment":
+		return uc.NewMatchEnrichmentWorker().Work(ctx,
+			singleJobCreate[models.MatchEnrichmentArgs](ctx, jobArgs))
+	case "offloading":
+		return uc.NewOffloadingWorker().Work(ctx,
+			singleJobCreate[models.OffloadingArgs](ctx, jobArgs))
+	case "test_run_summary":
+		return uc.NewTestRunSummaryWorker().Work(ctx,
+			singleJobCreate[models.TestRunSummaryArgs](ctx, jobArgs))
+	case "case_review":
+		return uc.NewCaseReviewWorker(time.Hour).Work(ctx,
+			singleJobCreate[models.CaseReviewArgs](ctx, jobArgs))
+	case "screening_hit_suggestion":
+		return uc.NewScreeningHitSuggestionWorker(time.Hour).Work(ctx,
+			singleJobCreate[models.ScreeningHitSuggestionArgs](ctx, jobArgs))
+	case "decision_workflows":
+		return uc.NewDecisionWorkflowsWorker().Work(ctx,
+			singleJobCreate[models.DecisionWorkflowArgs](ctx, jobArgs))
+	case "analytics_export":
+		return uc.NewAnalyticsExportWorker().Work(ctx,
+			singleJobCreate[models.AnalyticsExportArgs](ctx, jobArgs))
+	case "analytics_merge":
+		return uc.NewAnalyticsMergeWorker().Work(ctx,
+			singleJobCreate[models.AnalyticsMergeArgs](ctx, jobArgs))
+	case "send_billing_event":
+		return uc.NewSendBillingEventWorker().Work(ctx,
+			singleJobCreate[models.SendBillingEventArgs](ctx, jobArgs))
+	case "continuous_screening_do_screening":
+		return uc.NewContinuousScreeningDoScreeningWorker().Work(ctx,
+			singleJobCreate[models.ContinuousScreeningDoScreeningArgs](ctx, jobArgs))
+	case "continuous_screening_register_object":
+		return uc.NewContinuousScreeningRegisterObjectWorker().Work(ctx,
+			singleJobCreate[models.ContinuousScreeningRegisterObjectArgs](ctx, jobArgs))
+	case "continuous_screening_ensure_delta_track":
+		return uc.NewContinuousScreeningEnsureDeltaTrackWorker().Work(ctx,
+			singleJobCreate[models.ContinuousScreeningEnsureDeltaTrackArgs](ctx, jobArgs))
+	case "continuous_screening_scan_dataset_updates":
+		return uc.NewContinuousScreeningScanDatasetUpdatesWorker().Work(ctx,
+			singleJobCreate[models.ContinuousScreeningScanDatasetUpdatesArgs](ctx, jobArgs))
+	case "continuous_screening_apply_delta_file":
+		return uc.NewContinuousScreeningApplyDeltaFileWorker().Work(ctx,
+			singleJobCreate[models.ContinuousScreeningApplyDeltaFileArgs](ctx, jobArgs))
+	case "continuous_screening_match_enrichment":
+		return uc.NewContinuousScreeningMatchEnrichmentWorker().Work(ctx,
+			singleJobCreate[models.ContinuousScreeningMatchEnrichmentArgs](ctx, jobArgs))
+	case "continuous_screening_create_full_dataset":
+		return uc.NewContinuousScreeningCreateFullDatasetWorker().Work(ctx,
+			singleJobCreate[models.ContinuousScreeningCreateFullDatasetArgs](ctx, jobArgs))
+	case "scheduled_scenario":
+		return uc.NewScheduledScenarioWorker().Work(ctx,
+			singleJobCreate[models.ScheduledScenarioArgs](ctx, jobArgs))
+	case "scheduled_execution":
+		return uc.NewScheduledExecutionWorker().Work(ctx,
+			singleJobCreate[models.ScheduledExecutionArgs](ctx, jobArgs))
+	case "csv_ingestion":
+		return uc.NewCsvIngestionWorker().Work(ctx,
+			singleJobCreate[models.CsvIngestionArgs](ctx, jobArgs))
+	case "webhook_dispatch":
+		return uc.NewWebhookDispatchWorker().Work(ctx,
+			singleJobCreate[models.WebhookDispatchJobArgs](ctx, jobArgs))
+	case "webhook_delivery":
+		return uc.NewWebhookDeliveryWorker().Work(ctx,
+			singleJobCreate[models.WebhookDeliveryJobArgs](ctx, jobArgs))
+	case "webhook_cleanup":
+		return uc.NewWebhookCleanupWorker().Work(ctx,
+			singleJobCreate[models.WebhookCleanupJobArgs](ctx, jobArgs))
+	case "triggered_score_computation":
+		return uc.NewTriggeredScoreComputationWorker().Work(ctx,
+			singleJobCreate[models.TriggeredScoreComputationArgs](ctx, jobArgs))
+	case "async_decision_execution":
+		return uc.NewAsyncDecisionExecutionWorker().Work(ctx,
+			singleJobCreate[models.AsyncDecisionExecutionArgs](ctx, jobArgs))
+	case "async_decision_execution_cleanup":
+		return uc.NewAsyncDecisionExecutionCleanupWorker().Work(ctx,
+			singleJobCreate[models.AsyncDecisionExecutionCleanupArgs](ctx, jobArgs))
+	case "score_computation":
+		return uc.NewScoreComputationWorker().Work(ctx,
+			singleJobCreate[models.ScoreComputationArgs](ctx, jobArgs))
+	case "scoring_initial_insertion":
+		return uc.NewInitialInsertionWorker().Work(ctx,
+			singleJobCreate[models.ScoringInitialInsertionArgs](ctx, jobArgs))
+	case "scoring_initial_computation":
+		return uc.NewInitialComputationWorker().Work(ctx,
+			singleJobCreate[models.ScoringInitialComputationArgs](ctx, jobArgs))
+	case "rule_description":
+		return uc.NewRuleDescriptionWorker(workerConfig.caseReviewTimeout).Work(ctx,
+			singleJobCreate[models.RuleDescriptionArgs](ctx, jobArgs))
+	default:
+		return errors.Newf("unknown job %s", jobName)
+	}
+}
+
+func singleJobCreate[A river.JobArgs](ctx context.Context, argsJson string) *river.Job[A] {
+	var args A
+
+	if argsJson != "" {
+		if err := json.Unmarshal([]byte(argsJson), &args); err != nil {
+			utils.LoggerFromContext(ctx).Error("could not unmarshal provided JSON into job arguments", "error", err.Error())
+			os.Exit(1)
+		}
+	}
+
+	if reflect.DeepEqual(args, *new(A)) {
+		utils.LoggerFromContext(ctx).Warn("job arguments unmarshalled to the zero struct, job might not run properly")
+	}
+
+	return &river.Job[A]{
+		JobRow: &rivertype.JobRow{
+			CreatedAt: time.Now(),
+			Metadata:  []byte(`{"manual": true}`),
+		},
+		Args: args,
+	}
+}

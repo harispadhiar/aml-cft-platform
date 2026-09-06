@@ -1,0 +1,197 @@
+package repositories
+
+import (
+	"context"
+	"time"
+
+	"github.com/Masterminds/squirrel"
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/checkmarble/marble-backend/repositories/dbmodels"
+	"github.com/checkmarble/marble-backend/utils"
+)
+
+func (repo *MarbleDbRepository) ListSuspiciousActivityReportsByCaseId(ctx context.Context, exec Executor,
+	caseId string,
+) ([]models.SuspiciousActivityReport, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return nil, err
+	}
+
+	sql := NewQueryBuilder().
+		Select(dbmodels.SelectSuspiciousActivityReportColumns...).
+		From(dbmodels.TABLE_SUSPICIOUS_ACTIVITY_REPORTS).
+		Where(squirrel.Eq{
+			"case_id":    caseId,
+			"deleted_at": nil,
+		})
+
+	return SqlToListOfModels(ctx, exec, sql, dbmodels.AdaptSuspiciousActivityReport)
+}
+
+func (repo *MarbleDbRepository) GetSuspiciousActivityReportById(ctx context.Context,
+	exec Executor,
+	caseId, id string,
+	forUpdate bool,
+) (models.SuspiciousActivityReport, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.SuspiciousActivityReport{}, err
+	}
+
+	sql := NewQueryBuilder().
+		Select(dbmodels.SelectSuspiciousActivityReportColumns...).
+		From(dbmodels.TABLE_SUSPICIOUS_ACTIVITY_REPORTS).
+		Where(squirrel.Eq{
+			"case_id":    caseId,
+			"report_id":  id,
+			"deleted_at": nil,
+		})
+
+	if forUpdate {
+		sql = sql.Suffix("for update")
+	}
+
+	return SqlToModel(ctx, exec, sql, dbmodels.AdaptSuspiciousActivityReport)
+}
+
+func (repo *MarbleDbRepository) CreateSuspiciousActivityReport(ctx context.Context,
+	exec Executor,
+	req models.SuspiciousActivityReportRequest,
+) (models.SuspiciousActivityReport, error) {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return models.SuspiciousActivityReport{}, err
+	}
+
+	reportId := req.ReportId
+	if reportId == nil {
+		reportId = utils.Ptr(pure_utils.NewId().String())
+	}
+
+	var completedAt *time.Time
+	if req.Status != nil && *req.Status == models.SarCompleted {
+		completedAt = utils.Ptr(time.Now())
+	}
+
+	sql := NewQueryBuilder().
+		Insert(dbmodels.TABLE_SUSPICIOUS_ACTIVITY_REPORTS).
+		Columns("report_id", "case_id", "status", "bucket", "blob_key", "created_by", "uploaded_by", "completed_at").
+		Values(
+			reportId,
+			req.CaseId,
+			req.Status.String(),
+			req.Bucket,
+			req.BlobKey,
+			req.CreatedBy,
+			req.UploadedBy,
+			completedAt,
+		).
+		Suffix("returning *")
+
+	return SqlToModel(ctx, exec, sql, dbmodels.AdaptSuspiciousActivityReport)
+}
+
+func (repo *MarbleDbRepository) UpdateSuspiciousActivityReport(ctx context.Context,
+	tx Executor,
+	req models.SuspiciousActivityReportRequest,
+) (models.SuspiciousActivityReport, error) {
+	if err := validateMarbleDbExecutor(tx); err != nil {
+		return models.SuspiciousActivityReport{}, err
+	}
+
+	values := map[string]any{
+		"updated_at": time.Now(),
+	}
+
+	if req.Status != nil {
+		values["status"] = req.Status
+		if *req.Status == models.SarCompleted {
+			values["completed_at"] = time.Now()
+		}
+	}
+	if req.DeletedAt != nil {
+		values["deleted_at"] = utils.Ptr(time.Now())
+	}
+
+	sql := NewQueryBuilder().
+		Update(dbmodels.TABLE_SUSPICIOUS_ACTIVITY_REPORTS).
+		SetMap(values).
+		Where(squirrel.Eq{
+			"case_id":    req.CaseId,
+			"report_id":  req.ReportId,
+			"deleted_at": nil,
+		}).
+		Suffix("returning *")
+
+	return SqlToModel(ctx, tx, sql, dbmodels.AdaptSuspiciousActivityReport)
+}
+
+func (repo *MarbleDbRepository) UploadSuspiciousActivityReport(ctx context.Context, tx Transaction,
+	sar models.SuspiciousActivityReport,
+	req models.SuspiciousActivityReportRequest,
+) (models.SuspiciousActivityReport, error) {
+	// First file uploaded for a SAR means a simple update.
+	if sar.Bucket == nil || sar.BlobKey == nil {
+		sql := NewQueryBuilder().
+			Update(dbmodels.TABLE_SUSPICIOUS_ACTIVITY_REPORTS).
+			Set("status", req.Status).
+			Set("bucket", req.Bucket).
+			Set("blob_key", req.BlobKey).
+			Set("uploaded_by", req.UploadedBy).
+			Set("updated_at", time.Now()).
+			Where(squirrel.Eq{
+				"case_id":    req.CaseId,
+				"report_id":  req.ReportId,
+				"deleted_at": nil,
+			}).
+			Suffix("returning *")
+
+		if req.Status != nil && *req.Status == models.SarCompleted {
+			sql = sql.Set("completed_at", time.Now())
+		}
+
+		return SqlToModel(ctx, tx, sql, dbmodels.AdaptSuspiciousActivityReport)
+	}
+
+	_, err := repo.UpdateSuspiciousActivityReport(ctx, tx, models.SuspiciousActivityReportRequest{
+		CaseId:    req.CaseId,
+		ReportId:  req.ReportId,
+		DeletedAt: utils.Ptr(time.Now()),
+	})
+	if err != nil {
+		return models.SuspiciousActivityReport{}, err
+	}
+
+	create := models.SuspiciousActivityReportRequest{
+		CaseId:     sar.CaseId,
+		ReportId:   &sar.ReportId,
+		Status:     &sar.Status,
+		Bucket:     req.Bucket,
+		BlobKey:    req.BlobKey,
+		CreatedBy:  models.UserId(sar.CreatedBy),
+		UploadedBy: req.UploadedBy,
+	}
+
+	return repo.CreateSuspiciousActivityReport(ctx, tx, create)
+}
+
+func (repo *MarbleDbRepository) DeleteSuspiciousActivityReport(ctx context.Context,
+	exec Executor,
+	req models.SuspiciousActivityReportRequest,
+) error {
+	if err := validateMarbleDbExecutor(exec); err != nil {
+		return err
+	}
+
+	now := time.Now()
+	sql := NewQueryBuilder().
+		Update(dbmodels.TABLE_SUSPICIOUS_ACTIVITY_REPORTS).
+		Set("deleted_at", now).
+		Set("updated_at", now).
+		Where(squirrel.Eq{
+			"case_id":    req.CaseId,
+			"report_id":  req.ReportId,
+			"deleted_at": nil,
+		})
+
+	return ExecBuilder(ctx, exec, sql)
+}

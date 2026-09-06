@@ -1,0 +1,69 @@
+import { type AstNode } from '@app-builder/models';
+import { useGenerateRuleMutation } from '@app-builder/queries/scenarios/generate-rule';
+import { useState } from 'react';
+import toast from 'react-hot-toast';
+import { useTranslation } from 'react-i18next';
+import { Button, Card, Typo } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+
+interface AiGenerateRuleProps {
+  scenarioId: string;
+  ruleId: string;
+  onFormulaGenerated: (ruleAst: AstNode) => void;
+}
+
+export function AiGenerateRule({ scenarioId, ruleId, onFormulaGenerated }: AiGenerateRuleProps) {
+  const { t } = useTranslation(['scenarios', 'common']);
+  const [instruction, setInstruction] = useState('');
+  const mutation = useGenerateRuleMutation(scenarioId);
+
+  const handleGenerate = async () => {
+    const result = await mutation.mutateAsync({ ruleId, instruction }).catch(() => null);
+    if (result === null || !result.success) {
+      toast.error(t('scenarios:rules.ai_generate.error_generating'));
+      return;
+    }
+    if (result.ruleAst) {
+      setInstruction('');
+      onFormulaGenerated(result.ruleAst);
+    }
+  };
+
+  return (
+    <Card>
+      <Typo variant="subtitle1" className="text-s font-medium mb-md">
+        {t('scenarios:rules.ai_generate.title')}
+      </Typo>
+
+      <div className="flex flex-col gap-md">
+        <textarea
+          value={instruction}
+          onChange={(e) => setInstruction(e.currentTarget.value)}
+          placeholder={t('scenarios:rules.ai_generate.placeholder')}
+          disabled={mutation.isPending}
+          className="form-textarea text-grey-primary text-s w-full resize-none border-none bg-transparent font-medium outline-hidden"
+          rows={3}
+        />
+
+        <Button
+          onClick={handleGenerate}
+          disabled={!instruction.trim() || mutation.isPending}
+          variant="primary"
+          size="small"
+        >
+          {mutation.isPending ? (
+            <>
+              <Icon icon="spinner" className="size-4 animate-spin" aria-hidden />
+              {t('scenarios:rules.ai_generate.generating')}
+            </>
+          ) : (
+            <>
+              <Icon icon="wand" className="size-4" aria-hidden />
+              {t('scenarios:rules.ai_generate.generate_button')}
+            </>
+          )}
+        </Button>
+      </div>
+    </Card>
+  );
+}

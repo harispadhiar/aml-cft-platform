@@ -1,0 +1,246 @@
+import { type CaseOutcome, type CaseStatus } from '@app-builder/models/cases';
+import { cva, type VariantProps } from 'class-variance-authority';
+import { IconProps } from 'packages/ui-icons/src/Icon';
+import { type ComponentProps } from 'react';
+import { useTranslation } from 'react-i18next';
+import { match } from 'ts-pattern';
+import { cn, Tooltip } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+import { casesI18n } from './cases-i18n';
+
+export const caseStatusBadgeVariants = cva('inline-flex items-center w-fit shrink-0 grow-0 border border-transparent', {
+  variants: {
+    size: {
+      large: 'justify-center rounded-sm p-sm gap-sm text-r font-medium',
+      small: 'gap-xs rounded-full px-xs py-2xs text-xs font-normal',
+    },
+  },
+  defaultVariants: {
+    size: 'small',
+  },
+});
+
+type CaseStatusBadgeProps = ComponentProps<'span'> &
+  VariantProps<typeof caseStatusBadgeVariants> & {
+    status: CaseStatus;
+    outcome?: CaseOutcome;
+    showText?: boolean;
+    showBackground?: boolean;
+  };
+
+/**
+ *
+ * @deprecated Use `CaseStatusBadgeV2` instead.
+ *
+ */
+export const CaseStatusBadge = ({
+  status,
+  outcome,
+  showText = true,
+  showBackground = true,
+  size,
+  className,
+  ...rest
+}: CaseStatusBadgeProps) => {
+  const { t } = useTranslation(casesI18n);
+
+  return (
+    <span {...rest} className="inline-flex items-center gap-sm">
+      <span
+        className={caseStatusBadgeVariants({
+          size,
+          className: cn(className, {
+            'bg-purple-background dark:bg-transparent dark:border-purple-primary':
+              (status === 'snoozed' || status === 'closed') && showBackground,
+            'bg-red-background dark:bg-transparent dark:border-red-primary':
+              status === 'waiting_for_action' && showBackground,
+            'bg-grey-background dark:bg-transparent dark:border-grey-placeholder':
+              status === 'pending' && showBackground,
+            'bg-blue-96 dark:bg-transparent dark:border-blue-58': status === 'investigating' && showBackground,
+          }),
+        })}
+      >
+        {match(status)
+          .with('snoozed', () => <Icon icon="status_snoozed" className="text-purple-primary size-4" />)
+          .with('waiting_for_action', () => <Icon icon="waiting_for_action" className="text-red-primary size-4" />)
+          .with('pending', () => <div className="border-grey-disabled size-3.5 rounded-full border-2" />)
+          .with('investigating', () => <Icon icon="investigating" className="text-blue-58 size-4" />)
+          .with('closed', () => <Icon icon="resolved" className="text-purple-primary size-4" />)
+          .exhaustive()}
+        {showText ? (
+          <span
+            className={cn('text-grey-primary', {
+              'text-purple-primary': status === 'snoozed' || status === 'closed',
+              'text-red-primary': status === 'waiting_for_action',
+              'text-grey-secondary': status === 'pending',
+              'text-blue-58': status === 'investigating',
+            })}
+          >
+            {t(`cases:case.status.${status}`)}
+          </span>
+        ) : null}
+      </span>
+      {outcome && outcome !== 'unset' ? (
+        <span
+          className={cn('rounded-full border px-xs py-0.5 text-xs', {
+            'border-red-primary text-red-primary': outcome === 'confirmed_risk',
+            'border-green-primary text-green-primary': outcome === 'valuable_alert',
+            'border-grey-placeholder text-grey-secondary': outcome === 'false_positive',
+          })}
+        >
+          {t(`cases:case.outcome.${outcome}`)}
+        </span>
+      ) : null}
+    </span>
+  );
+};
+
+const statusIconMap: Record<CaseStatus, IconProps['icon']> = {
+  pending: 'status-pending',
+  investigating: 'search',
+  closed: 'resolved',
+  waiting_for_action: 'waiting_for_action',
+  snoozed: 'status_snoozed',
+};
+
+export type CaseStatusBadgeV2Props = {
+  status: CaseStatus;
+  outcome?: CaseOutcome;
+  variant: 'full' | 'semi-full' | 'big' | 'icon-only' | 'text-only';
+};
+
+const badgeTextVariants = cva('', {
+  variants: {
+    status: {
+      pending: 'text-yellow-primary',
+      investigating: 'text-purple-primary',
+      closed: 'text-green-primary',
+      waiting_for_action: 'text-orange-primary',
+      snoozed: 'text-grey-secondary',
+    },
+  },
+});
+
+const badgeBackgroundVariants = cva('', {
+  variants: {
+    status: {
+      pending: 'bg-yellow-background-light',
+      investigating: 'bg-purple-background-light',
+      closed: 'bg-green-background-light',
+      waiting_for_action: 'bg-orange-background-light',
+      snoozed: 'bg-grey-background-light',
+    },
+  },
+});
+
+const badgeBorderVariants = cva('border', {
+  variants: {
+    status: {
+      pending: 'border-yellow-primary',
+      investigating: 'border-purple-primary',
+      closed: 'border-green-primary',
+      waiting_for_action: 'border-orange-primary',
+      snoozed: 'border-grey-secondary',
+    },
+  },
+});
+
+const outcomeVariants = cva('border rounded-full px-sm h-6 flex items-center', {
+  variants: {
+    outcome: {
+      false_positive: 'text-green-secondary border-green-secondary',
+      valuable_alert: 'text-orange-primary border-orange-primary',
+      confirmed_risk: 'text-red-primary border-red-primary',
+    },
+  },
+});
+
+export const CaseStatusBadgeV2 = ({ status, outcome, variant }: CaseStatusBadgeV2Props) => {
+  const { t } = useTranslation(['cases']);
+  const resolvedOutcome = outcome ?? 'unset';
+
+  if (variant === 'text-only') {
+    return (
+      <span className={cn(badgeTextVariants({ status }), 'text-small font-medium whitespace-nowrap')}>
+        {t(`cases:case.status.${status}`)}
+      </span>
+    );
+  }
+
+  if (variant === 'full') {
+    return (
+      <div
+        className={cn(badgeTextVariants({ status }), 'inline-flex items-center gap-sm text-small whitespace-nowrap')}
+      >
+        <div className="inline-flex items-center gap-xs shrink-0">
+          <Icon icon={statusIconMap[status]} className="size-5 shrink-0" />
+          <span className="font-medium">{t(`cases:case.status.${status}`)}</span>
+        </div>
+        {resolvedOutcome !== 'unset' ? (
+          <div className={cn(outcomeVariants({ outcome: resolvedOutcome }), 'shrink-0 whitespace-nowrap')}>
+            {t(`cases:case.outcome.${resolvedOutcome}`)}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (variant === 'icon-only') {
+    return (
+      <Tooltip.Default content={t(`cases:case.status.${status}`)}>
+        <div
+          role="img"
+          aria-label={t(`cases:case.status.${status}`)}
+          className={cn(
+            badgeBackgroundVariants({ status }),
+            badgeTextVariants({ status }),
+            'flex items-center justify-center size-8 rounded-sm',
+          )}
+        >
+          <Icon icon={statusIconMap[status]} className="size-5 shrink-0" />
+        </div>
+      </Tooltip.Default>
+    );
+  }
+
+  if (variant === 'semi-full') {
+    if (status !== 'closed') {
+      return (
+        <div
+          className={cn(
+            badgeTextVariants({ status }),
+            badgeBorderVariants({ status }),
+            'inline-flex items-center gap-xs h-6 rounded-full px-sm text-small whitespace-nowrap',
+          )}
+        >
+          <Icon icon={statusIconMap[status]} className="size-4 shrink-0" />
+          <span className="shrink-0 whitespace-nowrap">{t(`cases:case.status.${status}`)}</span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex items-center gap-xs text-small whitespace-nowrap">
+        <Icon icon={statusIconMap[status]} className={cn(badgeTextVariants({ status }), 'size-5 shrink-0')} />
+        {resolvedOutcome !== 'unset' ? (
+          <div className={cn(outcomeVariants({ outcome: resolvedOutcome }), 'shrink-0 whitespace-nowrap')}>
+            {t(`cases:case.outcome.${resolvedOutcome}`)}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        badgeTextVariants({ status }),
+        badgeBorderVariants({ status }),
+        'flex items-center gap-sm h-10 rounded-sm px-sm text-default font-medium whitespace-nowrap',
+      )}
+    >
+      <Icon icon={statusIconMap[status]} className="size-5" />
+      <span>{t(`cases:case.status.${status}`)}</span>
+    </div>
+  );
+};

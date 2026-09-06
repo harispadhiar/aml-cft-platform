@@ -1,0 +1,228 @@
+package repositories
+
+import (
+	"context"
+	"encoding/json"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/cockroachdb/errors"
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+)
+
+type RedisExecutor struct {
+	client   *RedisClient
+	orgId    uuid.UUID
+	prefixes []string
+}
+
+func (client *RedisClient) NewExecutor(orgId uuid.UUID, prefixes ...string) *RedisExecutor {
+	if client == nil {
+		return nil
+	}
+
+	return &RedisExecutor{
+		client:   client,
+		orgId:    orgId,
+		prefixes: prefixes,
+	}
+}
+
+func (exec *RedisExecutor) WithOrg(orgId uuid.UUID) *RedisExecutor {
+	if exec == nil {
+		return nil
+	}
+
+	exec.orgId = orgId
+
+	return exec
+}
+
+func (exec *RedisExecutor) Key(keys ...string) string {
+	if exec == nil {
+		return ""
+	}
+
+	key := strings.Join(keys, ":")
+
+	prefixes := exec.prefixes
+	if exec.orgId != uuid.Nil {
+		prefixes = slices.Insert(prefixes, 0, exec.orgId.String())
+	}
+
+	if len(prefixes) == 0 {
+		return key
+	}
+
+	return strings.Join(prefixes, ":") + ":" + key
+}
+
+func (exec *RedisExecutor) Exec(f func(*redis.Client) error) error {
+	if exec == nil {
+		return nil
+	}
+
+	return f(exec.client.client)
+}
+
+func (exec *RedisExecutor) Tx(ctx context.Context, f func(redis.Pipeliner) error) ([]redis.Cmder, error) {
+	if exec == nil {
+		return nil, models.NotFoundError
+	}
+
+	return exec.client.client.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		return f(p)
+	})
+}
+
+func RedisQuery[T any](exec *RedisExecutor, cb func(*redis.Client) (T, error)) (T, error) {
+	if exec == nil {
+		return *new(T), models.NotFoundError
+	}
+
+	return cb(exec.client.client)
+}
+
+func RedisLoadModel[T any](ctx context.Context, exec *RedisExecutor, key string) (T, error) {
+	if exec == nil {
+		return *new(T), models.NotFoundError
+	}
+
+	dflt := *new(T)
+
+	out, err := exec.client.client.Get(ctx, key).Result()
+	if err != nil {
+		return dflt, err
+	}
+
+	dec := json.NewDecoder(strings.NewReader(out))
+
+	var model T
+
+	if err := dec.Decode(&model); err != nil {
+		return dflt, err
+	}
+
+	return model, nil
+}
+
+func (exec *RedisExecutor) SaveModel(ctx context.Context, dbExec Executor, key string, model any, ttl time.Duration) error {
+	if exec == nil {
+		return nil
+	}
+	// Do not persist cache if we are in a transaction, since it might get rolled
+	// back and we do not want outdated data to be cached.
+	if _, ok := dbExec.(Transaction); ok {
+		return nil
+	}
+
+	marshalled, err := json.Marshal(model)
+	if err != nil {
+		return err
+	}
+
+	return exec.client.client.Set(ctx, key, marshalled, ttl).Err()
+}
+
+func (exec *RedisExecutor) SetAdd(ctx context.Context, key, value string) error {
+	if exec == nil {
+		return nil
+	}
+
+	return exec.client.client.SAdd(ctx, key, value).Err()
+}
+
+func (exec *RedisExecutor) IsInSet(ctx context.Context, key, value string) (bool, error) {
+	if exec == nil {
+		return false, models.NotFoundError
+	}
+
+	result := exec.client.client.SIsMember(ctx, key, value)
+
+	if err := result.Err(); err != nil {
+		return false, err
+	}
+
+	return result.Val(), nil
+}
+
+func (exec *RedisExecutor) DeletePrefix(ctx context.Context, prefix string) error {
+	if exec == nil {
+		return nil
+	}
+
+	var cursor uint64
+
+	for {
+		var keys []string
+		var err error
+
+		keys, cursor, err = exec.client.client.Scan(ctx, cursor, prefix, int64(1000)).Result()
+		if err != nil {
+			return err
+		}
+
+		if len(keys) > 0 {
+			_, err := exec.client.client.Del(ctx, keys...).Result()
+			if err != nil {
+				return err
+			}
+		}
+
+		if cursor == 0 {
+			break
+		}
+	}
+
+	return nil
+}
+
+func RedisLoadMap[T comparable](ctx context.Context, exec *RedisExecutor, key string) (T, error) {
+	if exec == nil {
+		return *new(T), models.NotFoundError
+	}
+
+	var model T
+
+	cmd := exec.client.client.HGetAll(ctx, key)
+
+	if cmd.Err() != nil {
+		return model, cmd.Err()
+	}
+	if len(cmd.Val()) == 0 {
+		return model, models.NotFoundError
+	}
+
+	if err := cmd.Scan(&model); err != nil {
+		return model, err
+	}
+
+	return model, nil
+}
+
+func RedisGetScalar[T any](ctx context.Context, exec *RedisExecutor, key string) (T, error) {
+	if exec == nil {
+		return *new(T), models.NotFoundError
+	}
+
+	cmd := exec.client.client.Get(ctx, key)
+
+	var model T
+
+	if err := cmd.Err(); err != nil {
+		if errors.Is(err, redis.Nil) {
+			return model, models.NotFoundError
+		}
+
+		return model, errors.Wrap(err, "could not get key from redis")
+	}
+
+	if err := cmd.Scan(&model); err != nil {
+		return model, errors.Wrap(err, "could not scan redis value")
+	}
+
+	return model, nil
+}

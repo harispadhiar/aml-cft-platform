@@ -1,0 +1,423 @@
+package ast
+
+import (
+	"fmt"
+	"slices"
+
+	"github.com/cockroachdb/errors"
+)
+
+type Function int
+
+const (
+	FUNC_CONSTANT Function = iota
+	FUNC_ADD
+	FUNC_SUBTRACT
+	FUNC_MULTIPLY
+	FUNC_DIVIDE
+	FUNC_GREATER
+	FUNC_GREATER_OR_EQUAL
+	FUNC_LESS
+	FUNC_LESS_OR_EQUAL
+	FUNC_EQUAL
+	FUNC_NOT_EQUAL
+	FUNC_NOT
+	FUNC_AND
+	FUNC_OR
+	FUNC_TIME_ADD
+	FUNC_TIME_NOW
+	FUNC_PARSE_TIME
+	FUNC_PAYLOAD
+	FUNC_DB_ACCESS
+	FUNC_CUSTOM_LIST_ACCESS
+	FUNC_IS_IN_LIST
+	FUNC_IS_NOT_IN_LIST
+	FUNC_STRING_CONTAINS
+	FUNC_STRING_NOT_CONTAIN
+	FUNC_CONTAINS_ANY
+	FUNC_CONTAINS_NONE
+	FUNC_AGGREGATOR
+	FUNC_LIST
+	FUNC_FILTER
+	FUNC_FUZZY_MATCH
+	FUNC_FUZZY_MATCH_ANY_OF
+	FUNC_IS_EMPTY
+	FUNC_IS_NOT_EMPTY
+	FUNC_TIMESTAMP_EXTRACT
+	FUNC_HAS_IP_FLAG
+	FUNC_STRING_STARTS_WITH
+	FUNC_STRING_ENDS_WITH
+	FUNC_IS_MULTIPLE_OF
+	FUNC_STRING_TEMPLATE
+	FUNC_STRING_CONCAT
+	FUNC_FUZZY_MATCH_FILTER_OPTIONS
+	FUNC_MONITORING_LIST_CHECK
+	FUNC_RECORD_HAS_TAGS
+	FUNC_RECORD_HAS_PAST_ALERTS
+
+	FUNC_RECORD_RISK_LEVEL
+	FUNC_SCORE_COMPUTATION
+	FUNC_SWITCH
+
+	FUNC_UNDEFINED Function = -1
+	FUNC_UNKNOWN   Function = -2
+)
+
+type FuncAttributes struct {
+	DebugName string `json:"-"`
+	AstName   string `json:"function_name"` //nolint:tagliatelle
+
+	// WARNING: NamedArguments is written here for the sake of discoverability of the expected AST node format.
+	// However, it is not consumed anywhere, and it is in NO WAY enforced by the compiler or even the runtime.
+	// The only source of truth for what named children an AST must/can have is in the ast nodes Evaluate function.
+	NamedArguments []string `json:"named_arguments"`
+	// A function can define LazyChildEvaluation indicating that its children should be evaluated lazily,
+	// considering for every one of them if evaluation should continue or not. For the result value of one child, the
+	// function returns whether evaluation of subsequent children should continue (true) or not (false).
+	LazyChildEvaluation func(NodeEvaluation) bool `json:"-"`
+	// Commutative indicates this function can treat its children as a commutative list of arguments, and that
+	// they can be reordered without changing the outcome of the function.
+	Commutative bool `json:"-"`
+	// Cost modelizes the computation cost of a given node, the default being zero.
+	Cost int `json:"-"`
+}
+
+type ScoreComputationResult struct {
+	Triggered bool `json:"triggered"`
+	Modifier  int  `json:"modifier"`
+	Floor     int  `json:"floor"`
+
+	Branch   *int `json:"branch,omitempty"`
+	Fallback bool `json:"fallback"`
+	Default  bool `json:"default"`
+}
+
+// If number of arguments -1 the function can take any number of arguments
+var FuncAttributesMap = map[Function]FuncAttributes{
+	FUNC_UNDEFINED: {
+		DebugName: "UNDEFINED",
+		AstName:   "Undefined",
+	},
+	FUNC_CONSTANT: {
+		DebugName: "CONSTANT",
+		AstName:   "",
+	},
+	FUNC_ADD: {
+		DebugName: "FUNC_ADD",
+		AstName:   "+",
+	},
+	FUNC_SUBTRACT: {
+		DebugName: "FUNC_SUBTRACT",
+		AstName:   "-",
+	},
+	FUNC_MULTIPLY: {
+		DebugName: "FUNC_MULTIPLY",
+		AstName:   "*",
+	},
+	FUNC_DIVIDE: {
+		DebugName: "FUNC_DIVIDE",
+		AstName:   "/",
+	},
+	FUNC_GREATER: {
+		DebugName: "FUNC_GREATER",
+		AstName:   ">",
+	},
+	FUNC_GREATER_OR_EQUAL: {
+		DebugName: "FUNC_GREATER_OR_EQUAL",
+		AstName:   ">=",
+	},
+	FUNC_LESS: {
+		DebugName: "FUNC_LESS",
+		AstName:   "<",
+	},
+	FUNC_LESS_OR_EQUAL: {
+		DebugName: "FUNC_LESS_OR_EQUAL",
+		AstName:   "<=",
+	},
+	FUNC_EQUAL: {
+		DebugName: "FUNC_EQUAL",
+		AstName:   "=",
+	},
+	FUNC_NOT_EQUAL: {
+		DebugName: "FUNC_NOT_EQUAL",
+		AstName:   "≠",
+	},
+	FUNC_NOT: {
+		DebugName: "FUNC_NOT",
+		AstName:   "Not",
+	},
+	FUNC_AND: {
+		DebugName:   "FUNC_AND",
+		AstName:     "And",
+		Commutative: true,
+		// Boolean AND returns false if any child node evaluates to false
+		LazyChildEvaluation: shortCircuitIfFalse,
+	},
+	FUNC_OR: {
+		DebugName:   "FUNC_OR",
+		AstName:     "Or",
+		Commutative: true,
+		// Boolean OR returns true if any child nodes evluates to true
+		LazyChildEvaluation: shortCircuitIfTrue,
+	},
+	FUNC_TIME_ADD: {
+		DebugName:      "FUNC_TIME_ADD",
+		AstName:        "TimeAdd",
+		NamedArguments: []string{"timestampField", "duration", "sign"},
+	},
+	FUNC_TIME_NOW: {
+		DebugName: "FUNC_TIME_NOW",
+		AstName:   "TimeNow",
+	},
+	FUNC_PARSE_TIME: {
+		DebugName: "FUNC_PARSE_TIME",
+		AstName:   "ParseTime",
+	},
+	FUNC_PAYLOAD: {
+		DebugName: "FUNC_PAYLOAD",
+		AstName:   "Payload",
+	},
+	FUNC_DB_ACCESS: {
+		DebugName: "FUNC_DB_ACCESS",
+		AstName:   "DatabaseAccess",
+		NamedArguments: []string{
+			"tableName", "fieldName", "path",
+		},
+		Cost: 30,
+	},
+	FUNC_CUSTOM_LIST_ACCESS: {
+		DebugName: "FUNC_CUSTOM_LIST_ACCESS",
+		AstName:   "CustomListAccess",
+		NamedArguments: []string{
+			"customListId",
+		},
+		Cost: 30,
+	},
+	FUNC_IS_IN_LIST: {
+		DebugName: "FUNC_IS_IN_LIST",
+		AstName:   "IsInList",
+	},
+	FUNC_IS_NOT_IN_LIST: {
+		DebugName: "FUNC_IS_NOT_IN_LIST",
+		AstName:   "IsNotInList",
+	},
+	FUNC_STRING_CONTAINS: {
+		DebugName: "FUNC_STRING_CONTAINS",
+		AstName:   "StringContains",
+	},
+	FUNC_STRING_NOT_CONTAIN: {
+		DebugName: "FUNC_STRING_NOT_CONTAIN",
+		AstName:   "StringNotContain",
+	},
+	FUNC_STRING_STARTS_WITH: {
+		DebugName: "FUNC_STRING_STARTS_WITH",
+		AstName:   "StringStartsWith",
+	},
+	FUNC_STRING_ENDS_WITH: {
+		DebugName: "FUNC_STRING_ENDS_WITH",
+		AstName:   "StringEndsWith",
+	},
+	FUNC_CONTAINS_ANY: {
+		DebugName: "FUNC_CONTAINS_ANY",
+		AstName:   "ContainsAnyOf",
+	},
+	FUNC_CONTAINS_NONE: {
+		DebugName: "FUNC_CONTAINS_NONE",
+		AstName:   "ContainsNoneOf",
+	},
+	FUNC_AGGREGATOR: {
+		DebugName:      "FUNC_AGGREGATOR",
+		AstName:        "Aggregator",
+		NamedArguments: []string{"tableName", "fieldName", "aggregator", "filters", "label"},
+		Cost:           50,
+	},
+	FUNC_LIST: {
+		DebugName: "FUNC_LIST",
+		AstName:   "List",
+	},
+	FUNC_FUZZY_MATCH: {
+		DebugName:      "FUNC_FUZZY_MATCH",
+		AstName:        "FuzzyMatch",
+		NamedArguments: []string{"algorithm"},
+	},
+	FUNC_FUZZY_MATCH_ANY_OF: {
+		DebugName:      "FUNC_FUZZY_MATCH_ANY_OF",
+		AstName:        "FuzzyMatchAnyOf",
+		NamedArguments: []string{"algorithm"},
+	},
+	FUNC_FUZZY_MATCH_FILTER_OPTIONS: {
+		DebugName:      "FUNC_FUZZY_MATCH_FILTER_OPTIONS",
+		AstName:        "FuzzyMatchOptions",
+		NamedArguments: []string{"algorithm", "threshold", "value"},
+	},
+	FUNC_IS_EMPTY: {
+		DebugName: "FUNC_IS_EMPTY",
+		AstName:   "IsEmpty",
+	},
+	FUNC_IS_NOT_EMPTY: {
+		DebugName: "FUNC_IS_NOT_EMPTY",
+		AstName:   "IsNotEmpty",
+	},
+	FUNC_TIMESTAMP_EXTRACT: {
+		DebugName:      "FUNC_TIMESTAMP_EXTRACT",
+		AstName:        "TimestampExtract",
+		NamedArguments: []string{"timestamp", "part"},
+	},
+	FUNC_HAS_IP_FLAG: {
+		DebugName:      "FUNC_HAS_IP_FLAG",
+		AstName:        "HasIpFlag",
+		NamedArguments: []string{"ip", "flag"},
+	},
+	FUNC_IS_MULTIPLE_OF: {
+		DebugName:      "FUNC_IS_MULTIPLE_OF",
+		AstName:        "IsMultipleOf",
+		NamedArguments: []string{"value", "divider"},
+	},
+	FUNC_STRING_TEMPLATE: {
+		DebugName: "FUNC_STRING_TEMPLATE",
+		AstName:   "StringTemplate",
+	},
+	FUNC_STRING_CONCAT: {
+		DebugName: "FUNC_STRING_CONCAT",
+		AstName:   "StringConcat",
+	},
+	FUNC_FILTER: {
+		DebugName: "FUNC_FILTER",
+		AstName:   "Filter",
+		NamedArguments: []string{
+			"tableName",
+			"fieldName",
+			"operator",
+			"value",
+		},
+	},
+	FUNC_MONITORING_LIST_CHECK: {
+		DebugName: "FUNC_MONITORING_LIST_CHECK",
+		AstName:   "MonitoringListCheck",
+		NamedArguments: []string{
+			"config",
+		},
+	},
+	FUNC_RECORD_HAS_TAGS: {
+		DebugName: "FUNC_RECORD_HAS_TAGS",
+		AstName:   "RecordHasTags",
+		NamedArguments: []string{
+			"config",
+		},
+	},
+	FUNC_RECORD_RISK_LEVEL: {
+		DebugName: "FUNC_RECORD_RISK_LEVEL",
+		AstName:   "RecordRiskLevel",
+	},
+	FUNC_RECORD_HAS_PAST_ALERTS: {
+		DebugName: "FUNC_RECORD_HAS_PAST_ALERTS",
+		AstName:   "RecordHasPastAlerts",
+	},
+	FUNC_SCORE_COMPUTATION: {
+		DebugName:      "FUNC_SCORE_COMPUTATION",
+		AstName:        "ScoreComputation",
+		NamedArguments: []string{"modifier", "floor"},
+	},
+	FUNC_SWITCH: {
+		DebugName:           "FUNC_SWITCH",
+		AstName:             "Switch",
+		NamedArguments:      []string{"field", "type"},
+		LazyChildEvaluation: shortCircuitIfScoringTriggered,
+	},
+}
+
+func (f Function) Attributes() (FuncAttributes, error) {
+	if attributes, ok := FuncAttributesMap[f]; ok {
+		return attributes, nil
+	}
+
+	unknown := fmt.Sprintf("Unknown function: %v", f)
+	return FuncAttributes{
+		DebugName: unknown,
+		AstName:   unknown,
+	}, errors.New(unknown)
+}
+
+func (f Function) DebugString() string {
+	attributes, _ := f.Attributes()
+	return attributes.DebugName
+}
+
+// ======= Constant =======
+
+func NewNodeConstant(value any) Node {
+	return Node{Function: FUNC_CONSTANT, Constant: value, Children: []Node{}, NamedChildren: map[string]Node{}}
+}
+
+// ======= DbAccess =======
+
+func NewNodeDatabaseAccess(tableName string, fieldName string, path []string) Node {
+	return Node{Function: FUNC_DB_ACCESS}.
+		AddNamedChild("tableName", NewNodeConstant(tableName)).
+		AddNamedChild("fieldName", NewNodeConstant(fieldName)).
+		AddNamedChild("path", NewNodeConstant(path))
+}
+
+func shortCircuitIfTrue(res NodeEvaluation) bool {
+	if b, ok := res.ReturnValue.(bool); ok {
+		// If node returned true, we stop (return !true = false), otherwise, continue with true
+		return !b
+	}
+	return true
+}
+
+func shortCircuitIfFalse(res NodeEvaluation) bool {
+	if b, ok := res.ReturnValue.(bool); ok {
+		// If node returned false, we stop (return false), otherwise, continue with true
+		return b
+	}
+	return true
+}
+
+func shortCircuitIfScoringTriggered(res NodeEvaluation) bool {
+	if s, ok := res.ReturnValue.(ScoreComputationResult); ok {
+		return !s.Triggered
+	}
+	return false
+}
+
+func IsLogicalOperation(f Function) bool {
+	return slices.Contains([]Function{
+		FUNC_AND,
+		FUNC_OR,
+	}, f)
+}
+
+func IsMathOperation(f Function) bool {
+	return slices.Contains([]Function{
+		FUNC_GREATER,
+		FUNC_GREATER_OR_EQUAL,
+		FUNC_LESS,
+		FUNC_LESS_OR_EQUAL,
+		FUNC_EQUAL,
+		FUNC_NOT_EQUAL,
+		FUNC_ADD,
+		FUNC_SUBTRACT,
+		FUNC_MULTIPLY,
+		FUNC_DIVIDE,
+	}, f)
+}
+
+func IsStringComparison(f Function) bool {
+	return slices.Contains([]Function{
+		FUNC_STRING_CONTAINS,
+		FUNC_STRING_NOT_CONTAIN,
+	}, f)
+}
+
+func IsInListComparison(f Function) bool {
+	return slices.Contains([]Function{
+		FUNC_IS_IN_LIST,
+		FUNC_IS_NOT_IN_LIST,
+	}, f)
+}
+
+func NewNodeCustomListAccess(customListId string) Node {
+	return Node{Function: FUNC_CUSTOM_LIST_ACCESS}.
+		AddNamedChild("customListId", NewNodeConstant(customListId))
+}

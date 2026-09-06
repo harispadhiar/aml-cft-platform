@@ -1,0 +1,140 @@
+package executor_factory
+
+import (
+	"context"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/repositories"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/pashagolub/pgxmock/v4"
+)
+
+type ExecutorFactoryStub struct {
+	Mock pgxmock.PgxPoolIface
+}
+
+func NewExecutorFactoryStub() ExecutorFactoryStub {
+	pool, _ := pgxmock.NewPool()
+
+	return ExecutorFactoryStub{
+		Mock: pool,
+	}
+}
+
+type PgExecutorStub struct {
+	pgxmock.PgxPoolIface
+}
+
+func (stub ExecutorFactoryStub) NewClientDbExecutor(ctx context.Context, organizationId uuid.UUID) (repositories.Executor, error) {
+	return nil, nil
+}
+
+func (stub PgExecutorStub) Begin(ctx context.Context) (repositories.Transaction, error) {
+	return NewDbExecFactoryStub(stub.PgxPoolIface), nil
+}
+
+func (stub ExecutorFactoryStub) NewExecutor() repositories.Executor {
+	return PgExecutorStub{
+		stub.Mock,
+	}
+}
+
+func (stub ExecutorFactoryStub) NewPinnedExecutor(ctx context.Context) (repositories.Executor, func(), error) {
+	return PgExecutorStub{
+		stub.Mock,
+	}, func() {}, nil
+}
+
+func (stub PgExecutorStub) DatabaseSchema() models.DatabaseSchema {
+	return models.DatabaseSchema{}
+}
+
+func (stub PgExecutorStub) Cache(ctx context.Context) *repositories.RedisExecutor {
+	return nil
+}
+
+// TransactionFactoryStub is a stub for the transaction factory
+
+type TransactionFactoryStub struct {
+	Mock dbExecFactoryStub
+}
+
+func NewTransactionFactoryStub(exec ExecutorFactoryStub) TransactionFactoryStub {
+	return TransactionFactoryStub{
+		Mock: NewDbExecFactoryStub(exec.Mock),
+	}
+}
+
+func (stub TransactionFactoryStub) Transaction(ctx context.Context, fn func(tx repositories.Transaction) error) error {
+	err := fn(stub.Mock)
+	return err
+}
+
+func (stub TransactionFactoryStub) TransactionInOrgSchema(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	f func(tx repositories.Transaction) error,
+) error {
+	exec := stub.Mock.withClientSchema()
+	err := f(exec)
+	return err
+}
+
+// helper type to inject to the tx factory stub
+
+type dbExecFactoryStub struct {
+	exec       pgxmock.PgxPoolIface
+	schemaType models.DatabaseSchemaType
+}
+
+func NewDbExecFactoryStub(exec pgxmock.PgxPoolIface) dbExecFactoryStub {
+	return dbExecFactoryStub{
+		exec: exec,
+	}
+}
+
+func (stub dbExecFactoryStub) withClientSchema() dbExecFactoryStub {
+	stub.schemaType = models.DATABASE_SCHEMA_TYPE_CLIENT
+	return stub
+}
+
+func (stub dbExecFactoryStub) DatabaseSchema() models.DatabaseSchema {
+	return models.DatabaseSchema{
+		SchemaType: stub.schemaType,
+		Schema:     "test",
+	}
+}
+
+func (stub dbExecFactoryStub) RawTx() pgx.Tx {
+	return stub.exec
+}
+
+func (stub dbExecFactoryStub) Exec(ctx context.Context, sql string, arguments ...interface{}) (pgconn.CommandTag, error) {
+	return stub.exec.Exec(ctx, sql, arguments...)
+}
+
+func (stub dbExecFactoryStub) Query(ctx context.Context, sql string, arguments ...interface{}) (pgx.Rows, error) {
+	return stub.exec.Query(ctx, sql, arguments...)
+}
+
+func (stub dbExecFactoryStub) QueryRow(ctx context.Context, sql string, arguments ...interface{}) pgx.Row {
+	return stub.exec.QueryRow(ctx, sql, arguments...)
+}
+
+func (stub dbExecFactoryStub) Begin(ctx context.Context) (repositories.Transaction, error) {
+	return stub, nil
+}
+
+func (stub dbExecFactoryStub) Commit(ctx context.Context) error {
+	return nil
+}
+
+func (stub dbExecFactoryStub) Rollback(ctx context.Context) error {
+	return nil
+}
+
+func (stub dbExecFactoryStub) Cache(ctx context.Context) *repositories.RedisExecutor {
+	return nil
+}

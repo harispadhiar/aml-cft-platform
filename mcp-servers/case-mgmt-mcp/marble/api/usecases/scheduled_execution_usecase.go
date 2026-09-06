@@ -1,0 +1,159 @@
+package usecases
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/checkmarble/marble-backend/repositories"
+	"github.com/checkmarble/marble-backend/usecases/executor_factory"
+	"github.com/checkmarble/marble-backend/usecases/security"
+	"github.com/google/uuid"
+)
+
+type ScheduledExecutionUsecaseRepository interface {
+	GetOrganizationById(ctx context.Context, exec repositories.Executor, orgId uuid.UUID) (models.Organization, error)
+
+	GetScenarioById(ctx context.Context, exec repositories.Executor, scenarioId string, screeningProvider models.ScreeningProvider) (models.Scenario, error)
+	GetScenarioIteration(ctx context.Context, exec repositories.Executor, scenarioIterationId string, useCache bool) (
+		models.ScenarioIteration, error,
+	)
+
+	GetScheduledExecution(ctx context.Context, exec repositories.Executor, id string) (models.ScheduledExecution, error)
+	ListScheduledExecutions(ctx context.Context, exec repositories.Executor,
+		filters models.ListScheduledExecutionsFilters, paging *models.PaginationAndSorting) ([]models.ScheduledExecution, error)
+	CreateScheduledExecution(ctx context.Context, exec repositories.Executor,
+		input models.CreateScheduledExecutionInput, id string) error
+}
+
+type scheduledExecutionTaskQueueRepository interface {
+	EnqueueScheduledExecutionTask(
+		ctx context.Context,
+		tx repositories.Transaction,
+		organizationId uuid.UUID,
+		scheduledExecutionId string,
+	) error
+}
+
+type ScheduledExecutionUsecase struct {
+	enforceSecurity     security.EnforceSecurityDecision
+	transactionFactory  executor_factory.TransactionFactory
+	executorFactory     executor_factory.ExecutorFactory
+	repository          ScheduledExecutionUsecaseRepository
+	taskQueueRepository scheduledExecutionTaskQueueRepository
+}
+
+func (usecase *ScheduledExecutionUsecase) GetScheduledExecution(ctx context.Context, id string) (models.ScheduledExecution, error) {
+	return executor_factory.TransactionReturnValue(ctx, usecase.transactionFactory, func(
+		tx repositories.Transaction,
+	) (models.ScheduledExecution, error) {
+		execution, err := usecase.repository.GetScheduledExecution(ctx, tx, id)
+		if err != nil {
+			return models.ScheduledExecution{}, err
+		}
+		if err := usecase.enforceSecurity.ReadScheduledExecution(execution); err != nil {
+			return models.ScheduledExecution{}, err
+		}
+		return execution, nil
+	})
+}
+
+// ListScheduledExecutions returns the list of scheduled executions of the current organization.
+// The optional argument 'scenarioId' can be used to filter the returned list.
+func (usecase *ScheduledExecutionUsecase) ListScheduledExecutions(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	filters models.ListScheduledExecutionsFilters,
+	paging *models.PaginationAndSorting,
+) (models.PaginatedScheduledExecutions, error) {
+	return executor_factory.TransactionReturnValue(ctx, usecase.transactionFactory, func(
+		tx repositories.Transaction,
+	) (models.PaginatedScheduledExecutions, error) {
+		if filters.ScenarioId == "" {
+			filters.OrganizationId = organizationId
+		}
+
+		var repoPaging *models.PaginationAndSorting
+
+		if paging != nil {
+			repoPaging = &models.PaginationAndSorting{
+				Limit:    paging.Limit + 1,
+				Order:    paging.Order,
+				Sorting:  paging.Sorting,
+				OffsetId: paging.OffsetId,
+			}
+		}
+
+		executions, err := usecase.repository.ListScheduledExecutions(ctx, tx, filters, repoPaging)
+		if err != nil {
+			return models.PaginatedScheduledExecutions{}, err
+		}
+
+		for _, execution := range executions {
+			if err := usecase.enforceSecurity.ReadScheduledExecution(execution); err != nil {
+				return models.PaginatedScheduledExecutions{}, err
+			}
+		}
+
+		hasMore := false
+
+		if paging != nil && len(executions) > paging.Limit {
+			hasMore = true
+			executions = executions[:paging.Limit]
+		}
+
+		return models.PaginatedScheduledExecutions{Executions: executions, HasMore: hasMore}, nil
+	})
+}
+
+func (usecase *ScheduledExecutionUsecase) CreateScheduledExecution(ctx context.Context, input models.CreateScheduledExecutionInput) error {
+	exec := usecase.executorFactory.NewExecutor()
+
+	org, err := usecase.repository.GetOrganizationById(ctx, exec, input.OrganizationId)
+	if err != nil {
+		return err
+	}
+
+	scenarioIteration, err := usecase.repository.GetScenarioIteration(ctx, exec, input.ScenarioIterationId, false)
+	if err != nil {
+		return err
+	}
+	scenario, err := usecase.repository.GetScenarioById(ctx, exec, scenarioIteration.ScenarioId, org.GetScreeningProviderFor(models.ScreeningFeatureTransactionMonitoring))
+	if err != nil {
+		return err
+	}
+	if err := usecase.enforceSecurity.CreateScheduledExecution(scenario); err != nil {
+		return err
+	}
+
+	if *scenario.LiveVersionID != scenarioIteration.Id {
+		return fmt.Errorf("scenario iteration is not live %w", models.BadParameterError)
+	}
+
+	previousExecutions, err := usecase.repository.ListScheduledExecutions(
+		ctx, exec, models.ListScheduledExecutionsFilters{ScenarioId: scenario.Id}, nil,
+	)
+	if err != nil {
+		return err
+	}
+	for _, ex := range previousExecutions {
+		if ex.Status == models.ScheduledExecutionPending ||
+			ex.Status == models.ScheduledExecutionProcessing {
+			return fmt.Errorf("a pending execution already exists for this scenario %w", models.BadParameterError)
+		}
+	}
+
+	id := pure_utils.NewId().String()
+	return usecase.transactionFactory.Transaction(ctx, func(tx repositories.Transaction) error {
+		if err := usecase.repository.CreateScheduledExecution(ctx, tx, models.CreateScheduledExecutionInput{
+			OrganizationId:      input.OrganizationId,
+			ScenarioId:          scenario.Id,
+			ScenarioIterationId: input.ScenarioIterationId,
+			Manual:              true,
+		}, id); err != nil {
+			return err
+		}
+		return usecase.taskQueueRepository.EnqueueScheduledExecutionTask(ctx, tx, input.OrganizationId, id)
+	})
+}

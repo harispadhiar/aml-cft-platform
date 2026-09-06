@@ -1,0 +1,127 @@
+import { type ScreeningHitTableResponse } from '@app-builder/models/analytics';
+import { formatNumber, useFormatLanguage } from '@app-builder/utils/format';
+import { createColumnHelper, getCoreRowModel } from '@tanstack/react-table';
+import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Table, Typo, useTable } from 'ui-design-system';
+import { Spinner } from '../Spinner';
+import { AnalyticsTooltip } from './Tooltip';
+
+const columnHelper = createColumnHelper<ScreeningHitTableResponse>();
+
+export function ScreeningHits({ data, isLoading }: { data: ScreeningHitTableResponse[]; isLoading: boolean }) {
+  const { t } = useTranslation(['analytics']);
+  const language = useFormatLanguage();
+  const [expanded, setExpanded] = useState(false);
+
+  const toPercent = (value: number) =>
+    formatNumber(value > 1 ? value / 100 : value, {
+      language,
+      style: 'percent',
+      maximumFractionDigits: 1,
+    });
+
+  const visibleData = useMemo(() => (expanded ? data : data.slice(0, 5)), [expanded, data]);
+
+  const columns = useMemo(
+    () => [
+      columnHelper.accessor((row) => row.name, {
+        id: 'name',
+        header: t('analytics:screening_hits.columns.name'),
+        cell: ({ getValue }) => <span className="line-clamp-1">{getValue()}</span>,
+      }),
+      columnHelper.accessor((row) => row.execs, {
+        id: 'execs',
+        header: () => (
+          <div className="text-s text-grey-primary flex flex-row items-center font-semibold">
+            {t('analytics:screening_hits.columns.execs')}
+            <AnalyticsTooltip className="size-4" content={t('analytics:screening_hits.columns.execs.tooltip')} />
+          </div>
+        ),
+      }),
+      columnHelper.accessor((row) => row.hits, {
+        id: 'hits',
+        header: () => (
+          <div className="text-s text-grey-primary flex flex-row items-center font-semibold">
+            {t('analytics:screening_hits.columns.hits')}
+            <AnalyticsTooltip className="size-4" content={t('analytics:screening_hits.columns.hits.tooltip')} />
+          </div>
+        ),
+      }),
+      columnHelper.accessor((row) => row.hitRatio, {
+        id: 'hitRatio',
+        header: () => (
+          <div className="text-s text-grey-primary flex flex-row items-center font-semibold">
+            {t('analytics:screening_hits.columns.hit_ratio')}
+            <AnalyticsTooltip className="size-4" content={t('analytics:screening_hits.columns.hit_ratio.tooltip')} />
+          </div>
+        ),
+        cell: ({ getValue }) => <span>{toPercent(getValue())}</span>,
+      }),
+      columnHelper.accessor((row) => row.avgHitsPerScreening, {
+        id: 'avgHitsPerScreening',
+        header: () => (
+          <div className="text-s text-grey-primary flex flex-row items-center font-semibold">
+            {t('analytics:screening_hits.columns.avg_hits_per_screening')}
+            <AnalyticsTooltip
+              className="size-4"
+              content={t('analytics:screening_hits.columns.avg_hits_per_screening.tooltip')}
+            />
+          </div>
+        ),
+        cell: ({ getValue }) => <span>{formatNumber(getValue(), { language })}</span>,
+      }),
+    ],
+    [columnHelper, language, t],
+  );
+
+  const { table, getBodyProps, rows, getContainerProps } = useTable({
+    data: visibleData,
+    columns,
+    columnResizeMode: 'onChange',
+    getCoreRowModel: getCoreRowModel(),
+    enableSorting: false,
+  });
+  return (
+    <div className="bg-surface-card border border-grey-border rounded-lg p-md flex flex-col gap-sm">
+      <div className="flex items-center justify-between">
+        <Typo variant="title2">{t('analytics:screening_hits.title')}</Typo>
+      </div>
+      <div aria-busy={isLoading} className="relative">
+        {isLoading ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-grey-background">
+            <Spinner className="size-6" />
+          </div>
+        ) : null}
+        <div className="flex w-full flex-col items-start gap-md">
+          <Table.Container {...getContainerProps()} className="bg-surface-card w-full">
+            <Table.Header headerGroups={table.getHeaderGroups()} />
+            <Table.Body {...getBodyProps()}>
+              {rows.map((row) => (
+                <Table.Row key={row.id} row={row} />
+              ))}
+              {!expanded && data.length > 5 ? (
+                <tr
+                  className="even:bg-surface-row h-12 hover:bg-purple-background-light cursor-pointer"
+                  onClick={() => setExpanded(true)}
+                >
+                  <td
+                    className="text-s w-full truncate px-md font-medium text-purple-primary"
+                    colSpan={table.getHeaderGroups()[0]?.headers.length ?? 5}
+                  >
+                    {t('analytics:rule_hits.see_more.label')}
+                  </td>
+                </tr>
+              ) : null}
+            </Table.Body>
+          </Table.Container>
+        </div>
+        {!isLoading && !data.length ? (
+          <div className="flex items-center justify-center py-xl">
+            <span className="text-md text-grey-disabled">{t('analytics:no_data')}</span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}

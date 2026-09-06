@@ -1,0 +1,523 @@
+import { OUTCOME_COLORS } from '@app-builder/constants/analytics';
+import { useResizeObserver } from '@app-builder/hooks/useResizeObserver';
+import type {
+  DecisionOutcomes,
+  DecisionOutcomesAbsolute,
+  DecisionOutcomesPerPeriod,
+  DecisionsFilter,
+  Outcome,
+  RangeId,
+} from '@app-builder/models/analytics';
+import { getOutcomeTranslationKey } from '@app-builder/utils/analytics';
+import { downloadFile } from '@app-builder/utils/download-file';
+import { useFormatLanguage } from '@app-builder/utils/format';
+import { type ComputedDatum, ResponsiveBar } from '@nivo/bar';
+import { differenceInDays, getWeek, getYear } from 'date-fns';
+import { useEffect, useMemo, useState } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
+import { Button, Typo } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+import { GraphSpinnerOverlay } from './GraphSpinnerOverlay';
+import { OutcomeFilter } from './OutcomeFilter';
+
+export type DateRange = {
+  start: string;
+  end: string;
+};
+export type DecisionsPerOutcome = {
+  rangeId: RangeId;
+  date: string;
+  approve: number;
+  decline: number;
+  review: number;
+  blockAndReview: number;
+  total?: number;
+};
+
+interface DecisionsProps {
+  data: DecisionOutcomesPerPeriod | null;
+  scenarioVersions: { version: number; createdAt: string }[];
+  isLoading?: boolean;
+}
+
+// Decision filter default values
+const defaultDecisions: DecisionsFilter = new Map([
+  ['decline', true],
+  ['blockAndReview', true],
+  ['review', true],
+  ['approve', false],
+]);
+
+const getBarColors = (d: ComputedDatum<DecisionsPerOutcome>) => {
+  const id = String(d.id) as 'approve' | 'decline' | 'review' | 'blockAndReview';
+  return OUTCOME_COLORS[id] ?? '#9ca3af';
+};
+
+export function Decisions({ data, scenarioVersions, isLoading = false }: DecisionsProps) {
+  const { t } = useTranslation();
+  const language = useFormatLanguage();
+
+  const { ref: divRef, dimensions } = useResizeObserver<HTMLDivElement>({
+    throttleMs: 16,
+    observeHeight: false,
+  });
+
+  const MAX_RANGE_SIZE_FOR_DAILY = 182; // 6 months
+
+  const SYMLOG_SCALE_MIN_ENABLED = true;
+
+  const [decisions, setDecisions] = useState<DecisionsFilter>(defaultDecisions);
+  const [percentage, setPercentage] = useState(false);
+  const [scale, setScale] = useState<'linear' | 'symlog'>('linear');
+  const [groupDate, setGroupDate] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
+  const [isHovered, setIsHovered] = useState(false);
+
+  const currentDataGroup = useMemo(() => data?.[groupDate], [data, groupDate]);
+
+  const sanitizedData = useMemo(
+    (): DecisionOutcomes[] | DecisionOutcomesAbsolute[] =>
+      percentage ? (currentDataGroup?.data.ratio ?? []) : (currentDataGroup?.data.absolute ?? []),
+    [percentage, currentDataGroup],
+  );
+
+  const chartData = useMemo(() => sanitizedData as DecisionsPerOutcome[], [sanitizedData]);
+
+  const isSameYear: boolean = getYear(data?.metadata.start!) === getYear(data?.metadata.end!);
+
+  const isDailyViewAvailable = useMemo(
+    () => differenceInDays(new Date(data?.metadata.end!), new Date(data?.metadata.start!)) <= MAX_RANGE_SIZE_FOR_DAILY,
+    [data?.metadata.start, data?.metadata.end],
+  );
+
+  useEffect(() => {
+    if (!data?.metadata.totalDecisions) {
+      return setGroupDate('daily');
+    }
+    if (!isDailyViewAvailable && groupDate === 'daily') {
+      return setGroupDate('weekly');
+    }
+  }, [data?.metadata.totalDecisions, isDailyViewAvailable]);
+
+  // for future use
+
+  //   interface ScenarioVersionsXMarker {
+  //     axis: 'x';
+  //     legend: string;
+  //     legendOrientation: 'horizontal';
+  //     value: string;
+  //     lineStyle: {
+  //       stroke: string;
+  //       strokeWidth: number;
+  //     };
+  //   }
+
+  //   const getVersionsXValues = (
+  //     values: DecisionsPerOutcome[],
+  //     scenarioVersions: { version: number; createdAt: string }[],
+  //   ): ScenarioVersionsXMarker[] => {
+  //     // Find the closest date for each scenario version and override the scenario version creation date with the date of the closest date
+  //     return scenarioVersions
+  //       .map(({ version, createdAt }) => {
+  //         const closestDate = values.find((value) => value.date >= createdAt);
+  //         return !closestDate
+  //           ? undefined
+  //           : {
+  //               axis: 'x' as const,
+  //               value: closestDate.date,
+  //               lineStyle: {
+  //                 stroke: 'rgba(0, 0, 0, .35)',
+  //                 strokeWidth: 2,
+  //               },
+  //               legend: `v${version}`,
+  //               legendOrientation: 'horizontal' as const,
+  //             };
+  //       })
+  //       .filter((v) => v !== undefined);
+  //   };
+
+  const padding = useMemo(() => {
+    if (scale !== 'symlog') {
+      return 0.5;
+    }
+    if (!data?.metadata.start || !data?.metadata.end) {
+      return 0.01;
+    }
+
+    const days = Math.abs(differenceInDays(new Date(data.metadata.end), new Date(data.metadata.start)));
+    const threshold = 90; // 3 months
+
+    if (days > threshold) {
+      return 0.01;
+    }
+
+    // progressively increase from 0.01 (at 90 days) to 0.5 (at 0 days)
+    const ratio = days / threshold;
+    return 0.5 - ratio * (0.5 - 0.01);
+  }, [scale, data?.metadata.start, data?.metadata.end]);
+
+  const getTootlipDateFormat = (date: string) => {
+    const dateObj = new Date(date);
+    switch (groupDate) {
+      case 'monthly':
+        return (
+          <span className="capitalize">
+            {dateObj.toLocaleDateString(language, {
+              month: 'long',
+              year: isSameYear ? undefined : 'numeric',
+            })}
+          </span>
+        );
+      case 'weekly':
+        return (
+          <Trans
+            i18nKey="analytics:decisions.tooltip.weekly"
+            values={{
+              date: dateObj.toLocaleDateString(language, {
+                day: 'numeric',
+                month: 'short',
+                year: isSameYear ? undefined : 'numeric',
+              }),
+              weekNumber: getWeek(dateObj),
+            }}
+            components={{
+              Br: <br />,
+            }}
+          />
+        );
+
+      case 'daily':
+        return (
+          <Trans
+            i18nKey="analytics:decisions.tooltip.daily"
+            values={{
+              date: dateObj.toLocaleDateString(language, {
+                day: 'numeric',
+                month: 'short',
+                year: isSameYear ? undefined : 'numeric',
+              }),
+            }}
+          />
+        );
+    }
+  };
+
+  const getSymlogTickValues = () => {
+    if (chartData.length === 0) return [0];
+
+    const values = chartData.flatMap((d) => [d.approve, d.decline, d.review, d.blockAndReview]);
+    const maxValue = Math.max(...values);
+
+    if (maxValue === 0) return [0];
+
+    const ticks = new Set([0]);
+    let step = 1;
+    while (step <= maxValue) {
+      ticks.add(step);
+      if (step * 2 <= maxValue) ticks.add(step * 2);
+      if (step * 5 <= maxValue) ticks.add(step * 5);
+      step *= 10;
+    }
+
+    return Array.from(ticks).sort((a, b) => a - b);
+  };
+
+  const getXTickValues = () => {
+    if (!currentDataGroup?.gridXValues) {
+      return [];
+    }
+    if (!data?.metadata.totalDecisions) {
+      return [data?.metadata.start, data?.metadata.end];
+    }
+
+    if (dimensions.width < 400) {
+      return currentDataGroup.gridXValues.filter((_, index) => index % 4 === 0);
+    }
+    if (dimensions.width < 800 && currentDataGroup.gridXValues.length >= 10) {
+      return currentDataGroup?.gridXValues.filter((_, index) => index % 2 === 0);
+    }
+    return currentDataGroup?.gridXValues;
+  };
+
+  const handleExportCsv = () => {
+    if (!data?.daily?.data?.absolute.length) return;
+
+    const headers = ['date', 'rangeId', ...decisions.keys(), ['total']];
+    const lines = data.daily.data.absolute.map((row) => {
+      const base = [row.date, row.rangeId];
+      type OutcomeValues = Pick<DecisionsPerOutcome, Outcome>;
+      const outcomeValues = Array.from(decisions.entries()).map(([k]) => {
+        const v = (row as OutcomeValues)[k];
+        return String(v);
+      });
+      const maybeTotal = [String((row as DecisionOutcomesAbsolute).total ?? 0)];
+      return [...base, ...outcomeValues, ...maybeTotal].join(',');
+    });
+
+    const csv = [headers.join(','), ...lines].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8,' });
+    const url = URL.createObjectURL(blob);
+    downloadFile(url, `decisions_outcomes_per_day.csv`);
+  };
+
+  return (
+    <div
+      className="bg-surface-card border border-grey-border rounded-lg p-md flex flex-col gap-sm"
+      onMouseEnter={() => {
+        setIsHovered(true);
+      }}
+    >
+      <div className="flex items-center justify-between">
+        <Typo variant="title2">{t('analytics:decisions.title')}</Typo>
+        <Button
+          variant="secondary"
+          className="flex items-center gap-sm"
+          disabled={
+            isLoading ||
+            !currentDataGroup ||
+            (percentage
+              ? (currentDataGroup.data.ratio?.length ?? 0) === 0
+              : (currentDataGroup.data.absolute?.length ?? 0) === 0)
+          }
+          onClick={handleExportCsv}
+        >
+          <Icon icon="download" className="size-4" />
+          {t('analytics:export.button')}
+        </Button>
+      </div>
+
+      <div ref={divRef} className="bg-surface-card border border-grey-border rounded-lg p-md mt-sm relative">
+        {isLoading ? <GraphSpinnerOverlay /> : null}
+        <div className="flex w-full h-[500px] flex-col items-start gap-md">
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-sm">
+              <span className="text-s">{t('analytics:decisions.count.label')}:</span>
+              <div className="flex gap-sm">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setPercentage(true);
+                    setDecisions(
+                      new Map([
+                        ['decline', true],
+                        ['blockAndReview', true],
+                        ['review', true],
+                        ['approve', true],
+                      ]),
+                    );
+                  }}
+                  className={percentage ? 'bg-purple-background-light border-purple-primary text-purple-primary' : ''}
+                >
+                  %
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => setPercentage(false)}
+                  className={!percentage ? 'bg-purple-background-light border-purple-primary text-purple-primary' : ''}
+                >
+                  #
+                </Button>
+              </div>
+            </div>
+
+            {SYMLOG_SCALE_MIN_ENABLED ? (
+              <div className="flex items-center gap-sm">
+                <span className="text-s">{t('analytics:decisions.scale.label')}:</span>
+                <div className="flex gap-sm">
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setScale('linear');
+                    }}
+                    className={
+                      scale === 'linear' ? 'bg-purple-background-light border-purple-primary text-purple-primary' : ''
+                    }
+                  >
+                    {t('analytics:decisions.scale.linear.label')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setGroupDate('weekly');
+                      setScale('symlog');
+                    }}
+                    className={
+                      scale === 'symlog' ? 'bg-purple-background-light border-purple-primary text-purple-primary' : ''
+                    }
+                  >
+                    {t('analytics:decisions.scale.symlog.label')}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <div className="flex-1 w-full">
+            <ResponsiveBar<DecisionsPerOutcome>
+              key={`${percentage ? 'percentage' : 'absolute'}-${groupDate}`}
+              data={chartData}
+              indexBy="date"
+              enableLabel={false}
+              keys={Array.from(decisions)
+                .filter(([_, value]) => value)
+                .map(([key]) => key)}
+              padding={padding}
+              margin={{ top: 5, right: 5, bottom: 24, left: 54 }}
+              colors={getBarColors}
+              borderRadius={4}
+              borderWidth={1}
+              borderColor={{ from: 'color' }}
+              defs={[
+                {
+                  id: 'compareOpacity',
+                  type: 'linearGradient',
+                  colors: [
+                    { offset: 0, color: 'inherit', opacity: 0.5 },
+                    { offset: 100, color: 'inherit', opacity: 0.5 },
+                  ],
+                },
+                {
+                  id: 'barGradient',
+                  type: 'linearGradient',
+                  colors: [
+                    { offset: 0, color: 'inherit', opacity: 0.85 },
+                    { offset: 100, color: 'inherit', opacity: 0.2 },
+                  ],
+                },
+              ]}
+              fill={[
+                {
+                  match: (n) => n.data.data.rangeId === 'compare',
+                  id: 'compareOpacity',
+                },
+                {
+                  match: (n) => n.data.data.rangeId !== 'compare',
+                  id: 'barGradient',
+                },
+              ]}
+              groupMode={scale === 'symlog' ? 'grouped' : 'stacked'}
+              valueScale={
+                !data?.metadata.totalDecisions
+                  ? { type: 'linear', min: 0, max: 1000 }
+                  : { type: scale, round: true, nice: true }
+              }
+              axisLeft={{
+                legend: 'outcome (indexBy)',
+                legendOffset: -70,
+                tickValues: !data?.metadata.totalDecisions
+                  ? [0, 200, 400, 600, 800, 1000]
+                  : scale === 'symlog'
+                    ? getSymlogTickValues()
+                    : undefined,
+              }}
+              axisBottom={{
+                tickValues: getXTickValues(),
+                format: (value: string) => {
+                  // Convert the ISO string to a Date object and format it
+                  const date = new Date(value);
+                  return date.toLocaleDateString(language, {
+                    year: !isSameYear ? 'numeric' : undefined,
+                    month: 'short',
+                    day: groupDate !== 'monthly' ? 'numeric' : undefined,
+                  });
+                },
+              }}
+              tooltip={({ data }) => {
+                const outcomes: Outcome[] = ['approve', 'decline', 'review', 'blockAndReview'];
+                const totalValue = !percentage && typeof data.total === 'number' ? data.total : undefined;
+                return (
+                  <div className="flex flex-col gap-xs bg-surface-card px-md py-sm rounded-lg border border-grey-border shadow-md min-w-52 w-max whitespace-nowrap">
+                    <span className="text-s text-grey-primary font-semibold">{getTootlipDateFormat(data?.date)}</span>
+                    <div className="flex flex-col gap-xs">
+                      {outcomes.map((outcome) => {
+                        const outcomeValue = data?.[outcome] ?? 0;
+                        const displayValue = percentage ? `${outcomeValue.toFixed(1)}%` : outcomeValue;
+                        return (
+                          <div key={outcome} className="flex items-center justify-between gap-md">
+                            <div className="flex items-center gap-xs">
+                              <div
+                                className="size-2.5 rounded-full flex-shrink-0"
+                                style={{ backgroundColor: OUTCOME_COLORS[outcome] }}
+                              />
+                              <span className="text-s text-grey-secondary">{t(getOutcomeTranslationKey(outcome))}</span>
+                            </div>
+                            <span className="text-s text-grey-primary font-semibold">{displayValue}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {!percentage && totalValue !== undefined && (
+                      <div className="flex items-center justify-between gap-md pt-xs border-t border-grey-border mt-xs">
+                        <span className="text-s text-grey-secondary">
+                          {t('analytics:decisions.tooltip.total', { defaultValue: 'Total' })}
+                        </span>
+                        <span className="text-s text-grey-primary font-semibold">{totalValue}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              }}
+              theme={{
+                text: { fill: 'var(--color-grey-secondary)' },
+                axis: { ticks: { text: { fill: 'var(--color-grey-secondary)' } } },
+                legends: { text: { fill: 'var(--color-grey-secondary)' } },
+                grid: { line: { stroke: 'var(--color-grey-border)', strokeWidth: 1, strokeDasharray: '4 4' } },
+              }}
+              layout="vertical"
+              motionConfig={{
+                mass: 1,
+                tension: 170,
+                friction: 8,
+                clamp: true,
+                precision: 0.01,
+                velocity: 0,
+              }}
+              //   markers={currentDataGroup?.scenarioVersionsXMarkers}
+            />
+          </div>
+          <div className="flex w-full justify-end mt-sm">
+            <div className="flex gap-sm">
+              <Button
+                disabled={!isDailyViewAvailable || !data?.metadata.totalDecisions}
+                variant="secondary"
+                mode="normal"
+                onClick={() => {
+                  setGroupDate('daily');
+                  setScale('linear');
+                }}
+                className={
+                  groupDate === 'daily' ? 'bg-purple-background-light border-purple-primary text-purple-primary' : ''
+                }
+              >
+                {t('analytics:time_granularity.day')}
+              </Button>
+              <Button
+                disabled={!data?.weekly || !data?.metadata.totalDecisions}
+                variant="secondary"
+                mode="normal"
+                onClick={() => setGroupDate('weekly')}
+                className={
+                  groupDate === 'weekly' ? 'bg-purple-background-light border-purple-primary text-purple-primary' : ''
+                }
+              >
+                {t('analytics:time_granularity.week')}
+              </Button>
+              <Button
+                disabled={!data?.monthly || !data?.metadata.totalDecisions}
+                variant="secondary"
+                mode="normal"
+                onClick={() => setGroupDate('monthly')}
+                className={
+                  groupDate === 'monthly' ? 'bg-purple-background-light border-purple-primary text-purple-primary' : ''
+                }
+              >
+                {t('analytics:time_granularity.month')}
+              </Button>
+            </div>
+          </div>
+          <div className="flex w-full justify-center">
+            <OutcomeFilter decisions={decisions} onChange={setDecisions} highlight={isHovered} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

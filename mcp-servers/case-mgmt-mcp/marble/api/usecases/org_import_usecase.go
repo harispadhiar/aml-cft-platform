@@ -1,0 +1,1238 @@
+package usecases
+
+import (
+	"cmp"
+	"context"
+	"embed"
+	"encoding/json"
+	"fmt"
+	"maps"
+	"slices"
+	"strings"
+
+	"github.com/checkmarble/marble-backend/dto"
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/models/ast"
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/checkmarble/marble-backend/repositories"
+	"github.com/checkmarble/marble-backend/repositories/idp"
+	"github.com/checkmarble/marble-backend/usecases/executor_factory"
+	"github.com/checkmarble/marble-backend/usecases/indexes"
+	"github.com/checkmarble/marble-backend/usecases/security"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/cockroachdb/errors"
+	"github.com/google/uuid"
+)
+
+type OrgImportUsecase struct {
+	transactionWrapper UsecaseTransactionWrapper
+	transactionFactory executor_factory.TransactionFactory
+	security           security.EnforceSecurityOrgImportImpl
+
+	orgRepository        repositories.OrganizationRepository
+	userRepository       repositories.UserRepository
+	firebaseAdminer      idp.Adminer
+	dataModelRepository  repositories.DataModelRepository
+	dataModelUsecase     usecase
+	tagRepository        TagUseCaseRepository
+	customListRepository repositories.CustomListRepository
+	scenarioRepository   repositories.ScenarioUsecaseRepository
+	iterationRepository  IterationUsecaseRepository
+	screeningRepository  ScreeningConfigRepository
+	indexEditor          indexes.ClientDbIndexEditor
+	publicationUsecase   *ScenarioPublicationUsecase
+	inboxRepository      InboxRepository
+	workflowRepository   workflowRepository
+
+	ingestionUsecase IngestionUseCase
+	decisionUsecase  DecisionUsecase
+}
+
+func NewOrgImportUsecase(
+	wrapper UsecaseTransactionWrapper,
+	transactionFactory executor_factory.TransactionFactory,
+	security security.EnforceSecurityOrgImportImpl,
+	organizationRepository repositories.OrganizationRepository,
+	userRepository repositories.UserRepository,
+	firebaseAdminer idp.Adminer,
+	dataModelRepository repositories.DataModelRepository,
+	dataModelUsecase usecase,
+	tagRepository TagUseCaseRepository,
+	customListRepository repositories.CustomListRepository,
+	scenarioRepository repositories.ScenarioUsecaseRepository,
+	iterationRepository IterationUsecaseRepository,
+	screeningRepository ScreeningConfigRepository,
+	indexEditor indexes.ClientDbIndexEditor,
+	publicationUsecase *ScenarioPublicationUsecase,
+	inboxRepository InboxRepository,
+	workflowRepository workflowRepository,
+	ingestionUsecase IngestionUseCase,
+	decisionUsecase DecisionUsecase,
+) OrgImportUsecase {
+	return OrgImportUsecase{
+		transactionWrapper:   wrapper,
+		transactionFactory:   transactionFactory,
+		security:             security,
+		orgRepository:        organizationRepository,
+		userRepository:       userRepository,
+		firebaseAdminer:      firebaseAdminer,
+		dataModelRepository:  dataModelRepository,
+		dataModelUsecase:     dataModelUsecase,
+		tagRepository:        tagRepository,
+		customListRepository: customListRepository,
+		scenarioRepository:   scenarioRepository,
+		iterationRepository:  iterationRepository,
+		screeningRepository:  screeningRepository,
+		indexEditor:          indexEditor,
+		publicationUsecase:   publicationUsecase,
+		inboxRepository:      inboxRepository,
+		workflowRepository:   workflowRepository,
+		ingestionUsecase:     ingestionUsecase,
+		decisionUsecase:      decisionUsecase,
+	}
+}
+
+//go:embed archetypes/*.json
+var ARCHETYPES embed.FS
+
+func (uc *OrgImportUsecase) ListArchetypes(ctx context.Context) ([]models.ArchetypeInfo, error) {
+	if err := uc.security.ListOrgArchetypes(); err != nil {
+		return nil, err
+	}
+
+	entries, err := ARCHETYPES.ReadDir("archetypes")
+	if err != nil {
+		return nil, err
+	}
+
+	archetypes := make([]models.ArchetypeInfo, len(entries))
+	for i, entry := range entries {
+		filename := entry.Name()
+
+		d, err := ARCHETYPES.ReadFile(fmt.Sprintf("archetypes/%s", filename))
+		if err != nil {
+			return nil, err
+		}
+
+		var spec dto.OrgImport
+		if err := json.Unmarshal(d, &spec); err != nil {
+			return nil, err
+		}
+
+		archetypes[i] = models.ArchetypeInfo{
+			Name:        filename[:len(filename)-len(".json")],
+			Label:       spec.Metadata.Label,
+			Description: spec.Metadata.Description,
+			AppVersion:  spec.Metadata.AppVersion,
+		}
+	}
+
+	return archetypes, nil
+}
+
+// existingOrgId can be uuid.Nil when called by a marble admin to create a new organization.
+// When existingOrgId is set, an org admin is importing data into their existing organization.
+func (uc *OrgImportUsecase) ImportFromArchetype(
+	ctx context.Context,
+	existingOrgId uuid.UUID,
+	apply dto.ArchetypeApplyDto,
+	seed bool,
+) (uuid.UUID, error) {
+	d, err := ARCHETYPES.ReadFile(fmt.Sprintf("archetypes/%s.json", apply.Name))
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	var pattern dto.OrgImport
+	if err := json.Unmarshal(d, &pattern); err != nil {
+		return uuid.Nil, err
+	}
+
+	if existingOrgId == uuid.Nil {
+		if apply.OrgName == "" || len(apply.Admins) == 0 {
+			return uuid.Nil, errors.Wrap(models.BadParameterError,
+				"org name and admins are required to create a new organization from archetype")
+		}
+		pattern.Org.Name = apply.OrgName
+		pattern.Admins = apply.Admins
+	}
+
+	return uc.Import(ctx, existingOrgId, pattern, seed)
+}
+
+// Deal with both case where we want to create a new organization with data and case where we want to import data into an existing organization.
+// The first case requires to be Marble Admin
+func (uc *OrgImportUsecase) Import(ctx context.Context, existingOrgId uuid.UUID, spec dto.OrgImport, seed bool) (uuid.UUID, error) {
+	return executor_factory.TransactionReturnValue(ctx, uc.transactionFactory, func(
+		tx repositories.Transaction,
+	) (uuid.UUID, error) {
+		var orgId uuid.UUID
+		var err error
+
+		if existingOrgId != uuid.Nil {
+			if err := uc.security.ImportIntoOrg(existingOrgId); err != nil {
+				return uuid.Nil, err
+			}
+			orgId, err = uc.importIntoExistingOrganization(ctx, tx, existingOrgId, spec)
+		} else {
+			if err := uc.security.ImportOrg(); err != nil {
+				return uuid.Nil, err
+			}
+			orgId, err = uc.createOrganization(ctx, tx, spec)
+		}
+		if err != nil {
+			return uuid.Nil, err
+		}
+
+		if seed {
+			if err := uc.Seed(ctx, spec, orgId); err != nil {
+				return orgId, nil
+			}
+		}
+
+		return orgId, nil
+	})
+}
+
+func (uc *OrgImportUsecase) importIntoExistingOrganization(ctx context.Context,
+	tx repositories.Transaction, existingOrgId uuid.UUID, spec dto.OrgImport,
+) (uuid.UUID, error) {
+	emptyOrg, err := uc.isOrganizationEmpty(ctx, tx, existingOrgId)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if !emptyOrg {
+		return uuid.Nil, errors.Wrap(models.ConflictError, "organization is not empty")
+	}
+
+	org, err := uc.orgRepository.GetOrganizationById(ctx, tx, existingOrgId)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	if uc.security.UserId() == nil {
+		return uuid.Nil, errors.Wrap(models.ForbiddenError,
+			"user id is required to import into an existing organization")
+	}
+	user, err := uc.userRepository.UserById(ctx, tx, *uc.security.UserId())
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	// Need this to stay in the same transaction when calling method which create it own executor
+	// Without this, some fetch will not see the changes made by previous method in the same transaction
+	// e.g. Creating datamodel -> Creating Navigation options
+	*uc = uc.transactionWrapper(tx, org, user).NewOrgImportUsecase()
+
+	if err := uc.createOrganizationResources(ctx, tx, existingOrgId, spec); err != nil {
+		return uuid.Nil, err
+	}
+
+	return existingOrgId, nil
+}
+
+// We consider an empty organization as an org without any table in the data model.
+// We can not create scenario, rules without tables
+func (uc *OrgImportUsecase) isOrganizationEmpty(ctx context.Context, tx repositories.Transaction, orgId uuid.UUID) (bool, error) {
+	dataModel, err := uc.dataModelRepository.GetDataModel(ctx, tx, orgId, false, false)
+	if err != nil {
+		return false, err
+	}
+
+	return len(dataModel.Tables) == 0, nil
+}
+
+func (uc *OrgImportUsecase) createOrganizationResources(ctx context.Context,
+	tx repositories.Transaction, orgId uuid.UUID, spec dto.OrgImport,
+) error {
+	ids := make(map[string]string)
+
+	if err := uc.createDataModel(ctx, tx, orgId, ids, spec.DataModel); err != nil {
+		return err
+	}
+	if err := uc.createTags(ctx, tx, orgId, ids, spec.Tags); err != nil {
+		return err
+	}
+	if err := uc.createCustomLists(ctx, tx, orgId, ids, spec.CustomLists); err != nil {
+		return err
+	}
+	if err := uc.createScenarios(ctx, tx, orgId, ids, spec.Scenarios); err != nil {
+		return err
+	}
+	if err := uc.createInboxes(ctx, tx, orgId, ids, spec.Inboxes); err != nil {
+		return err
+	}
+	if err := uc.createWorkflows(ctx, tx, ids, spec.Workflows); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Create from scratch the organization and all resources defined in the spec.
+// This function is used to created a new organization and not for an existing one
+func (uc *OrgImportUsecase) createOrganization(ctx context.Context, tx repositories.Transaction, spec dto.OrgImport) (uuid.UUID, error) {
+	orgId := pure_utils.NewId()
+
+	if err := uc.orgRepository.CreateOrganization(ctx, tx, orgId, models.CreateOrganizationInput{
+		Name: spec.Org.Name,
+	}); err != nil {
+		if repositories.IsUniqueViolationError(err) {
+			return uuid.Nil, errors.Wrap(
+				models.ConflictError,
+				"organization with the same name already exists",
+			)
+		}
+		return uuid.Nil, err
+	}
+
+	org, err := uc.orgRepository.GetOrganizationById(ctx, tx, orgId)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	admins, err := uc.createAdmins(ctx, tx, orgId, spec.Admins)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	admin, err := uc.userRepository.UserById(ctx, tx, admins[0])
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	*uc = uc.transactionWrapper(tx, org, admin).NewOrgImportUsecase()
+
+	err = uc.orgRepository.UpdateOrganization(ctx, tx, orgId, models.UpdateOrganizationInput{
+		DefaultScenarioTimezone: spec.Org.UpdateOrganizationBodyDto.DefaultScenarioTimezone,
+		ScreeningConfig: models.OrganizationOpenSanctionsConfigUpdateInput{
+			MatchThreshold: spec.Org.SanctionsThreshold,
+			MatchLimit:     spec.Org.SanctionsLimit,
+			Providers:      spec.Org.ScreeningProviders,
+		},
+	})
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	if err := uc.createOrganizationResources(ctx, tx, orgId, spec); err != nil {
+		return uuid.Nil, err
+	}
+
+	return orgId, nil
+}
+
+func (uc *OrgImportUsecase) createAdmins(ctx context.Context, tx repositories.Transaction,
+	orgId uuid.UUID, admins []dto.CreateUser,
+) ([]string, error) {
+	users := make([]string, len(admins))
+
+	for idx, admin := range admins {
+		userId, err := uc.userRepository.CreateUser(ctx, tx, models.CreateUser{
+			OrganizationId: orgId,
+			Email:          admin.Email,
+			FirstName:      admin.FirstName,
+			LastName:       admin.LastName,
+			Role:           models.ADMIN,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		if uc.firebaseAdminer != nil {
+			if err := uc.firebaseAdminer.CreateUser(ctx, admin.Email,
+				fmt.Sprintf("%s %s", admin.FirstName, admin.LastName)); err != nil {
+				return nil, err
+			}
+		}
+
+		users[idx] = userId
+	}
+
+	return users, nil
+}
+
+func (uc *OrgImportUsecase) createDataModel(ctx context.Context, tx repositories.Transaction,
+	orgId uuid.UUID, ids map[string]string, dataModel dto.ImportDataModel,
+) error {
+	logger := utils.LoggerFromContext(ctx)
+
+	// Step A: Prepare link classification
+	fieldIdToName := buildFieldIdToNameMap(dataModel.Tables)
+	includedLinks, separateLinks := classifyLinks(dataModel.Links, fieldIdToName)
+	includedLinksByChild := groupLinksByChildTable(includedLinks)
+	linkTypes := resolveLinkTypes(dataModel.Links, dataModel.Pivots)
+
+	// Step B: Topologically sort tables based on link dependencies
+	// Only use includedLinks (object_id links created with their table in Step C).
+	// separateLinks are created independently in Step E after all tables exist,
+	// so they must not participate in the sort — they can introduce false cycles.
+	sortedTables, err := topSortTables(dataModel.Tables, includedLinks)
+	if err != nil {
+		return errors.Wrap(err, "failed to sort tables by dependency order")
+	}
+
+	// Step C: Create each table via CreateDataModelTable (with fields + object_id links)
+	for _, table := range sortedTables {
+		fields := buildCreateFieldInputs(table)
+		links := buildCreateTableLinkInputs(includedLinksByChild[table.ID], fieldIdToName, linkTypes, ids)
+
+		semanticType := table.SemanticType
+		if semanticType == "" || semanticType == models.SemanticTypeUnset {
+			semanticType = models.SemanticTypeOther
+		}
+
+		var ftmEntity *models.FollowTheMoneyEntity
+		if table.FTMEntity != nil {
+			e := models.FollowTheMoneyEntityFrom(*table.FTMEntity)
+			if e != models.FollowTheMoneyEntityUnknown {
+				ftmEntity = &e
+			}
+		}
+
+		tableId, err := uc.dataModelUsecase.CreateDataModelTable(ctx, orgId, models.CreateTableInput{
+			Name:                 table.Name,
+			Description:          table.Description,
+			Alias:                table.Alias,
+			SemanticType:         semanticType,
+			FTMEntity:            ftmEntity,
+			Metadata:             table.Metadata,
+			PrimaryOrderingField: table.PrimaryOrderingField,
+			Fields:               fields,
+			Links:                links,
+		})
+		if err != nil {
+			return errors.Wrapf(err, "failed to create table %s", table.Name)
+		}
+		ids[table.ID] = tableId
+	}
+
+	// Step D: Populate field and link IDs in the ids map
+	createdDataModel, err := uc.dataModelRepository.GetDataModel(ctx, tx, orgId, false, false)
+	if err != nil {
+		return errors.Wrap(err, "failed to fetch data model after table creation")
+	}
+	for _, importTable := range dataModel.Tables {
+		createdTable, ok := createdDataModel.Tables[importTable.Name]
+		if !ok {
+			continue
+		}
+		for fieldName, importField := range importTable.Fields {
+			if createdField, ok := createdTable.Fields[fieldName]; ok {
+				ids[importField.ID] = createdField.ID
+			}
+		}
+	}
+
+	createdLinks, err := uc.dataModelRepository.GetLinks(ctx, tx, orgId)
+	if err != nil {
+		return errors.Wrap(err, "failed to fetch links after table creation")
+	}
+	createdLinksByName := make(map[string]models.LinkToSingle, len(createdLinks))
+	for _, link := range createdLinks {
+		createdLinksByName[link.Name] = link
+	}
+	for _, importLink := range includedLinks {
+		if createdLink, ok := createdLinksByName[importLink.Name]; ok {
+			ids[importLink.Id] = createdLink.Id
+		}
+	}
+
+	// Step E: Create non-object_id links (repository level, preserving original parent field)
+	for _, link := range separateLinks {
+		linkId := pure_utils.NewId()
+		ids[link.Id] = linkId.String()
+
+		logger.DebugContext(ctx, "creating link with non-object_id parent field via repository",
+			"link_name", link.Name, "parent_field_name", link.ParentFieldName)
+
+		err := uc.dataModelRepository.CreateDataModelLink(ctx, tx, linkId.String(), models.DataModelLinkCreateInput{
+			OrganizationID: orgId,
+			Name:           link.Name,
+			ParentTableID:  ids[link.ParentTableId],
+			ParentFieldID:  ids[link.ParentFieldId],
+			ChildTableID:   ids[link.ChildTableId],
+			ChildFieldID:   ids[link.ChildFieldId],
+		})
+		if err != nil {
+			return errors.Wrapf(err, "failed to create link %s", link.Name)
+		}
+	}
+
+	// Step F: Reconcile pivots with the import spec.
+	// A table may have several pivots (polymorphic belongs_to: at most one applies per row).
+	// CreateDataModelTable / link creation may have auto-created pivots (a default object_id
+	// field pivot, or a belongs_to path pivot per link). For every table the spec mentions,
+	// the auto-created set is reconciled to exactly the spec set: matching pivots are kept
+	// (recording the ID mapping), spec pivots not present are created, and auto-created
+	// pivots absent from the spec are deleted (e.g. the default object_id pivot when the
+	// spec defines belongs_to pivots instead). Tables the spec does not mention keep their
+	// auto-created default. Hard delete is safe: import only runs on a new/empty org.
+	existingPivots, err := uc.dataModelRepository.ListPivots(ctx, tx, orgId, nil, false, false)
+	if err != nil {
+		return errors.Wrap(err, "failed to list existing pivots")
+	}
+	existingPivotsByTable := make(map[string][]models.PivotMetadata, len(existingPivots))
+	for _, p := range existingPivots {
+		existingPivotsByTable[p.BaseTableId] = append(existingPivotsByTable[p.BaseTableId], p)
+	}
+
+	// Resolve the spec pivots into create inputs grouped by (resolved) base table id.
+	type resolvedPivot struct {
+		input  models.CreatePivotInput
+		sig    string
+		origId string
+	}
+	specPivotsByTable := make(map[string][]resolvedPivot, len(dataModel.Pivots))
+	for _, pivot := range dataModel.Pivots {
+		var fieldId *string
+		if pivot.FieldId != nil {
+			fieldId = utils.Ptr(ids[*pivot.FieldId])
+		}
+		pathLinkIds := pure_utils.Map(pivot.PathLinkIds, func(id string) string {
+			return ids[id]
+		})
+		baseTableId := ids[pivot.BaseTableId]
+		specPivotsByTable[baseTableId] = append(specPivotsByTable[baseTableId], resolvedPivot{
+			input: models.CreatePivotInput{
+				OrganizationId: orgId,
+				BaseTableId:    baseTableId,
+				FieldId:        fieldId,
+				PathLinkIds:    pathLinkIds,
+			},
+			sig:    pivotSignature(baseTableId, fieldId, pathLinkIds),
+			origId: pivot.Id.String(),
+		})
+	}
+
+	for baseTableId, specPivots := range specPivotsByTable {
+		specSigs := make(map[string]struct{}, len(specPivots))
+		for _, sp := range specPivots {
+			specSigs[sp.sig] = struct{}{}
+		}
+
+		existingBySig := make(map[string]models.PivotMetadata, len(existingPivotsByTable[baseTableId]))
+		for _, ex := range existingPivotsByTable[baseTableId] {
+			sig := pivotSignature(ex.BaseTableId, ex.FieldId, ex.PathLinkIds)
+			existingBySig[sig] = ex
+			// Delete auto-created pivots that the spec does not define for this table.
+			if _, ok := specSigs[sig]; !ok {
+				if err := uc.dataModelRepository.DeleteDataModelPivot(ctx, tx, ex.Id.String()); err != nil {
+					return errors.Wrapf(err, "failed to delete auto-created pivot for table %s", baseTableId)
+				}
+			}
+		}
+
+		for _, sp := range specPivots {
+			if existing, ok := existingBySig[sp.sig]; ok {
+				// Auto-created pivot already matches the spec; keep it but record the
+				// ID mapping so downstream references resolve correctly.
+				ids[sp.origId] = existing.Id.String()
+				continue
+			}
+
+			pivotId := pure_utils.NewId()
+			ids[sp.origId] = pivotId.String()
+			if err := uc.dataModelRepository.CreatePivot(ctx, tx, pivotId.String(), sp.input); err != nil {
+				return errors.Wrapf(err, "failed to create pivot for table %s", baseTableId)
+			}
+		}
+	}
+
+	// Step G: Create the navigation options that are not already covered by an index
+	// scheduled in step C (see navOptionsToCreate).
+	for _, navOption := range navOptionsToCreate(dataModel.Tables, includedLinks, dataModel.NavigationOptions) {
+		err := uc.dataModelUsecase.CreateNavigationOption(ctx, models.CreateNavigationOptionInput{
+			Blocking:        true,
+			SourceTableId:   ids[navOption.sourceTableId],
+			SourceFieldId:   ids[navOption.option.SourceFieldId],
+			TargetTableId:   ids[navOption.option.TargetTableId],
+			FilterFieldId:   ids[navOption.option.FilterFieldId],
+			OrderingFieldId: ids[navOption.option.OrderingFieldId],
+		})
+		if err != nil {
+			// Navigation options are checked for duplication, we want to ignore that
+			if !errors.Is(err, models.ConflictError) {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// buildFieldIdToNameMap creates a mapping from field IDs to field names across all import tables.
+func buildFieldIdToNameMap(tables []dto.Table) map[string]string {
+	m := make(map[string]string)
+	for _, table := range tables {
+		for name, field := range table.Fields {
+			m[field.ID] = name
+		}
+	}
+	return m
+}
+
+// classifyLinks splits links into two groups: those with object_id as parent field
+// (which can be included in CreateDataModelTable) and those with other parent fields
+// (which must be created separately via the repository).
+func classifyLinks(links []dto.LinkToSingle, fieldIdToName map[string]string) (objectIdLinks, otherLinks []dto.LinkToSingle) {
+	for _, link := range links {
+		parentFieldName := fieldIdToName[link.ParentFieldId]
+		if parentFieldName == "object_id" {
+			objectIdLinks = append(objectIdLinks, link)
+		} else {
+			otherLinks = append(otherLinks, link)
+		}
+	}
+	return
+}
+
+func groupLinksByChildTable(links []dto.LinkToSingle) map[string][]dto.LinkToSingle {
+	m := make(map[string][]dto.LinkToSingle)
+	for _, link := range links {
+		m[link.ChildTableId] = append(m[link.ChildTableId], link)
+	}
+	return m
+}
+
+// resolveLinkTypes determines the LinkType for each link, determine by computing based on pivots.
+// The link type will determine the pivot creation behavior in CreateDataModelTable.
+// Only use pivot with one item in path link. Multi-link pivot will be created separately after table creation
+func resolveLinkTypes(links []dto.LinkToSingle, pivots []dto.PivotMetadata) map[string]models.LinkType {
+	// Build set of link IDs that appear in pivot paths (these are belongs_to)
+	belongsToLinkIds := make(map[string]struct{})
+	for _, pivot := range pivots {
+		if len(pivot.PathLinkIds) != 1 {
+			continue
+		}
+		for _, linkId := range pivot.PathLinkIds {
+			belongsToLinkIds[linkId] = struct{}{}
+		}
+	}
+
+	result := make(map[string]models.LinkType, len(links))
+	for _, link := range links {
+		if _, ok := belongsToLinkIds[link.Id]; ok {
+			result[link.Id] = models.LinkTypeBelongsTo
+		} else {
+			result[link.Id] = models.LinkTypeRelated
+		}
+	}
+	return result
+}
+
+// topSortTables performs a topological sort of tables based on link dependencies.
+// A child table depends on its parent table (from links) being created first.
+func topSortTables(tables []dto.Table, links []dto.LinkToSingle) ([]dto.Table, error) {
+	tableById := make(map[string]dto.Table, len(tables))
+	for _, t := range tables {
+		tableById[t.ID] = t
+	}
+
+	// Build adjacency: deps[childTableId] = set of parentTableIds
+	deps := make(map[string]map[string]struct{})
+	for _, link := range links {
+		// Only add dependency if parent table is in the import (it might reference an external table)
+		if _, ok := tableById[link.ParentTableId]; !ok {
+			continue
+		}
+		// Skip self-links
+		if link.ChildTableId == link.ParentTableId {
+			continue
+		}
+		if deps[link.ChildTableId] == nil {
+			deps[link.ChildTableId] = make(map[string]struct{})
+		}
+		deps[link.ChildTableId][link.ParentTableId] = struct{}{}
+	}
+
+	// Kahn's algorithm
+	inDegree := make(map[string]int, len(tables))
+	for _, t := range tables {
+		inDegree[t.ID] = len(deps[t.ID])
+	}
+
+	var queue []string
+	for _, t := range tables {
+		if inDegree[t.ID] == 0 {
+			queue = append(queue, t.ID)
+		}
+	}
+
+	var sorted []dto.Table
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		sorted = append(sorted, tableById[id])
+
+		// For each table that depends on this one, decrement in-degree
+		for childId, parentIds := range deps {
+			if _, ok := parentIds[id]; ok {
+				inDegree[childId]--
+				if inDegree[childId] == 0 {
+					queue = append(queue, childId)
+				}
+			}
+		}
+	}
+
+	if len(sorted) != len(tables) {
+		return nil, errors.New("circular dependency detected among tables")
+	}
+
+	return sorted, nil
+}
+
+func buildCreateFieldInputs(table dto.Table) []models.CreateFieldInput {
+	fields := make([]models.CreateFieldInput, 0, len(table.Fields))
+	for name, field := range table.Fields {
+		var ftmProperty *models.FollowTheMoneyProperty
+		if field.FTMProperty != nil {
+			p := models.FollowTheMoneyPropertyFrom(*field.FTMProperty)
+			if p != models.FollowTheMoneyPropertyUnknown {
+				ftmProperty = &p
+			}
+		}
+
+		fields = append(fields, models.CreateFieldInput{
+			Name:         name,
+			Description:  field.Description,
+			Alias:        field.Alias,
+			SemanticType: models.FieldSemanticType(field.SemanticType),
+			DataType:     models.DataTypeFrom(field.DataType),
+			Nullable:     field.Nullable,
+			IsEnum:       field.IsEnum,
+			FTMProperty:  ftmProperty,
+			Metadata:     field.Metadata,
+		})
+	}
+	return fields
+}
+
+func buildCreateTableLinkInputs(
+	links []dto.LinkToSingle,
+	fieldIdToName map[string]string,
+	linkTypes map[string]models.LinkType,
+	ids map[string]string,
+) []models.CreateTableLinkInput {
+	result := make([]models.CreateTableLinkInput, 0, len(links))
+	for _, link := range links {
+		result = append(result, models.CreateTableLinkInput{
+			Name:           link.Name,
+			LinkType:       linkTypes[link.Id],
+			ChildFieldName: fieldIdToName[link.ChildFieldId],
+			ParentTableID:  ids[link.ParentTableId],
+		})
+	}
+	return result
+}
+
+type navOptionToCreate struct {
+	sourceTableId string
+	option        dto.CreateNavigationOptionInput
+}
+
+// navIndexSignature identifies the physical index backing a navigation option: an index
+// on the target table over (filter field, ordering field). Several navigation options can
+// share the same index, since the source table plays no part in it.
+func navIndexSignature(targetTableId, filterFieldId, orderingFieldId string) string {
+	return strings.Join([]string{targetTableId, filterFieldId, orderingFieldId}, "|")
+}
+
+// navOptionsToCreate returns the navigation options the import has to create explicitly,
+// in a deterministic order, leaving out those whose index is already accounted for.
+//
+// Creating a link creates its navigation index, so every link passed to
+// CreateDataModelTable in step C already schedules an index on (child field, ordering
+// field) of the child table. That creation goes through the task queue and therefore only
+// happens once the import transaction commits, which makes it invisible to the duplicate
+// detection of CreateNavigationOption: recreating those navigation options here would
+// create each index a second time, under a different name.
+func navOptionsToCreate(
+	tables []dto.Table,
+	includedLinks []dto.LinkToSingle,
+	navOptions map[string][]dto.CreateNavigationOptionInput,
+) []navOptionToCreate {
+	tableById := make(map[string]dto.Table, len(tables))
+	for _, table := range tables {
+		tableById[table.ID] = table
+	}
+
+	covered := make(map[string]struct{}, len(includedLinks))
+	for _, link := range includedLinks {
+		childTable, ok := tableById[link.ChildTableId]
+		if !ok {
+			continue
+		}
+		orderingField, ok := childTable.Fields[cmp.Or(childTable.PrimaryOrderingField, "updated_at")]
+		if !ok {
+			continue
+		}
+		covered[navIndexSignature(link.ChildTableId, link.ChildFieldId, orderingField.ID)] = struct{}{}
+	}
+
+	toCreate := make([]navOptionToCreate, 0, len(navOptions))
+	for _, sourceTableId := range slices.Sorted(maps.Keys(navOptions)) {
+		for _, option := range navOptions[sourceTableId] {
+			sig := navIndexSignature(option.TargetTableId, option.FilterFieldId, option.OrderingFieldId)
+			if _, ok := covered[sig]; ok {
+				continue
+			}
+			covered[sig] = struct{}{}
+			toCreate = append(toCreate, navOptionToCreate{sourceTableId: sourceTableId, option: option})
+		}
+	}
+
+	return toCreate
+}
+
+// pivotSignature creates a string key to identify a pivot by its structure.
+func pivotSignature(baseTableId string, fieldId *string, pathLinkIds []string) string {
+	fid := ""
+	if fieldId != nil {
+		fid = *fieldId
+	}
+	parts := make([]string, 0, 2+len(pathLinkIds))
+	parts = append(parts, baseTableId, fid)
+	parts = append(parts, pathLinkIds...)
+	return strings.Join(parts, "|")
+}
+
+func (uc *OrgImportUsecase) createTags(ctx context.Context, tx repositories.Transaction,
+	orgId uuid.UUID, ids map[string]string, tags []dto.ImportTag,
+) error {
+	for _, tag := range tags {
+		tagId := pure_utils.NewId()
+		ids[tag.Id] = tagId.String()
+
+		// Use a subtransaction (savepoint) so that a unique violation doesn't abort the outer transaction
+		subTx, err := tx.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		err = uc.tagRepository.CreateTag(ctx, subTx, models.CreateTagAttributes{
+			OrganizationId: orgId,
+			Name:           tag.Name,
+			Color:          tag.Color,
+			Target:         models.TagTarget(tag.Target),
+		}, tagId.String())
+		if err != nil && !repositories.IsUniqueViolationError(err) {
+			_ = subTx.Rollback(ctx)
+			return err
+		}
+		if repositories.IsUniqueViolationError(err) {
+			_ = subTx.Rollback(ctx)
+			// Need to fetch the tag ID and replace it in `ids`. We can use these IDs in other resources
+			existingTag, err := uc.tagRepository.GetTagByName(ctx, tx, orgId, tag.Name)
+			if err != nil {
+				return err
+			}
+			ids[tag.Id] = existingTag.Id
+		} else {
+			if err := subTx.Commit(ctx); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (uc *OrgImportUsecase) createCustomLists(ctx context.Context, tx repositories.Transaction,
+	orgId uuid.UUID, ids map[string]string, lists []dto.ImportCustomList,
+) error {
+	for _, list := range lists {
+		listId := pure_utils.NewId()
+		ids[list.Id] = listId.String()
+
+		kind := models.CustomListKindFromString(list.Kind)
+		if kind == models.CustomListUnknown {
+			return errors.Wrap(models.BadParameterError,
+				fmt.Sprintf("unknown custom list kind: %s", list.Kind))
+		}
+
+		// Use a subtransaction (savepoint) so that a unique violation doesn't abort the outer transaction
+		subTx, err := tx.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		err = uc.customListRepository.CreateCustomList(ctx, subTx, models.CreateCustomListInput{
+			OrganizationId: orgId,
+			Name:           list.Name,
+			Description:    list.Description,
+			Kind:           kind,
+		}, listId.String())
+		if err != nil && !repositories.IsUniqueViolationError(err) {
+			_ = subTx.Rollback(ctx)
+			return err
+		}
+		if repositories.IsUniqueViolationError(err) {
+			_ = subTx.Rollback(ctx)
+			// Need to fetch the list ID and replace it in `ids`. We can use these IDs in other resources
+			existingList, err := uc.customListRepository.GetCustomListByName(ctx, tx, orgId, list.Name)
+			if err != nil {
+				return err
+			}
+			ids[list.Id] = existingList.Id
+			listId = uuid.MustParse(existingList.Id)
+		} else {
+			if err := subTx.Commit(ctx); err != nil {
+				return err
+			}
+		}
+
+		// We can have a duplication of Value, but it is not a problem for the use of custom list.
+		err = uc.customListRepository.BatchInsertCustomListValues(ctx, tx,
+			kind, listId.String(), pure_utils.Map(
+				list.Values, func(v string) models.BatchInsertCustomListValue {
+					valueId := pure_utils.NewId()
+					return models.BatchInsertCustomListValue{Id: valueId.String(), Value: v}
+				}), nil)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (uc *OrgImportUsecase) createScenarios(ctx context.Context, tx repositories.Transaction,
+	orgId uuid.UUID, ids map[string]string, scenarios []dto.ImportScenario,
+) error {
+	for _, scenario := range scenarios {
+		scenarioId := pure_utils.NewId()
+		ids[scenario.Scenario.Id] = scenarioId.String()
+
+		err := uc.scenarioRepository.CreateScenario(ctx, tx, orgId, models.CreateScenarioInput{
+			OrganizationId:    orgId,
+			Name:              scenario.Scenario.Name,
+			Description:       scenario.Scenario.Description,
+			TriggerObjectType: scenario.Scenario.TriggerObjectType,
+		}, scenarioId.String())
+		if err != nil {
+			return err
+		}
+
+		var triggerCondition *ast.Node
+		if scenario.Iteration.TriggerConditionAstExpression != nil {
+			tc, err := dto.AdaptASTNode(*scenario.Iteration.TriggerConditionAstExpression)
+			if err != nil {
+				return err
+			}
+
+			triggerCondition = &tc
+
+			if err := uc.adaptAstNodeIds(ctx, ids, &tc); err != nil {
+				return err
+			}
+		}
+
+		rules := make([]models.CreateRuleInput, len(scenario.Iteration.Rules))
+
+		for idx, rule := range scenario.Iteration.Rules {
+			stableId := pure_utils.NewId()
+			ids[rule.StableId] = stableId.String()
+
+			var ruleAst *ast.Node
+
+			if rule.FormulaAstExpression != nil {
+				r, err := dto.AdaptASTNode(*rule.FormulaAstExpression)
+				if err != nil {
+					return err
+				}
+
+				ruleAst = &r
+
+				if err := uc.adaptAstNodeIds(ctx, ids, &r); err != nil {
+					return err
+				}
+			}
+
+			rules[idx] = models.CreateRuleInput{
+				StableRuleId:         stableId.String(),
+				OrganizationId:       orgId,
+				Name:                 rule.Name,
+				Description:          rule.Description,
+				DisplayOrder:         idx,
+				FormulaAstExpression: ruleAst,
+				ScoreModifier:        rule.ScoreModifier,
+				RuleGroup:            rule.RuleGroup,
+			}
+		}
+
+		iteration, err := uc.iterationRepository.CreateScenarioIterationAndRules(ctx, tx,
+			orgId, models.CreateScenarioIterationInput{
+				ScenarioId: scenarioId.String(),
+				Body: models.CreateScenarioIterationBody{
+					TriggerConditionAstExpression: triggerCondition,
+					ScoreReviewThreshold:          scenario.Iteration.ScoreReviewThreshold,
+					ScoreBlockAndReviewThreshold:  scenario.Iteration.ScoreBlockAndReviewThreshold,
+					ScoreDeclineThreshold:         scenario.Iteration.ScoreDeclineThreshold,
+					Schedule:                      scenario.Iteration.Schedule,
+					Rules:                         rules,
+				},
+			})
+		if err != nil {
+			return err
+		}
+
+		for _, sc := range scenario.Iteration.ScreeningConfigs {
+			var (
+				triggerRule, counterpartyIdExpr *ast.Node
+				queries                         map[string]ast.Node
+				forcedOutcome                   *models.Outcome
+			)
+
+			if sc.TriggerRule != nil {
+				tr, err := dto.AdaptASTNode(*sc.TriggerRule)
+				if err != nil {
+					return err
+				}
+
+				triggerRule = &tr
+
+				if err := uc.adaptAstNodeIds(ctx, ids, &tr); err != nil {
+					return err
+				}
+			}
+			if sc.CounterpartyIdExpression != nil {
+				c, err := dto.AdaptASTNode(*sc.CounterpartyIdExpression)
+				if err != nil {
+					return err
+				}
+
+				counterpartyIdExpr = &c
+
+				if err := uc.adaptAstNodeIds(ctx, ids, &c); err != nil {
+					return err
+				}
+			}
+
+			var err error
+
+			queries = pure_utils.MapKeyValue(sc.Query, func(k string, v dto.NodeDto) (string, ast.Node) {
+				q, ierr := dto.AdaptASTNode(v)
+				if ierr != nil {
+					err = ierr
+				}
+
+				return k, q
+			})
+
+			if err != nil {
+				return err
+			}
+
+			if sc.ForcedOutcome != nil {
+				forcedOutcome = utils.Ptr(models.OutcomeFrom(*sc.ForcedOutcome))
+			}
+
+			newStableId := pure_utils.NewId()
+			if sc.StableId != "" {
+				ids[sc.StableId] = newStableId.String()
+			}
+
+			_, err = uc.screeningRepository.CreateScreeningConfig(ctx, tx, iteration.Id, models.UpdateScreeningConfigInput{
+				StableId:                 utils.Ptr(newStableId.String()),
+				Name:                     sc.Name,
+				Description:              sc.Description,
+				RuleGroup:                sc.RuleGroup,
+				Provider:                 utils.Ptr(sc.Provider),
+				Datasets:                 sc.Datasets,
+				Threshold:                sc.Threshold,
+				TriggerRule:              triggerRule,
+				EntityType:               sc.EntityType,
+				Query:                    queries,
+				CounterpartyIdExpression: counterpartyIdExpr,
+				ForcedOutcome:            forcedOutcome,
+				Preprocessing:            sc.Preprocessing,
+				ConfigVersion:            "v2",
+			})
+			if err != nil {
+				return err
+			}
+		}
+
+		if err = uc.iterationRepository.UpdateScenarioIterationVersion(ctx, tx, iteration.Id, 1); err != nil {
+			return err
+		}
+		indexes, pending, err := uc.indexEditor.GetIndexesToCreate(ctx, orgId, iteration.Id)
+		if err != nil {
+			return err
+		}
+
+		if len(indexes) > 0 || pending > 0 {
+			if err := uc.indexEditor.CreateIndexesBlocking(ctx, orgId, indexes); err != nil {
+				return err
+			}
+		}
+
+		_, err = uc.publicationUsecase.ExecuteScenarioPublicationAction(ctx, orgId, models.PublishScenarioIterationInput{
+			ScenarioIterationId: iteration.Id,
+			PublicationAction:   models.Publish,
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (uc *OrgImportUsecase) createInboxes(ctx context.Context, tx repositories.Transaction,
+	orgId uuid.UUID, ids map[string]string, inboxes []dto.InboxDto,
+) error {
+	for _, inbox := range inboxes {
+		inboxId := pure_utils.NewId()
+		ids[inbox.Id.String()] = inboxId.String()
+
+		err := uc.inboxRepository.CreateInbox(ctx, tx, models.CreateInboxInput{
+			OrganizationId: orgId,
+			Name:           inbox.Name,
+		}, inboxId)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (uc OrgImportUsecase) createWorkflows(
+	ctx context.Context,
+	tx repositories.Transaction,
+	ids map[string]string,
+	workflows []dto.ImportWorkflow,
+) error {
+	for _, workflow := range workflows {
+		rule, err := uc.workflowRepository.InsertWorkflowRule(ctx, tx, models.WorkflowRule{
+			ScenarioId: uuid.MustParse(ids[workflow.ScenarioId.String()]), Name: workflow.Name,
+		})
+		if err != nil {
+			return err
+		}
+
+		ids[workflow.Id.String()] = rule.Id.String()
+
+		for _, cond := range workflow.Conditions {
+			params := cond.Params
+
+			switch cond.Function {
+			case models.WorkflowConditionRuleHit:
+				var p dto.WorkflowConditionRuleHitParams
+
+				if err := json.Unmarshal(cond.Params, &p); err != nil {
+					return err
+				}
+
+				p.RuleId = pure_utils.Map(p.RuleId, func(id uuid.UUID) uuid.UUID {
+					return uuid.MustParse(ids[id.String()])
+				})
+
+				params, err = json.Marshal(p)
+				if err != nil {
+					return err
+				}
+
+			case models.WorkflowPayloadEvaluates:
+				var p dto.WorkflowConditionEvaluatesParams
+
+				if err := json.Unmarshal(cond.Params, &p); err != nil {
+					return err
+				}
+
+				if err := uc.adaptAstNodeDtoIds(ctx, ids, &p.Expression); err != nil {
+					return err
+				}
+
+				params, err = json.Marshal(p)
+				if err != nil {
+					return err
+				}
+			}
+
+			if _, err := uc.workflowRepository.InsertWorkflowCondition(ctx, tx, models.WorkflowCondition{
+				RuleId: rule.Id, Function: cond.Function, Params: params,
+			}); err != nil {
+				return err
+			}
+		}
+
+		for _, action := range workflow.Actions {
+			actionType := models.WorkflowTypeFromString(action.Action)
+			params := action.Params
+
+			switch actionType {
+			case models.WorkflowCreateCase, models.WorkflowAddToCaseIfPossible:
+				spec, err := models.ParseWorkflowAction[dto.WorkflowActionCaseParams](models.WorkflowAction{
+					Action: actionType, Params: action.Params,
+				})
+				if err != nil {
+					return err
+				}
+
+				spec.Params.InboxId = uuid.MustParse(ids[spec.Params.InboxId.String()])
+				spec.Params.TagsToAdd = pure_utils.Map(spec.Params.TagsToAdd, func(id uuid.UUID) uuid.UUID {
+					return uuid.MustParse(ids[id.String()])
+				})
+
+				params, err = json.Marshal(spec.Params)
+				if err != nil {
+					return err
+				}
+			}
+
+			if _, err := uc.workflowRepository.InsertWorkflowAction(ctx, tx, models.WorkflowAction{
+				RuleId: rule.Id, Action: models.WorkflowType(action.Action), Params: params,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (uc *OrgImportUsecase) adaptAstNodeIds(ctx context.Context, ids map[string]string, node *ast.Node) error {
+	if node.Function == ast.FUNC_CUSTOM_LIST_ACCESS {
+		args, ok := node.NamedChildren["customListId"].Constant.(string)
+		if !ok {
+			return errors.New("FUNC_CUSTOM_LIST_ACCESS requires a `customListId` named parameter")
+		}
+
+		node.NamedChildren["customListId"] = ast.Node{Constant: ids[args]}
+	}
+
+	for i := range node.Children {
+		if err := uc.adaptAstNodeIds(ctx, ids, &node.Children[i]); err != nil {
+			return err
+		}
+	}
+
+	for key, namedChild := range node.NamedChildren {
+		if err := uc.adaptAstNodeIds(ctx, ids, &namedChild); err != nil {
+			return err
+		}
+		node.NamedChildren[key] = namedChild
+	}
+
+	return nil
+}
+
+func (uc OrgImportUsecase) adaptAstNodeDtoIds(ctx context.Context, ids map[string]string, node *dto.NodeDto) error {
+	astNode, err := dto.AdaptASTNode(*node)
+	if err != nil {
+		return err
+	}
+
+	if err := uc.adaptAstNodeIds(ctx, ids, &astNode); err != nil {
+		return err
+	}
+
+	*node, err = dto.AdaptNodeDto(astNode)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}

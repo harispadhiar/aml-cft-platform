@@ -1,0 +1,97 @@
+import * as TooltipPrimitive from '@radix-ui/react-tooltip';
+import { Icon } from 'ui-icons';
+import { type Components, Markdown } from './Markdown';
+
+// GitHub callout to emoji mapping
+const GITHUB_CALLOUT_EMOJI: Record<string, string> = {
+  NOTE: 'ℹ️',
+  TIP: '💡',
+  IMPORTANT: '❗',
+  WARNING: '⚠️',
+  CAUTION: '🛑',
+};
+
+function preprocessGitHubCallouts(markdown: string): string {
+  // Match GitHub-style callouts: > [!TYPE] (with optional content after)
+  // and replace with emoji
+  return markdown.replace(/\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/gi, (_, type: string) => {
+    return GITHUB_CALLOUT_EMOJI[type.toUpperCase()] ?? '';
+  });
+}
+
+const releaseMarkdownComponents: Components = {
+  a: ({ children, href, title }) => (
+    <TooltipPrimitive.Root delayDuration={300}>
+      <TooltipPrimitive.Trigger asChild>
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-purple-primary hover:bg-purple-background hover:text-grey-secondary underline underline-offset-4 decoration-purple-primary"
+        >
+          {children}
+        </a>
+      </TooltipPrimitive.Trigger>
+      <TooltipPrimitive.Portal>
+        <TooltipPrimitive.Content
+          side="top"
+          className="z-50 bg-surface-card border border-grey-border rounded-sm shadow-md p-sm"
+          sideOffset={5}
+        >
+          <div className="flex flex-col gap-xs items-center">
+            {title ? <p className="text-s font-medium">{title}</p> : null}
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-s text-purple-primary hover:underline"
+            >
+              {href}
+            </a>
+          </div>
+          <TooltipPrimitive.Arrow className="fill-grey-white" />
+        </TooltipPrimitive.Content>
+      </TooltipPrimitive.Portal>
+    </TooltipPrimitive.Root>
+  ),
+  h1: ({ children }) => <div className="text-l font-semibold text-grey-primary mb-md first:mt-0">{children}</div>,
+  h2: ({ children }) => <div className="text-s font-medium text-purple-primary mb-sm mt-md first:mt-0">{children}</div>,
+  h3: ({ children }) => <div className="text-s font-medium text-purple-primary mb-sm mt-md first:mt-0">{children}</div>,
+  hr: () => <hr className="my-md border-grey-border" />,
+  blockquote: ({ children }) => (
+    <div className="bg-purple-background-light border-s-2 border-s-purple-primary rounded-sm p-sm mb-sm flex items-start gap-sm">
+      <Icon icon="quote" className="size-4 shrink-0 text-purple-primary mt-0.5" />
+      <div className="text-s text-grey-primary">{children}</div>
+    </div>
+  ),
+  ul: ({ children }) => <ul className="mb-sm list-disc ps-md space-y-xs">{children}</ul>,
+  li: ({ children }) => <li className="text-s">{children}</li>,
+  p: ({ children }) => <p className="text-s mb-sm last:mb-0">{children}</p>,
+  code: ({ children }) => (
+    <code className="bg-grey-background [.group\/code-block_&]:bg-transparent text-s font-mono rounded px-xs py-2xs">
+      {children}
+    </code>
+  ),
+  pre: ({ children }) => (
+    <div className="bg-grey-background-light rounded-sm p-md mb-sm flex gap-sm items-start">
+      <Icon icon="code" className="size-4 shrink-0 text-purple-primary mt-0.5" />
+      <pre className="text-s font-mono overflow-x-auto flex-1 group/code-block">{children}</pre>
+    </div>
+  ),
+};
+
+interface ReleaseMarkdownProps {
+  children: string;
+}
+
+export function ReleaseMarkdown({ children }: ReleaseMarkdownProps) {
+  const processedMarkdown = preprocessGitHubCallouts(children);
+  return (
+    // Use `ltr` to force the content to be align at the left, even in arabic language.
+    // text-left is not enough because the list point is still on the right side in rtl languages.
+    // The release content is always in english
+    <div dir="ltr">
+      <Markdown components={releaseMarkdownComponents}>{processedMarkdown}</Markdown>
+    </div>
+  );
+}

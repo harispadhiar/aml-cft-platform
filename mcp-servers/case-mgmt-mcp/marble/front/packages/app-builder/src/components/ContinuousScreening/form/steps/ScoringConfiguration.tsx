@@ -1,0 +1,140 @@
+import { Callout } from '@app-builder/components/Callout';
+import { ScreeningThreshold } from '@app-builder/components/ScreeningThreshold';
+import { Spinner } from '@app-builder/components/Spinner';
+import { useGetInboxesQuery } from '@app-builder/queries/cases/get-inboxes';
+import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { match } from 'ts-pattern';
+import { Button, Input, MenuCommand } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+import { ContinuousScreeningConfigurationStepper } from '../../context/CreationStepper';
+import { Field } from '../../shared/Field';
+
+export const ScoringConfiguration = () => {
+  const { t } = useTranslation(['continuousScreening']);
+  const matchThreshold = ContinuousScreeningConfigurationStepper.select((state) => state.data.$matchThreshold);
+  const matchLimit = ContinuousScreeningConfigurationStepper.select((state) => state.data.$matchLimit);
+  const mode = ContinuousScreeningConfigurationStepper.select((state) => state.__internals.mode);
+  const tKey = mode === 'view' ? 'view' : 'creation';
+
+  return (
+    <div className="flex flex-col gap-md">
+      <Callout bordered className="bg-surface-card mx-md">
+        {t(`continuousScreening:${tKey}.scoringConfiguration.callout`)}
+      </Callout>
+      <Field title={t('continuousScreening:creation.scoringConfiguration.matchThreshold.title')}>
+        <ScreeningThreshold
+          threshold={matchThreshold.value}
+          onChange={(value) => (matchThreshold.value = value)}
+          title={t(`continuousScreening:creation.scoringConfiguration.matchThreshold.subtitle`)}
+          className="flex-1 w-full"
+          disabled={mode === 'view'}
+        />
+      </Field>
+      <Field
+        title={t('continuousScreening:creation.scoringConfiguration.matchLimit.title')}
+        description={t(`continuousScreening:creation.scoringConfiguration.matchLimit.subtitle`)}
+        callout={t('continuousScreening:creation.scoringConfiguration.matchLimit.callout')}
+      >
+        <Input
+          type="number"
+          value={matchLimit.value}
+          readOnly={mode === 'view'}
+          onChange={(e) => (matchLimit.value = e.target.valueAsNumber)}
+        />
+        <span>{t('continuousScreening:creation.scoringConfiguration.matchLimit.text')}</span>
+      </Field>
+      <div className="grid grid-cols-1 gap-md">
+        <Field
+          required={mode === 'create'}
+          title={t('continuousScreening:creation.scoringConfiguration.alertAutomation.title')}
+          description={t(`continuousScreening:creation.scoringConfiguration.alertAutomation.subtitle`)}
+        >
+          <InboxSelector />
+        </Field>
+      </div>
+    </div>
+  );
+};
+
+const InboxSelector = () => {
+  const { t } = useTranslation(['common', 'continuousScreening']);
+  const [isOpen, setIsOpen] = useState(false);
+  const inboxesQuery = useGetInboxesQuery();
+  const creationStepper = ContinuousScreeningConfigurationStepper.useSharp();
+  const inboxId = ContinuousScreeningConfigurationStepper.select((state) => state.data.$inboxId);
+  const inboxName = ContinuousScreeningConfigurationStepper.select((state) => state.data.$inboxName);
+  const mode = ContinuousScreeningConfigurationStepper.select((state) => state.__internals.mode);
+
+  const handleInboxSelect = (inboxId: string) => {
+    creationStepper.update((state) => {
+      if (state.data.inboxName !== null) {
+        state.data.inboxName = null;
+      }
+      state.data.inboxId = inboxId;
+    });
+  };
+
+  return match(inboxesQuery)
+    .with({ isPending: true }, () => (
+      <div>
+        <Spinner className="size-6" />
+      </div>
+    ))
+    .with({ isError: true }, () => (
+      <div className="flex gap-md items-center">
+        <div className="">{t('common:generic_fetch_data_error')}</div>
+        <Button variant="secondary" onClick={() => inboxesQuery.refetch()}>
+          {t('common:retry')}
+        </Button>
+      </div>
+    ))
+    .with({ isSuccess: true }, ({ data }) => {
+      const inboxes = data?.inboxes ?? [];
+      const currentInboxName = inboxes.find((inbox) => inbox.id === inboxId.value)?.name;
+
+      return (
+        <>
+          <MenuCommand.Menu open={isOpen} onOpenChange={setIsOpen}>
+            <MenuCommand.Trigger>
+              <MenuCommand.SelectButton
+                disabled={!inboxesQuery.isSuccess}
+                readOnly={mode === 'view'}
+                className="min-w-50"
+              >
+                {currentInboxName ?? t('continuousScreening:creation.scoringConfiguration.alertAutomation.placeholder')}
+              </MenuCommand.SelectButton>
+            </MenuCommand.Trigger>
+            <MenuCommand.Content side="bottom" align="start" sideOffset={4}>
+              <MenuCommand.List>
+                {inboxes.map((inbox) => (
+                  <MenuCommand.Item onSelect={() => handleInboxSelect(inbox.id)} key={inbox.id} value={inbox.id}>
+                    <span>{inbox.name}</span>
+                    {inbox.id === inboxId.value ? <Icon icon="tick" className="size-4" /> : null}
+                  </MenuCommand.Item>
+                ))}
+              </MenuCommand.List>
+            </MenuCommand.Content>
+          </MenuCommand.Menu>
+          {mode === 'create' ? (
+            <>
+              <span>{t('continuousScreening:creation.scoringConfiguration.alertAutomation.create_new_inbox')}</span>
+              <Input
+                type="text"
+                value={inboxName.value ?? ''}
+                onChange={(e) => {
+                  creationStepper.update((state) => {
+                    if (state.data.inboxId !== null) {
+                      state.data.inboxId = null;
+                    }
+                    state.data.inboxName = e.target.value.length > 0 ? e.target.value : null;
+                  });
+                }}
+              />
+            </>
+          ) : null}
+        </>
+      );
+    })
+    .exhaustive();
+};

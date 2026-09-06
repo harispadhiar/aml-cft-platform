@@ -1,0 +1,113 @@
+import {
+  DatatypeIcon,
+  DatatypeToPrimitiveType,
+} from '@app-builder/components/Data/SemanticTables/Shared/DatatypeOption';
+import { CreateMappingConfig } from '@app-builder/models/continuous-screening';
+import { TableModel } from '@app-builder/models/data-model';
+import { useDataModelQuery } from '@app-builder/queries/data/get-data-model';
+import { useTranslation } from 'react-i18next';
+import { match } from 'ts-pattern';
+import { Button, Collapsible } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+import { Spinner } from '../../Spinner';
+import { type EditionValidationPanelBaseProps } from '../EditionValidationPanel';
+
+export const ObjectMappingSection = ({ updatedConfig, baseConfig }: EditionValidationPanelBaseProps) => {
+  const dataModelQuery = useDataModelQuery();
+  const { t } = useTranslation(['common', 'continuousScreening']);
+  return (
+    <Collapsible.Container>
+      <Collapsible.Title>{t('continuousScreening:edition.validation.objectMapping.title')}</Collapsible.Title>
+      <Collapsible.Content>
+        {match(dataModelQuery)
+          .with({ isPending: true }, () => (
+            <div className="flex items-center justify-center h-50">
+              <Spinner className="size-10" />
+            </div>
+          ))
+          .with({ isError: true }, () => (
+            <div className="flex flex-col gap-md items-center justify-center h-50">
+              <div className="">{t('common:generic_fetch_data_error')}</div>
+              <Button variant="secondary" onClick={() => dataModelQuery.refetch()}>
+                {t('common:retry')}
+              </Button>
+            </div>
+          ))
+          .with({ isSuccess: true }, ({ data: { dataModel } }) => {
+            const hasChanges = updatedConfig.mappingConfigs.some((mappingConfig) => {
+              const table = dataModel.find((table) => table.name === mappingConfig.objectType);
+              if (!table) return false;
+
+              return (
+                Object.entries(mappingConfig.fieldMapping)
+                  .map(([fieldId, ftmProperty]) => {
+                    const field = table.fields.find((field) => field.id === fieldId);
+                    return { field, ftmProperty };
+                  })
+                  .filter(({ field, ftmProperty }) => {
+                    return field && ftmProperty !== null && !field.ftmProperty;
+                  }).length > 0
+              );
+            });
+
+            if (!hasChanges) {
+              return (
+                <div className="flex flex-col gap-sm">
+                  <span>{t('continuousScreening:edition.validation.objectMapping.no_changes')}</span>
+                </div>
+              );
+            }
+
+            return (
+              <div className="grid grid-cols-2 gap-md">
+                {updatedConfig.mappingConfigs.map((mappingConfig) => {
+                  const table = dataModel.find((table) => table.name === mappingConfig.objectType);
+                  return table ? (
+                    <TableValidation key={mappingConfig.objectType} table={table} objectMapping={mappingConfig} />
+                  ) : null;
+                })}
+              </div>
+            );
+          })
+          .exhaustive()}
+      </Collapsible.Content>
+    </Collapsible.Container>
+  );
+};
+
+const TableValidation = ({ table, objectMapping }: { table: TableModel; objectMapping: CreateMappingConfig }) => {
+  const { t } = useTranslation(['continuousScreening']);
+  const isAddedTable = !table.ftmEntity;
+  const fieldsAdded = Object.entries(objectMapping.fieldMapping)
+    .map(([fieldId, ftmProperty]) => {
+      const field = table.fields.find((field) => field.id === fieldId);
+      return { field, ftmProperty };
+    })
+    .filter(({ field, ftmProperty }) => {
+      return field && ftmProperty !== null && !field.ftmProperty;
+    });
+
+  if (fieldsAdded.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-sm">
+      <span>
+        {t(`continuousScreening:edition.validation.objectMapping.${isAddedTable ? 'table_added' : 'table_modified'}`, {
+          tableName: table.name,
+        })}
+      </span>
+      <div className="flex flex-col gap-sm border border-grey-border rounded-md p-md max-h-50 overflow-y-auto">
+        {fieldsAdded.map(({ field, ftmProperty }) => {
+          return (
+            <span key={field?.id} className="flex items-center gap-sm">
+              <DatatypeIcon dataType={DatatypeToPrimitiveType(field?.dataType ?? 'String')} />
+              <span>{field?.name}</span>
+              <Icon icon="arrow-forward" className="size-6 text-purple-primary" />
+              <span>{ftmProperty}</span>
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+};

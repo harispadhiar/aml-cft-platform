@@ -1,0 +1,224 @@
+package models
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/checkmarble/marble-backend/models/ast"
+	"github.com/google/uuid"
+)
+
+type ScheduledExecution struct {
+	Id                         string
+	OrganizationId             uuid.UUID
+	ScenarioId                 string
+	ScenarioIterationId        string
+	ScenarioVersion            string
+	Status                     ScheduledExecutionStatus
+	StartedAt                  time.Time
+	FinishedAt                 *time.Time
+	NumberOfCreatedDecisions   int
+	NumberOfEvaluatedDecisions int
+	NumberOfPlannedDecisions   *int
+	Scenario                   Scenario
+	Manual                     bool
+
+	// Set when the execution is processed from an object-id manifest in blob storage. Nil/zero
+	// when it is processed with one decision row and job per object.
+	ManifestBlobKey       *string
+	ManifestByteOffset    int64
+	ManifestRowsProcessed int64
+	Deadline              *time.Time
+}
+
+type PaginatedScheduledExecutions struct {
+	Executions []ScheduledExecution
+	HasMore    bool
+}
+
+type ScheduledExecutionStatus int
+
+const (
+	ScheduledExecutionPending ScheduledExecutionStatus = iota
+	ScheduledExecutionProcessing
+	ScheduledExecutionSuccess
+	ScheduledExecutionPartialFailure
+	ScheduledExecutionFailure
+)
+
+func (s ScheduledExecutionStatus) String() string {
+	switch s {
+	case ScheduledExecutionPending:
+		return "pending"
+	case ScheduledExecutionProcessing:
+		return "processing"
+	case ScheduledExecutionSuccess:
+		return "success"
+	case ScheduledExecutionPartialFailure:
+		return "partial_failure"
+	case ScheduledExecutionFailure:
+		return "failure"
+	}
+	return "pending"
+}
+
+func ScheduledExecutionStatusFrom(s string) ScheduledExecutionStatus {
+	switch s {
+	case "pending":
+		return ScheduledExecutionPending
+	case "success":
+		return ScheduledExecutionSuccess
+	case "failure":
+		return ScheduledExecutionFailure
+	case "partial_failure":
+		return ScheduledExecutionPartialFailure
+	case "processing":
+		return ScheduledExecutionProcessing
+	}
+	return ScheduledExecutionPending
+}
+
+type UpdateScheduledExecutionStatusInput struct {
+	Id                         string
+	Status                     ScheduledExecutionStatus
+	NumberOfCreatedDecisions   *int
+	NumberOfEvaluatedDecisions *int
+}
+
+type UpdateScheduledExecutionInput struct {
+	Id                       string
+	NumberOfPlannedDecisions *int
+	ManifestBlobKey          *string
+	Deadline                 *time.Time
+}
+
+// AdvanceScheduledExecutionManifestInput records progress of the v2 coordinator after a
+// batch is persisted: the manifest cursor and the running totals, written atomically with
+// the decision inserts so a crash resumes exactly where it left off. Values are absolute
+// (the coordinator is the single writer and tracks cumulative counts).
+type AdvanceScheduledExecutionManifestInput struct {
+	Id                         string
+	ManifestByteOffset         int64
+	ManifestRowsProcessed      int64
+	NumberOfCreatedDecisions   int
+	NumberOfEvaluatedDecisions int
+}
+
+type CreateScheduledExecutionInput struct {
+	OrganizationId      uuid.UUID
+	ScenarioId          string
+	ScenarioIterationId string
+	Manual              bool
+}
+
+type ListScheduledExecutionsFilters struct {
+	OrganizationId uuid.UUID
+	ScenarioId     string
+}
+
+type Filter struct {
+	LeftSql           string
+	LeftValue         any
+	LeftNestedFilter  *Filter
+	Operator          ast.Function
+	RightSql          string
+	RightValue        any
+	RightNestedFilter *Filter
+}
+
+// Disclaimer: this logic creates some coupling between the models and SQL queries. It's not great, but I could not find
+// a simple enough abstraction to avoid doing this.
+func (f Filter) ToSql() (sql string, args []any) {
+	var left string
+	if f.LeftSql != "" {
+		left = f.LeftSql
+	} else if f.LeftValue != nil {
+		left = "?"
+		args = append(args, f.LeftValue)
+	} else if f.LeftNestedFilter != nil {
+		leftSql, leftArgs := f.LeftNestedFilter.ToSql()
+		left = fmt.Sprintf("(%s)", leftSql)
+		args = append(args, leftArgs...)
+	}
+
+	var right string
+	if f.RightSql != "" {
+		right = f.RightSql
+	} else if f.RightValue != nil {
+		right = "?"
+		args = append(args, f.RightValue)
+	} else if f.RightNestedFilter != nil {
+		rightSql, rightArgs := f.RightNestedFilter.ToSql()
+		right = fmt.Sprintf("(%s)", rightSql)
+		args = append(args, rightArgs...)
+	}
+
+	if ast.IsMathOperation(f.Operator) {
+		attrs, err := f.Operator.Attributes()
+		if err != nil {
+			// Should never happen because we check for math operations above
+			return "", nil
+		}
+		// apply NULLIF to protect against division by zero
+		switch f.Operator {
+		case ast.FUNC_DIVIDE:
+			sql = fmt.Sprintf("%s %s NULLIF(%s, 0)",
+				left, attrs.AstName, right)
+		case ast.FUNC_NOT_EQUAL:
+			// AstName for NOT_EQUAL is "≠" (Unicode), which is not valid SQL
+			sql = fmt.Sprintf("%s <> %s", left, right)
+		default:
+			sql = fmt.Sprintf("%s %s %s", left,
+				attrs.AstName, right)
+		}
+	} else if ast.IsStringComparison(f.Operator) {
+		sql = fmt.Sprintf("%s ILIKE CONCAT('%%',%s::text,'%%')", left, right)
+	} else if ast.IsInListComparison(f.Operator) {
+		sql = fmt.Sprintf("%s = ANY(%s)", left, right)
+	} else if f.Operator == ast.FUNC_IS_EMPTY {
+		sql = fmt.Sprintf("(%s IS NULL OR %s = '')", left, left)
+	} else if f.Operator == ast.FUNC_IS_NOT_EMPTY {
+		sql = fmt.Sprintf("(%s IS NOT NULL AND %s != '')", left, left)
+	}
+
+	return sql, args
+}
+
+type TableIdentifier struct {
+	Schema string
+	Table  string
+}
+
+type DecisionToCreateStatus string
+
+type DecisionToCreate struct {
+	Id                   string
+	ScheduledExecutionId string
+	ObjectId             string
+	Status               DecisionToCreateStatus
+	CreatedAt            time.Time
+	UpdateAt             time.Time
+}
+
+type DecisionToCreateBatchCreateInput struct {
+	ScheduledExecutionId string
+	ObjectId             []string
+}
+
+const (
+	DecisionToCreateStatusPending                  = "pending"
+	DecisionToCreateStatusCreated                  = "created"
+	DecisionToCreateStatusFailed                   = "failed"
+	DecisionToCreateStatusTriggerConditionMismatch = "trigger_mismatch"
+)
+
+type ListDecisionsToCreateFilters struct {
+	ScheduledExecutionId string
+	Status               []DecisionToCreateStatus
+}
+
+type DecisionToCreateCountMetadata struct {
+	Created                  int
+	TriggerConditionMismatch int
+	SuccessfullyEvaluated    int
+}

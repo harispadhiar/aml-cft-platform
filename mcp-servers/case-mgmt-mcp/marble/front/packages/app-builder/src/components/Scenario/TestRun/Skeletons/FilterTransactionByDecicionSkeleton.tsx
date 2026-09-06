@@ -1,0 +1,41 @@
+import { useTranslation } from 'react-i18next';
+import { Collapsible, Switch } from 'ui-design-system';
+
+export const FilterTransactionByDecisionSkeleton = () => {
+  const { t } = useTranslation(['scenarios']);
+
+  return (
+    <Collapsible.Container className="bg-surface-card">
+      <Collapsible.Title>{t('scenarios:testrun.transaction_by_decision')}</Collapsible.Title>
+      <Collapsible.Content>
+        <div className="mb-lg flex items-center justify-end space-x-sm">
+          <span className="text-s text-grey-primary font-medium">{t('scenarios:testrun.show_rules_changes')}</span>
+          <Switch id="show-changes" disabled />
+        </div>
+
+        <div className="space-y-sm">
+          <div className="mb-md grid grid-cols-2 gap-md">
+            <div className="bg-grey-border h-4 w-24 animate-pulse rounded-sm" />
+            <div className="bg-grey-border h-4 w-16 animate-pulse rounded-sm" />
+          </div>
+
+          {[1, 2, 3, 4].map((index) => (
+            <div
+              key={index}
+              className="border-grey-border grid grid-cols-2 gap-md rounded-lg border p-md transition-colors"
+            >
+              <div className="flex items-center space-x-sm">
+                <div className="bg-grey-border size-4 animate-pulse rounded-sm" />
+                <div className="bg-grey-border h-4 w-32 animate-pulse rounded-sm" />
+              </div>
+              <div className="flex items-center space-x-sm">
+                <div className="bg-grey-border h-4 w-16 animate-pulse rounded-sm" />
+                <div className="bg-grey-border size-4 animate-pulse rounded-sm" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </Collapsible.Content>
+    </Collapsible.Container>
+  );
+};

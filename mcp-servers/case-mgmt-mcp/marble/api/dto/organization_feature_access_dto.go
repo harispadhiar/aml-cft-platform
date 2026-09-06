@@ -1,0 +1,95 @@
+package dto
+
+import (
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/google/uuid"
+)
+
+type APIOrganizationFeatureAccess struct {
+	TestRun             string `json:"test_run"`
+	Workflows           string `json:"workflows"`
+	Webhooks            string `json:"webhooks"`
+	RuleSnoozes         string `json:"rule_snoozes"`
+	Roles               string `json:"roles"`
+	Analytics           string `json:"analytics"`
+	Sanctions           string `json:"sanctions"`
+	NameRecognition     string `json:"name_recognition"`
+	CaseAutoAssign      string `json:"case_auto_assign"`
+	CaseAiAssist        string `json:"case_ai_assist"`
+	ContinuousScreening string `json:"continuous_screening"`
+	AiRuleBuilding      string `json:"ai_rule_building"`
+	UserScoring         string `json:"user_scoring"`
+	LexisNexis          string `json:"lexisnexis"` //nolint:tagliatelle
+
+	// user-scoped
+	// Currently only used to control display of the AI assist button in the UI - DO NOT use for anything else as it will be removed
+	AiAssist string `json:"ai_assist"`
+}
+
+func AdaptOrganizationFeatureAccessDto(f models.OrganizationFeatureAccess) APIOrganizationFeatureAccess {
+	return APIOrganizationFeatureAccess{
+		TestRun:             f.TestRun.String(),
+		Workflows:           f.Workflows.String(),
+		Webhooks:            f.Webhooks.String(),
+		RuleSnoozes:         f.RuleSnoozes.String(),
+		Roles:               f.Roles.String(),
+		Analytics:           f.Analytics.String(),
+		Sanctions:           f.Sanctions.String(),
+		NameRecognition:     f.NameRecognition.String(),
+		CaseAutoAssign:      f.CaseAutoAssign.String(),
+		CaseAiAssist:        f.CaseAiAssist.String(),
+		ContinuousScreening: f.ContinuousScreening.String(),
+		AiRuleBuilding:      f.AiRuleBuilding.String(),
+		AiAssist:            f.AiAssist.String(),
+		UserScoring:         f.UserScoring.String(),
+		LexisNexis:          f.LexisNexis.String(),
+	}
+}
+
+type UpdateOrganizationFeatureAccessBodyDto struct {
+	TestRun             *string `json:"test_run"`
+	Sanctions           *string `json:"sanctions"`
+	CaseAutoAssign      *string `json:"case_auto_assign"`
+	CaseAiAssist        *string `json:"case_ai_assist"`
+	ContinuousScreening *string `json:"continuous_screening"`
+	AiRuleBuilding      *string `json:"ai_rule_building"`
+	LexisNexis          *string `json:"lexisnexis"` //nolint:tagliatelle
+}
+
+func AdaptUpdateOrganizationFeatureAccessInput(f UpdateOrganizationFeatureAccessBodyDto,
+	orgId uuid.UUID,
+) models.UpdateOrganizationFeatureAccessInput {
+	var testRun, sanctions, caseAutoAssign, caseAiAssist, continuousScreening, aiRuleBuilding, lexisNexis *models.FeatureAccess
+	if f.TestRun != nil {
+		testRun = utils.Ptr(models.FeatureAccessFrom(*f.TestRun))
+	}
+	if f.Sanctions != nil {
+		sanctions = utils.Ptr(models.FeatureAccessFrom(*f.Sanctions))
+	}
+	if f.CaseAutoAssign != nil {
+		caseAutoAssign = utils.Ptr(models.FeatureAccessFrom(*f.CaseAutoAssign))
+	}
+	if f.CaseAiAssist != nil {
+		caseAiAssist = utils.Ptr(models.FeatureAccessFrom(*f.CaseAiAssist))
+	}
+	if f.ContinuousScreening != nil {
+		continuousScreening = utils.Ptr(models.FeatureAccessFrom(*f.ContinuousScreening))
+	}
+	if f.AiRuleBuilding != nil {
+		aiRuleBuilding = utils.Ptr(models.FeatureAccessFrom(*f.AiRuleBuilding))
+	}
+	if f.LexisNexis != nil {
+		lexisNexis = utils.Ptr(models.FeatureAccessFrom(*f.LexisNexis))
+	}
+	return models.UpdateOrganizationFeatureAccessInput{
+		OrganizationId:      orgId,
+		TestRun:             testRun,
+		Sanctions:           sanctions,
+		CaseAutoAssign:      caseAutoAssign,
+		CaseAiAssist:        caseAiAssist,
+		ContinuousScreening: continuousScreening,
+		AiRuleBuilding:      aiRuleBuilding,
+		LexisNexis:          lexisNexis,
+	}
+}

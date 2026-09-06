@@ -1,0 +1,287 @@
+// Go 1.24 removed the ability to generate RSA key < 1024 bits, we re-enabled it for tests since we do not use the key.
+//go:debug rsa1024min=0
+
+package tests
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"database/sql"
+	"fmt"
+	"log"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/checkmarble/marble-backend/api"
+	"github.com/checkmarble/marble-backend/infra"
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/repositories"
+	"github.com/checkmarble/marble-backend/usecases"
+	"github.com/checkmarble/marble-backend/usecases/auth"
+	"github.com/gavv/httpexpect/v2"
+	"github.com/gin-gonic/gin"
+	"github.com/go-testfixtures/testfixtures/v3"
+	"github.com/pressly/goose/v3"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
+)
+
+func client(t *testing.T, sock, version, apiKey string) *httpexpect.Expect {
+	httpc := http.Client{
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", sock)
+			},
+		},
+	}
+
+	e := httpexpect.WithConfig(httpexpect.Config{
+		TestName: t.Name(),
+		Client:   &httpc,
+		BaseURL:  fmt.Sprintf("http://localhost/%s", version),
+		Reporter: httpexpect.NewAssertReporter(t),
+		Printers: []httpexpect.Printer{
+			httpexpect.NewDebugPrinter(t, true),
+		},
+	})
+
+	return e.Builder(func(r *httpexpect.Request) {
+		r.WithHeader("x-api-key", apiKey)
+	})
+}
+
+func setupPostgres(t *testing.T, ctx context.Context) *postgres.PostgresContainer {
+	t.Helper()
+
+	goose.SetLogger(goose.NopLogger())
+
+	pg, err := postgres.Run(
+		ctx,
+		"postgis/postgis:18-3.6-alpine",
+		postgres.WithDatabase("marble_test"),
+		postgres.WithUsername("postgres"),
+		postgres.WithPassword("marble"),
+		testcontainers.WithImagePlatform("linux/amd64"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(10*time.Second)),
+	)
+
+	t.Cleanup(func() {
+		if err := testcontainers.TerminateContainer(pg); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dsn := pg.MustConnectionString(ctx)
+	if os.Getenv("_INTERNAL_TEST_USE_CONTAINER_IP") == "1" {
+		ip, err := pg.ContainerIP(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dsn = pg.MustConnectionString(ctx, fmt.Sprintf("host=%s", ip), "port=5432")
+	}
+
+	pgConfig := infra.PgConfig{ConnectionString: dsn}
+	migrator := repositories.NewMigrater(pgConfig)
+
+	if err = migrator.Run(ctx, nil); err != nil {
+		log.Fatal(err)
+	}
+
+	conn, err := sql.Open("pgx", dsn)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fixtures, err := testfixtures.New(
+		testfixtures.Database(conn),
+		testfixtures.Dialect("postgres"),
+		testfixtures.FilesMultiTables("fixtures/base/base.yml"),
+		testfixtures.Directory("fixtures"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fixtures.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	setupClientDbSchema(t, ctx, conn)
+
+	fixturesClient, err := testfixtures.New(
+		testfixtures.Database(conn),
+		testfixtures.Dialect("postgres"),
+		testfixtures.Directory("fixtures/client"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixturesClient.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	return pg
+}
+
+// setupClientDbSchema creates the client DB schema and tables for organization "ACME" (default org created by fixtures)
+// This includes the data model table (account) and continuous screening tables
+// Those tables are created by code when creating a new organization, we don't have migration file for them
+func setupClientDbSchema(t *testing.T, ctx context.Context, conn *sql.DB) {
+	t.Helper()
+
+	// Based on the organization created in fixtures/base/organizations.yml
+	schemaName := "\"org-ACME\""
+
+	// Create the PostgreSQL schema
+	_, err := conn.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", schemaName))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the "account" table in the client schema
+	// See fixtures/data_model_tables.yml for the data model table definition
+	_, err = conn.ExecContext(ctx, fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s.account (
+			id UUID NOT NULL PRIMARY KEY,
+			object_id TEXT NOT NULL,
+			updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			valid_from TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+			valid_until TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT 'INFINITY',
+			name TEXT,
+			country TEXT
+		)
+	`, schemaName))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the _monitored_objects table for continuous screening
+	_, err = conn.ExecContext(ctx, fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s._monitored_objects (
+			id UUID NOT NULL PRIMARY KEY,
+			object_type TEXT NOT NULL,
+			object_id TEXT NOT NULL,
+			config_stable_id UUID NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+		)
+	`, schemaName))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create unique index for _monitored_objects
+	_, err = conn.ExecContext(ctx, fmt.Sprintf(`
+		CREATE UNIQUE INDEX IF NOT EXISTS uniq_idx_config_object_type_id_monitored_objects
+		ON %s._monitored_objects (config_stable_id, object_type, object_id)
+	`, schemaName))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the _monitored_objects_audit table
+	_, err = conn.ExecContext(ctx, fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s._monitored_objects_audit (
+			id UUID NOT NULL PRIMARY KEY,
+			object_type TEXT NOT NULL,
+			object_id TEXT NOT NULL,
+			config_stable_id UUID NOT NULL,
+			action TEXT NOT NULL,
+			user_id UUID,
+			api_key_id UUID,
+			created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+			extra JSONB
+		)
+	`, schemaName))
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func setupApi(t *testing.T, ctx context.Context, dsn string) string {
+	t.Helper()
+
+	gin.SetMode(gin.ReleaseMode)
+
+	pool, err := infra.NewPostgresConnectionPool(ctx, "", dsn, nil, 10, "")
+	if err != nil {
+		log.Fatalf("Could not create connection pool: %s", err)
+	}
+
+	cfg := api.Configuration{
+		Env: "development", MarbleAppUrl: "http://x",
+		DefaultTimeout: 5 * time.Second, TokenProvider: auth.TokenProviderFirebase,
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mredis := miniredis.NewMiniRedis()
+	_ = mredis.Start()
+	redisClient, _ := repositories.NewRedisClient(infra.RedisConfig{Address: mredis.Addr()})
+
+	deps, _ := api.InitDependencies(ctx, cfg, pool, key, nil, nil, nil)
+	openSanctions := infra.InitializeScreening(ctx, http.DefaultClient, "http://screening", " ", " ")
+	repos := repositories.NewRepositories(pool, infra.GcpConfig{},
+		repositories.WithOpenSanctions(openSanctions),
+		repositories.WithRiverClient(riverClient),
+		repositories.WithRedisClient(redisClient))
+	uc := usecases.NewUsecases(repos, usecases.WithLicense(models.NewFullLicense()), usecases.WithOpensanctions(true))
+	router := api.InitRouterMiddlewares(ctx, cfg, true, nil, infra.TelemetryRessources{})
+
+	server := api.NewServer(
+		router,
+		cfg,
+		uc,
+		deps.Authentication,
+		deps.TokenHandler,
+		slog.Default(),
+		api.WithLocalTest(true),
+	)
+
+	srv := http.Server{Handler: server.Handler}
+
+	sockDir, err := os.MkdirTemp(os.TempDir(), "marble")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sockFile := fmt.Sprintf("%s/api.sock", sockDir)
+
+	t.Cleanup(func() {
+		_ = srv.Close()
+		_ = server.Shutdown(ctx)
+		_ = os.RemoveAll(sockDir)
+	})
+
+	listener, err := net.Listen("unix", sockFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	go func() {
+		_ = srv.Serve(listener)
+	}()
+
+	return sockFile
+}

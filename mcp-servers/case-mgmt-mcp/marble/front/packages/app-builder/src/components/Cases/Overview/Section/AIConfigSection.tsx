@@ -1,0 +1,124 @@
+import { Panel } from '@app-builder/components/Panel';
+import { Spinner } from '@app-builder/components/Spinner';
+import { useLoaderRevalidator } from '@app-builder/contexts/LoaderRevalidatorContext';
+import { useGetAiSettingsQuery } from '@app-builder/queries/cases/get-ai-settings';
+import { isAccessible, isRestricted } from '@app-builder/services/feature-access';
+import { type FeatureAccessLevelDto } from 'marble-api/generated/feature-access-api';
+import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { match } from 'ts-pattern';
+import { Tag } from 'ui-design-system';
+import { AIConfigPanelContent } from '../Panel/AIConfigPanelContent';
+import { ConfigRow } from './ConfigRow';
+
+interface AIConfigSectionProps {
+  isGlobalAdmin: boolean;
+  access: FeatureAccessLevelDto;
+}
+
+export function AIConfigSection({ isGlobalAdmin, access }: AIConfigSectionProps) {
+  const { t } = useTranslation(['cases']);
+  const [aiConfigPanelOpen, setAiConfigPanelOpen] = useState(false);
+  const aiSettingsQuery = useGetAiSettingsQuery();
+  const revalidate = useLoaderRevalidator();
+
+  const restricted = isRestricted(access);
+  const hasAccess = isAccessible(access);
+  const canEdit = hasAccess && isGlobalAdmin;
+
+  const handleOpenPanel = () => {
+    if (!aiSettingsQuery.data) return;
+    setAiConfigPanelOpen(true);
+  };
+
+  return (
+    <div className="flex flex-col gap-sm">
+      {/* Section header */}
+      <div className="flex items-center gap-sm h-7">
+        <span className="flex-1 text-s font-medium">{t('cases:overview.config.ai_title')}</span>
+        {/* @TODO: Add credit usage when ready */}
+        {/* <Tag color="purple" size="small">
+          5/10 crédit IA utilisés
+        </Tag> */}
+      </div>
+
+      {match(aiSettingsQuery)
+        .with({ isPending: true }, () => (
+          <div className="border border-grey-border rounded-lg p-md bg-surface-card flex items-center justify-center min-h-[100px]">
+            <Spinner className="size-6" />
+          </div>
+        ))
+        .with({ isError: true }, () => (
+          <div className="border border-grey-border rounded-lg p-md bg-surface-card flex items-center justify-center min-h-[100px] text-red-primary">
+            {t('cases:overview.config.error_loading')}
+          </div>
+        ))
+        .with({ isSuccess: true }, ({ data }) => {
+          if (!data?.settings) return null;
+
+          const settings = data.settings;
+          const isGeneralConfigured = settings.caseReviewSetting.orgDescription || settings.caseReviewSetting.structure;
+          const isKycEnabled = settings.kycEnrichmentSetting.enabled;
+          const isKycConfigured =
+            isKycEnabled &&
+            (settings.kycEnrichmentSetting.customInstructions ||
+              settings.kycEnrichmentSetting.domainsFilter.length > 0);
+
+          return (
+            <>
+              <ConfigRow
+                isRestricted={restricted}
+                canEdit={canEdit}
+                label={t('cases:overview.config.ai_review')}
+                statusTag={
+                  <Tag color={isGeneralConfigured ? 'green' : 'orange'} size="small">
+                    {isGeneralConfigured
+                      ? t('cases:overview.config.configured')
+                      : t('cases:overview.config.not_configured')}
+                  </Tag>
+                }
+                editIcon="edit"
+                upsaleTitle={t('cases:overview.upsale.ai_config.title')}
+                upsaleDescription={t('cases:overview.upsale.ai_config.description')}
+                onClick={handleOpenPanel}
+              />
+              <ConfigRow
+                isRestricted={restricted}
+                canEdit={canEdit}
+                label={t('cases:ai_settings.kyc_enrichment.title')}
+                showWand
+                statusTag={
+                  <>
+                    <Tag color={isKycEnabled ? 'green' : 'grey'} size="small">
+                      {isKycEnabled ? t('cases:overview.config.active') : t('cases:overview.config.inactive')}
+                    </Tag>
+                    {isKycEnabled && !isKycConfigured && (
+                      <Tag color="orange" size="small" className="whitespace-nowrap">
+                        {t('cases:overview.config.not_configured')}
+                      </Tag>
+                    )}
+                  </>
+                }
+                editIcon="arrow-right"
+                upsaleTitle={t('cases:overview.upsale.ai_config.title')}
+                upsaleDescription={t('cases:overview.upsale.ai_config.description')}
+                onClick={handleOpenPanel}
+              />
+              <Panel.Root open={aiConfigPanelOpen} onOpenChange={setAiConfigPanelOpen}>
+                <AIConfigPanelContent
+                  settings={data.settings}
+                  readOnly={!canEdit}
+                  onSuccess={() => {
+                    revalidate();
+                    setAiConfigPanelOpen(false);
+                    aiSettingsQuery.refetch();
+                  }}
+                />
+              </Panel.Root>
+            </>
+          );
+        })
+        .exhaustive()}
+    </div>
+  );
+}

@@ -1,0 +1,39 @@
+import { type CurrentUser } from '@app-builder/models';
+import { useHydrated, useLocation, useMatches } from '@tanstack/react-router';
+import { useEffect } from 'react';
+
+import { getPageViewNameAndProps } from './getPageviewNameAndProps';
+
+export function useSegmentIdentification(user: CurrentUser) {
+  const isHydrated = useHydrated();
+  useEffect(() => {
+    if (isHydrated) {
+      void window.analytics?.identify(user.actorIdentity.userId);
+      if (user.actorIdentity.userId) {
+        void window.analytics?.track('Logged In');
+      }
+    }
+  }, [user.actorIdentity.userId, user.organizationId, isHydrated]);
+}
+
+export function useSegmentPageTracking() {
+  const location = useLocation();
+  const isHydrated = useHydrated();
+  const matches = useMatches();
+  const thisPage = matches[matches.length - 1];
+  useEffect(() => {
+    if (!isHydrated) return;
+    if (!thisPage) return;
+
+    const tracking = getPageViewNameAndProps(thisPage);
+    if (!tracking) return;
+    const { name, properties } = tracking;
+    void window.analytics?.page(name, properties);
+  }, [location.href, thisPage?.id, isHydrated]);
+
+  return null;
+}
+
+export const segment = {
+  reset: () => window.analytics?.reset(),
+};

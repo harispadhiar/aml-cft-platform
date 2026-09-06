@@ -1,0 +1,47 @@
+import { ScenarioIterationSummaryWithType } from '@app-builder/models/scenario/iteration';
+import { matchSorter } from '@app-builder/utils/search';
+import { useDeferredValue, useMemo, useState } from 'react';
+import { Input, SelectWithCombobox } from 'ui-design-system';
+import { useRefVersionFilter, useTestVersionFilter } from '../TestRunsFiltersContext';
+
+export function VersionsFilter({
+  type,
+  scenarioIterations,
+}: {
+  type: 'ref' | 'test';
+  scenarioIterations: ScenarioIterationSummaryWithType[];
+}) {
+  const [value, setSearchValue] = useState('');
+  const { refVersion, setRefVersion } = useRefVersionFilter();
+  const { testVersion, setTestVersion } = useTestVersionFilter();
+  const deferredValue = useDeferredValue(value);
+
+  const filteredIterations = scenarioIterations.filter(({ type }) => type !== 'draft');
+
+  const matches = useMemo(
+    () => matchSorter(filteredIterations, deferredValue, { keys: ['version'] }),
+    [deferredValue, filteredIterations],
+  );
+
+  return (
+    <div className="flex flex-col gap-sm p-sm">
+      <SelectWithCombobox.Root
+        open
+        onSearchValueChange={setSearchValue}
+        selectedValue={type === 'ref' ? refVersion : testVersion}
+        onSelectedValueChange={type === 'ref' ? setRefVersion : setTestVersion}
+      >
+        <SelectWithCombobox.Combobox render={<Input />} autoSelect autoFocus />
+        <SelectWithCombobox.ComboboxList className="max-h-40">
+          {matches.map((iteration) => {
+            return (
+              <SelectWithCombobox.ComboboxItem key={iteration.id} value={iteration.id} className="align-baseline">
+                <span className="text-grey-primary text-s">{`V${iteration.version}`}</span>
+              </SelectWithCombobox.ComboboxItem>
+            );
+          })}
+        </SelectWithCombobox.ComboboxList>
+      </SelectWithCombobox.Root>
+    </div>
+  );
+}

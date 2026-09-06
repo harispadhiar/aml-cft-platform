@@ -1,0 +1,137 @@
+import {
+  applyUniqueLexisNexisSectionDefault,
+  DatasetSelectionContent,
+  getCanonicalSelectedKeys,
+  getSectionLeafKeys,
+  ListAndTopicDatasetConfiguration,
+  makeDatasetsMap,
+  syncSharpDatasets,
+} from '@app-builder/components/ListAndTopicConfiguration';
+import { type ScreeningCategory } from '@app-builder/models/screening';
+import { useListConfigQuery } from '@app-builder/queries/screening/lists-config';
+import { useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { MenuCommand, Tag } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+import { screeningsI18n } from '../screenings-i18n';
+
+const SECTION_I18N_KEYS: Record<ScreeningCategory, string> = {
+  sanctions: 'sanctions',
+  peps: 'peps',
+  'adverse-media': 'adverse_media',
+  'third-parties': 'third_parties',
+  custom: 'custom',
+  global: 'global',
+};
+
+export interface DatasetsPopoverProps {
+  selectedDatasets: string[];
+  onApply: (datasets: string[]) => void;
+  disabled: boolean;
+}
+
+export const DatasetsPopover = ({ selectedDatasets, onApply, disabled }: DatasetsPopoverProps) => {
+  const { t } = useTranslation([...screeningsI18n, 'scenarios']);
+  const listConfigQuery = useListConfigQuery('manual_search');
+  const listSharp = ListAndTopicDatasetConfiguration.useSharp();
+  const [open, setOpen] = useState(false);
+  const tagRef = useRef<HTMLButtonElement>(null);
+  const listConfig = listConfigQuery.data;
+
+  const syncFromSelected = () => {
+    listSharp.update((state) => {
+      if (listConfig) {
+        syncSharpDatasets(state.datasets, selectedDatasets, {
+          filters: listConfig.filters,
+          provider: listConfig.provider,
+        });
+      } else {
+        syncSharpDatasets(state.datasets, selectedDatasets);
+      }
+    });
+  };
+
+  const handleOpenChange = (isOpen: boolean) => {
+    if (disabled) return;
+    if (isOpen) {
+      syncFromSelected();
+    }
+    setOpen(isOpen);
+  };
+
+  const handleApply = () => {
+    if (listConfig) {
+      listSharp.update((state) => {
+        applyUniqueLexisNexisSectionDefault(state.datasets, listConfig.filters, listConfig.provider);
+      });
+    }
+    onApply(getCanonicalSelectedKeys(listSharp.value.datasets));
+    setOpen(false);
+  };
+
+  const handleCancel = () => {
+    syncFromSelected();
+    setOpen(false);
+  };
+
+  const hasSelection = selectedDatasets.filter((d) => !d.startsWith('global')).length > 0;
+
+  const selectionMap = useMemo(() => {
+    const map = makeDatasetsMap(selectedDatasets);
+    if (listConfig) {
+      applyUniqueLexisNexisSectionDefault(map, listConfig.filters, listConfig.provider);
+    }
+    return map;
+  }, [selectedDatasets, listConfig]);
+
+  const sectionTags = useMemo(() => {
+    const data = listConfigQuery.data;
+    if (!data || !hasSelection) return [];
+    return Object.entries(data.filters)
+      .filter(([key]) => key !== 'global')
+      .flatMap(([key, section]) => {
+        if (!section) return [];
+        const sectionKey = key as ScreeningCategory;
+        const isSectionEnabled = !!selectionMap[sectionKey];
+        const count = getSectionLeafKeys(section, sectionKey).filter((k) => selectionMap[k]).length;
+        if (!isSectionEnabled && count === 0) return [];
+        return [{ key: sectionKey, count, isEmpty: isSectionEnabled && count === 0 }];
+      });
+  }, [listConfigQuery.data, selectionMap, hasSelection]);
+
+  return (
+    <div className="flex items-center gap-sm relative">
+      <MenuCommand.Menu open={open} onOpenChange={handleOpenChange}>
+        <MenuCommand.Trigger>
+          <button type="button" disabled={disabled} className="flex items-center gap-sm flex-wrap" ref={tagRef}>
+            {hasSelection ? (
+              <>
+                {sectionTags.map(({ key, count, isEmpty }) => (
+                  <Tag
+                    key={key}
+                    color={disabled ? 'grey' : 'purple'}
+                    className="cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <span className="font-medium capitalize">
+                      {t(`scenarios:sanction.lists.${SECTION_I18N_KEYS[key]}`)}
+                      {isEmpty ? ` (${t('scenarios:sanction.lists.no_lists_selected')})` : ` (${count})`}
+                    </span>
+                  </Tag>
+                ))}
+                <Icon icon="plus" className="size-4 text-grey-secondary" />
+              </>
+            ) : (
+              <span className="flex items-center gap-xs text-grey-placeholder cursor-pointer">
+                <Icon icon="plus" className="size-4  " />
+                <span>{t('screenings:freeform_search.filter_by_list')}</span>
+              </span>
+            )}
+          </button>
+        </MenuCommand.Trigger>
+        <MenuCommand.Content align="start" sideOffset={4} className="w-[280px]">
+          <DatasetSelectionContent useCase="manual_search" onApply={handleApply} onCancel={handleCancel} />
+        </MenuCommand.Content>
+      </MenuCommand.Menu>
+    </div>
+  );
+};

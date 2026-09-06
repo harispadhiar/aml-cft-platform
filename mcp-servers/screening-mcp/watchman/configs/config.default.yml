@@ -1,0 +1,105 @@
+Watchman:
+  Servers:
+    BindAddress: ":8084"
+    AdminAddress: ":9094"
+
+  Telemetry:
+    ServiceName: "watchman"
+
+  # Database:
+  #   Postgres:
+  #     Address: "127.0.0.1:5432"
+  #     User: "watchman"
+  #     Password: "watchman"
+  #   DatabaseName: "watchman"
+
+  Webui:
+    BasePath: "/"
+
+  Download:
+    RefreshInterval: "12h"
+    InitialDataDirectory: ""
+
+    # Specify which lists to download and include in Watchman results
+    # Examples: us_csl, us_ofac, us_non_sdn, us_fincen_311, uk_csl, eu_csl, un_csl
+    IncludedLists: []
+
+    # Source-list names for which download or parse errors are suppressed.
+    # A failed list named here will log a warning but will not cause a refresh error.
+    # Examples: us_csl, us_ofac, eu_csl
+    IgnoredDownloadErrors: []
+
+    # Include any senzing formatted OpenSanctions lists
+    # Requires API key: set OPENSANCTIONS_API_KEY env var
+    # See available datasets at: https://www.opensanctions.org/datasets/
+    # OpenSanctions:
+    #   Lists:
+    #     # UK HM Treasury Sanctions (same data as gov.uk ODS)
+    #     - SourceList: gb_hmt_sanctions
+    #       Location: https://data.opensanctions.org/datasets/latest/gb_hmt_sanctions/senzing.json
+    #     # UK Foreign Office Sanctions
+    #     - SourceList: gb_fcdo_sanctions
+    #       Location: https://data.opensanctions.org/datasets/latest/gb_fcdo_sanctions/senzing.json
+
+    # Include any senzing formatted lists in Watchman's corpus
+    # Senzing:
+    #   - SourceList: "senzing-persons"
+    #     Location: "file://pkg/sources/senzing/testdata/persons.jsonl"
+    # Use SENZING_CONCURRENT_DOWNLOADS env var (default 5) to limit parallel downloads of Senzing lists.
+
+  Search:
+    # Tune these settings based on your available resources (CPUs, etc).
+    # Usually a multiple (i.e. 2x, 4x) of GOMAXPROCS is optimal.
+    Goroutines:
+      Default: 10
+      Min: 1
+      Max: 25
+    Embeddings:
+      Enabled: false # Opt-in feature
+      Provider:
+        # Name: "ollama"                                         # ollama, openai, openrouter, azure
+        # BaseURL: "http://localhost:11434/v1"                   # API endpoint (required when enabled)
+        # APIKey: "ollama"                                       # Can be set via EMBEDDINGS_API_KEY env var
+        # Model: "koill/sentence-transformers:all-minilm-l12-v2" # Required: e.g., "text-embedding-3-small" (OpenAI)
+        # Dimension: 384                                         # Required: must match model (e.g., 1536 for OpenAI, 1024 for e5-large)
+        # NormalizeVectors: true                                 # L2 normalize if API doesn't
+        Timeout: "30s"
+        RateLimit:
+          RequestsPerSecond: 50
+          Burst: 25
+        Retry:
+          MaxRetries: 3
+          InitialBackoff: "1s"
+          MaxBackoff: "30s"
+      Cache:
+        # Cache type can be one of Blank (disabled), memory, sql
+        Type: "memory"
+        Size: 10000
+      CrossScriptOnly: true   # Hybrid approach: embeddings for cross-script only
+      SimilarityThreshold: 0.70
+      BatchSize: 32
+      IndexBuildTimeout: "10m"
+
+  PostalPool:
+    Enabled: false
+    Instances: 2
+    StartingPort: 10000
+    StartupTimeout: "60s"
+    RequestTimeout: "10s"
+    BinaryPath: "" # POSTAL_SERVER_BIN_PATH is set in Dockerfile
+    CGOSelfInstances: 1
+
+  Geocoding:
+    Enabled: false
+    Provider:
+      Name: "opencage"    # opencage, google, or nominatim
+      APIKey: ""          # Can be set via GEOCODING_API_KEY env var
+      BaseURL: ""         # Optional: override for self-hosted Nominatim
+      Timeout: "10s"
+    RateLimit:
+      RequestsPerSecond: 1  # Free tier: 1/sec, Paid: up to 40/sec
+      Burst: 5
+    Cache:
+      L1MaxSize: 10000      # In-memory LRU cache size
+      L1TTL: "24h"          # TTL for L1 cache entries
+      L2Enabled: true       # Persist to database (requires Database config)

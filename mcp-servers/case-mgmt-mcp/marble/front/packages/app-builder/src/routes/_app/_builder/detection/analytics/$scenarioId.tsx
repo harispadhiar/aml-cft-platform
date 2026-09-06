@@ -1,0 +1,516 @@
+import { ErrorComponent, Page } from '@app-builder/components';
+import { CustomFiltersForm } from '@app-builder/components/Analytics/CustomFiltersForm';
+import { Decisions } from '@app-builder/components/Analytics/Decisions';
+import { DecisionsScoreDistribution } from '@app-builder/components/Analytics/DecisionsScoreDistribution';
+import { RulesHit } from '@app-builder/components/Analytics/RulesHit';
+import { RuleVsDecisionOutcomes } from '@app-builder/components/Analytics/RuleVsDecisionOutcomes';
+import { ScreeningHits } from '@app-builder/components/Analytics/ScreeningHits';
+import { UpsellCard } from '@app-builder/components/Analytics/UpsellCard';
+import { DetectionNavigationTabs } from '@app-builder/components/Detection';
+import { authMiddleware } from '@app-builder/middlewares/auth-middleware';
+import type {
+  DateRangeFilter as AnalyticsDateRangeFilter,
+  AvailableFiltersResponse,
+} from '@app-builder/models/analytics';
+import { type AnalyticsFiltersQuery, analyticsFiltersQuery, FilterSource } from '@app-builder/models/analytics';
+import { type Scenario } from '@app-builder/models/scenario';
+import { useGetAvailableFilters } from '@app-builder/queries/analytics/get-available-filters';
+import { useAnalyticsDataQuery } from '@app-builder/queries/analytics/get-data';
+import { isAnalyticsAvailable } from '@app-builder/services/feature-access';
+import { formatDateTimeWithoutPresets, formatDuration } from '@app-builder/utils/format';
+import { fromSUUIDtoUUID, fromUUIDtoSUUID } from '@app-builder/utils/short-uuid';
+import * as Sentry from '@sentry/react';
+import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { createServerFn } from '@tanstack/react-start';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import * as R from 'remeda';
+import { Button, FiltersBar, FormattingProvider, MenuCommand } from 'ui-design-system';
+import type { FilterChange, FilterDescriptor, FilterValue } from 'ui-design-system/src/FiltersBar/types';
+import { Icon } from 'ui-icons';
+import { z } from 'zod/v4';
+
+interface LoaderData {
+  scenarioId: string;
+  scenarios: Scenario[];
+  scenarioVersions: Array<{
+    version: number;
+    createdAt: string;
+  }>;
+  isAnalyticsAvailable: boolean;
+}
+
+const paramsSchema = z.object({
+  scenarioId: z.string().transform((id) => fromSUUIDtoUUID(id)),
+});
+
+const searchParamsSchema = z.object({
+  q: z.string().default(() => btoa(JSON.stringify({ range: { type: 'dynamic', fromNow: '-P30D' } }))),
+});
+
+const analyticsLoader = createServerFn()
+  .middleware([authMiddleware])
+  .validator(paramsSchema)
+  .handler(async function analyticsLoader({ data, context }) {
+    const { scenario, user, entitlements } = context.authInfo;
+
+    const [scenarios, scenarioIterations] = await Promise.all([
+      scenario.listScenarios(),
+      scenario.listScenarioIterations({ scenarioId: data.scenarioId }),
+    ]);
+
+    return {
+      scenarioId: data.scenarioId,
+      scenarios,
+      scenarioVersions: scenarioIterations
+        .filter(({ version }) => version !== null)
+        .map(({ version, createdAt }) => ({
+          version,
+          createdAt,
+        })),
+      isAnalyticsAvailable: isAnalyticsAvailable(user, entitlements),
+    };
+  });
+
+export const Route = createFileRoute('/_app/_builder/detection/analytics/$scenarioId')({
+  validateSearch: searchParamsSchema,
+  loader: ({ params }) => analyticsLoader({ data: params }),
+  staleTime: Infinity,
+  errorComponent: ({ error }) => {
+    Sentry.captureException(error);
+    return <ErrorComponent error={error} />;
+  },
+  component: Analytics,
+});
+
+function Analytics() {
+  const {
+    scenarioId,
+    scenarios,
+    scenarioVersions,
+    isAnalyticsAvailable: hasAnalyticsLicense,
+  } = Route.useLoaderData() as LoaderData;
+
+  const { t, i18n } = useTranslation(['filters', 'analytics']);
+  const navigate = useNavigate();
+  const { q: queryString } = Route.useSearch();
+
+  const parsedFiltersResult = useMemo<AnalyticsFiltersQuery | null>(() => {
+    try {
+      const decoded = queryString ? atob(queryString) : null;
+      return decoded ? analyticsFiltersQuery.parse(JSON.parse(decoded)) : null;
+    } catch {
+      return null;
+    }
+  }, [queryString]);
+
+  const [volatileScenarioId, setVolatileScenarioId] = useState<string | null>(null);
+  const [volatileRange, setVolatileRange] = useState<AnalyticsDateRangeFilter | undefined>();
+  const [volatileCompareRange, setVolatileCompareRange] = useState<AnalyticsDateRangeFilter | undefined>();
+  const [selectedFilterNames, setSelectedFilterNames] = useState<string[]>([]);
+  const [pendingDynamicFiltersReconciliationFor, setPendingDynamicFiltersReconciliationFor] = useState<string | null>(
+    null,
+  );
+  const triggerObjects = useMemo(
+    () =>
+      R.pipe(
+        scenarios,
+        R.map((scenario) => scenario.triggerObjectType),
+        R.unique(),
+      ),
+    [scenarios],
+  );
+
+  useEffect(() => {
+    setVolatileScenarioId(null);
+    setVolatileRange(undefined);
+    setVolatileCompareRange(undefined);
+    setPendingDynamicFiltersReconciliationFor(null);
+  }, [queryString]);
+
+  useEffect(() => {
+    const triggerNames = parsedFiltersResult?.trigger?.map((t) => t.name) ?? [];
+    setSelectedFilterNames(triggerNames);
+  }, [scenarioId, queryString, parsedFiltersResult?.trigger]);
+
+  const filtersValues = useMemo(() => {
+    const { trigger, scenarioVersion: _scenarioVersion, ...rest } = parsedFiltersResult ?? {};
+    return {
+      scenarioId,
+      ...rest,
+      ...Object.fromEntries(trigger?.map((t) => [t.name, t]) ?? []),
+    };
+  }, [parsedFiltersResult, scenarioId]);
+
+  const effectiveScenarioId = volatileScenarioId ?? scenarioId;
+  const effectiveRanges: AnalyticsDateRangeFilter[] = useMemo(() => {
+    const primary = (volatileRange ?? parsedFiltersResult?.range) as AnalyticsDateRangeFilter | undefined;
+    const secondary = (volatileCompareRange ?? parsedFiltersResult?.compareRange) as
+      | AnalyticsDateRangeFilter
+      | undefined;
+    return [primary, secondary].filter(Boolean) as AnalyticsDateRangeFilter[];
+  }, [volatileRange, volatileCompareRange, parsedFiltersResult]);
+
+  const availableFiltersQuery = useGetAvailableFilters({
+    ranges: effectiveRanges,
+    scenarioId: effectiveScenarioId,
+  });
+  const { data: availableFilters } = availableFiltersQuery;
+
+  const seenAvailableFilters = useRef<Map<string, AvailableFiltersResponse[number]>>(new Map());
+
+  useEffect(() => {
+    availableFilters?.forEach((filter) => {
+      seenAvailableFilters.current.set(filter.name, filter);
+    });
+  }, [availableFilters]);
+
+  useEffect(() => {
+    if (
+      pendingDynamicFiltersReconciliationFor !== effectiveScenarioId ||
+      availableFiltersQuery.isPlaceholderData ||
+      !availableFilters
+    ) {
+      return;
+    }
+
+    const availableFilterNames = new Set(availableFilters.map((filter) => filter.name));
+    setSelectedFilterNames((prev) => prev.filter((name) => availableFilterNames.has(name)));
+    setPendingDynamicFiltersReconciliationFor(null);
+  }, [
+    availableFilters,
+    availableFiltersQuery.isPlaceholderData,
+    effectiveScenarioId,
+    pendingDynamicFiltersReconciliationFor,
+  ]);
+
+  type AvailableFiltersDescriptor = FilterDescriptor & {
+    source?: FilterSource;
+    unavailable?: boolean;
+  };
+
+  const allDynamicDescriptors: AvailableFiltersDescriptor[] = useMemo(() => {
+    const descriptors: Map<string, AvailableFiltersDescriptor> = new Map();
+
+    const appendToDescriptors = (filter: AvailableFiltersResponse[number], unavailable: boolean): void => {
+      const baseDescriptor = {
+        name: filter.name,
+        placeholder: filter.name,
+        removable: true,
+        unavailable,
+        source: filter.source,
+      };
+      switch (filter.type) {
+        case 'string':
+          descriptors.set(filter.name, {
+            ...baseDescriptor,
+            type: 'text',
+            op: 'in',
+          });
+          break;
+        case 'number':
+          descriptors.set(filter.name, {
+            ...baseDescriptor,
+            type: 'number',
+            op: '=',
+          });
+          break;
+        case 'boolean':
+          descriptors.set(filter.name, {
+            ...baseDescriptor,
+            type: 'boolean',
+          });
+          break;
+      }
+    };
+
+    seenAvailableFilters.current.forEach((filter) => appendToDescriptors(filter, true));
+    availableFilters?.forEach((filter) => appendToDescriptors(filter, false));
+
+    return Array.from(descriptors.values());
+  }, [availableFilters, seenAvailableFilters]);
+
+  const dynamicDescriptors = useMemo(
+    () => allDynamicDescriptors.filter((d) => selectedFilterNames.includes(d.name)),
+    [allDynamicDescriptors, selectedFilterNames],
+  );
+
+  const addSelectedFilter = (name: string) =>
+    setSelectedFilterNames((prev) => (prev.includes(name) ? prev : [...prev, name]));
+
+  const removeSelectedFilter = (name: string) => setSelectedFilterNames((prev) => prev.filter((n) => n !== name));
+
+  const {
+    decisionsOutcomesPerDayQuery,
+    decisionsScoreDistributionQuery,
+    ruleHitTableQuery,
+    ruleVsDecisionOutcomeQuery,
+    screeningHitsTableQuery,
+  } = useAnalyticsDataQuery({ scenarioId, queryString: queryString ?? '' });
+
+  const onFiltersUpdate = (next: { value: Record<string, FilterValue> }) => {
+    const draft = next.value;
+
+    const nextScenarioId = (draft['scenarioId'] as string | undefined) ?? scenarioId;
+
+    const filterDescriptorMap = new Map<string, FilterDescriptor>(
+      [...descriptors, ...dynamicDescriptors].map((d) => [d.name, d]),
+    );
+
+    const trigger = Object.entries(draft as Record<string, unknown>).flatMap(([name, v]) => {
+      const val = v as FilterValue;
+      if (name === 'scenarioId' || name === 'range' || name === 'compareRange') return [] as any[];
+
+      const descriptor = filterDescriptorMap.get(name);
+      if (!descriptor) return [] as any[];
+
+      switch (descriptor.type) {
+        case 'text': {
+          if (!val || typeof val !== 'object' || !('op' in val) || !('value' in val)) {
+            return [] as any[];
+          }
+          const textFilter = val as { op: string; value: unknown };
+          const values = Array.isArray(textFilter.value)
+            ? (textFilter.value as string[]).filter((v) => v != null && String(v).length > 0)
+            : [];
+          return values.length ? [{ name, op: textFilter.op, value: values, unavailable: descriptor.unavailable }] : [];
+        }
+
+        case 'number': {
+          if (!val || typeof val !== 'object' || !('op' in val) || !('value' in val)) {
+            return [] as any[];
+          }
+          const numFilter = val as { op: string; value: unknown };
+          const raw = numFilter.value;
+          const values = Array.isArray(raw) ? raw : [raw];
+          const cleaned = (values as Array<string | number | boolean>).filter(
+            (v) => v !== null && v !== undefined && (typeof v !== 'string' || v.length > 0),
+          );
+          return cleaned.length
+            ? [{ name, op: numFilter.op, value: cleaned, unavailable: descriptor.unavailable }]
+            : [];
+        }
+
+        case 'boolean': {
+          if (typeof val !== 'boolean') return [] as any[];
+          return [{ name, op: '=', value: [val], unavailable: descriptor.unavailable }];
+        }
+
+        default:
+          return [] as any[];
+      }
+    });
+
+    const nextQuery: AnalyticsFiltersQuery = {
+      range: (draft['range'] as unknown as AnalyticsFiltersQuery['range']) ??
+        (parsedFiltersResult?.range as AnalyticsFiltersQuery['range']) ?? {
+          type: 'dynamic',
+          fromNow: '-P30D',
+        },
+      compareRange: draft['compareRange'] as AnalyticsFiltersQuery['compareRange'],
+      ...(parsedFiltersResult?.scenarioVersion ? { scenarioVersion: parsedFiltersResult.scenarioVersion } : {}),
+      ...(trigger.length && nextScenarioId === scenarioId ? { trigger } : {}),
+    };
+
+    navigate({
+      to: '/detection/analytics/$scenarioId',
+      params: {
+        scenarioId: fromUUIDtoSUUID(nextScenarioId),
+      },
+      search: {
+        q: btoa(JSON.stringify(nextQuery)),
+      },
+    });
+  };
+
+  const onInstantUpdate = (change: FilterChange): void => {
+    if (change.type === 'set') {
+      switch (change.name) {
+        case 'scenarioId':
+          return setVolatileScenarioId(change.value as string);
+        case 'range':
+          return setVolatileRange(change.value as AnalyticsDateRangeFilter);
+        case 'compareRange':
+          return setVolatileCompareRange(change.value as AnalyticsDateRangeFilter);
+      }
+    }
+    if (change.type === 'remove' && change.name === 'compareRange') {
+      return setVolatileCompareRange(undefined);
+    }
+  };
+
+  const onFilterChange = (change: FilterChange): void => {
+    onInstantUpdate(change);
+    if (change.type === 'set' && change.reconcileDynamicFilters) {
+      setPendingDynamicFiltersReconciliationFor(change.value as string);
+    }
+    if (change.type === 'remove' && selectedFilterNames.includes(change.name)) {
+      removeSelectedFilter(change.name);
+    }
+  };
+  const descriptors: FilterDescriptor[] = [
+    {
+      type: 'select',
+      name: 'scenarioId',
+      placeholder: 'placeholder-do-not-happen',
+      options: scenarios.map((scenario) => ({ label: scenario.name, value: scenario.id })),
+      removable: false,
+      instantUpdate: true,
+    },
+    {
+      type: 'date-range-popover',
+      name: 'range',
+      placeholder: 'placeholder-do-not-happen',
+      removable: false,
+      instantUpdate: true,
+    },
+    {
+      type: 'date-range-popover',
+      name: 'compareRange',
+      placeholder: t('analytics:filters.select_comparison_date_range.placeholder'),
+      removable: true,
+      instantUpdate: true,
+    },
+  ];
+
+  return (
+    <Page.Main>
+      <Page.Content>
+        <DetectionNavigationTabs
+        // actions={
+        //   <Link
+        //     to="/analytics-legacy"
+        //     target="_blank"
+        //     className="text-s text-grey-secondary flex flex-row items-center font-semibold gap-xs"
+        //   >
+        //     <Icon icon="openinnew" className="size-4" />
+        //     <span>{t('analytics:legacy-analytics-link')}</span>
+        //   </Link>
+        // }
+        />
+        <FormattingProvider
+          value={{
+            language: i18n.language,
+            formatDateTimeWithoutPresets: (d, opts) =>
+              formatDateTimeWithoutPresets(d, { language: i18n.language, ...(opts ?? {}) }),
+            formatDuration: (dur, lang) => formatDuration(dur, lang ?? i18n.language),
+          }}
+        >
+          <div className="bg-surface-page min-[2000px]:px-sm flex flex-col gap-md">
+            <div className="flex flex-row gap-md mb-lg w-full justify-between">
+              <div className="flex gap-sm items-start">
+                <FiltersBar
+                  descriptors={descriptors}
+                  dynamicDescriptors={dynamicDescriptors}
+                  value={filtersValues}
+                  onUpdate={onFiltersUpdate}
+                  onChange={(change, _next) => onFilterChange(change)}
+                />
+                {availableFilters && availableFilters.length > 0 && (
+                  <AddFilterMenu
+                    availableFilters={availableFilters}
+                    selectedFilterNames={selectedFilterNames}
+                    onAddFilter={addSelectedFilter}
+                  />
+                )}
+              </div>
+              <CustomFiltersForm
+                triggerObjects={triggerObjects}
+                scenarioId={effectiveScenarioId}
+                ranges={effectiveRanges}
+              />
+            </div>
+            <div className="flex flex-col lg-analytics:flex-row gap-md w-full items-stretch h-auto">
+              <div className={hasAnalyticsLicense ? 'lg-analytics:basis-2/3 min-w-0' : 'min-w-0 w-full'}>
+                <Decisions
+                  data={decisionsOutcomesPerDayQuery.data ?? null}
+                  scenarioVersions={scenarioVersions}
+                  isLoading={decisionsOutcomesPerDayQuery.isFetching}
+                />
+              </div>
+              {hasAnalyticsLicense ? (
+                <div className="lg-analytics:basis-1/3 min-w-0">
+                  <DecisionsScoreDistribution query={decisionsScoreDistributionQuery} />
+                </div>
+              ) : null}
+            </div>
+
+            {hasAnalyticsLicense ? (
+              <>
+                <RulesHit
+                  isComparingRanges={effectiveRanges.length > 1}
+                  data={ruleHitTableQuery.data ?? []}
+                  isLoading={ruleHitTableQuery.isFetching}
+                />
+                <RuleVsDecisionOutcomes
+                  data={ruleVsDecisionOutcomeQuery.data ?? null}
+                  isLoading={ruleVsDecisionOutcomeQuery.isFetching}
+                />
+                <ScreeningHits
+                  data={screeningHitsTableQuery.data ?? []}
+                  isLoading={screeningHitsTableQuery.isFetching}
+                />
+              </>
+            ) : (
+              <UpsellCard
+                title={t('analytics:upsell.title')}
+                description={t('analytics:upsell.description')}
+                benefits={[
+                  t('analytics:upsell.benefit_1'),
+                  t('analytics:upsell.benefit_2'),
+                  t('analytics:upsell.benefit_3'),
+                ]}
+              />
+            )}
+          </div>
+        </FormattingProvider>
+      </Page.Content>
+    </Page.Main>
+  );
+}
+
+function AddFilterMenu({
+  availableFilters,
+  selectedFilterNames,
+  onAddFilter,
+}: {
+  availableFilters: AvailableFiltersResponse;
+  selectedFilterNames: string[];
+  onAddFilter: (name: string) => void;
+}) {
+  const { t } = useTranslation(['analytics']);
+  const [open, setOpen] = useState(false);
+
+  const remainingFilters = availableFilters.filter((filter) => !selectedFilterNames.includes(filter.name));
+
+  if (remainingFilters.length === 0) {
+    return null;
+  }
+
+  return (
+    <MenuCommand.Menu open={open} onOpenChange={setOpen}>
+      <MenuCommand.Trigger>
+        <Button variant="secondary" appearance="link" className="my-xs shrink-0">
+          <Icon icon="plus" className="size-4" />
+          <span>{t('analytics:filters.custom_filters.add_filter')}</span>
+        </Button>
+      </MenuCommand.Trigger>
+      <MenuCommand.Content align="start" sideOffset={4}>
+        <MenuCommand.List>
+          {remainingFilters.map((filter) => (
+            <MenuCommand.Item
+              key={filter.name}
+              value={filter.name}
+              onSelect={() => {
+                onAddFilter(filter.name);
+                setOpen(false);
+              }}
+            >
+              <span>{filter.name}</span>
+            </MenuCommand.Item>
+          ))}
+        </MenuCommand.List>
+      </MenuCommand.Content>
+    </MenuCommand.Menu>
+  );
+}

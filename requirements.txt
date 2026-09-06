@@ -1,0 +1,11 @@
+# Core Web UI & Data Validation
+gradio>=4.44.0
+pydantic>=2.0
+
+# Optional: Deep Learning & GPU Fine-Tuning Stack (Used for LoRA training/inference)
+# torch>=2.2.0
+# transformers>=4.40.0
+# peft>=0.10.0
+# bitsandbytes>=0.43.0
+# trl>=0.8.0
+# datasets>=2.18.0

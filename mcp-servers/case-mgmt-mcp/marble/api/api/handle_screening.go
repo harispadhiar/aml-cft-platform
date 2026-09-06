@@ -1,0 +1,435 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+
+	"github.com/checkmarble/marble-backend/dto"
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/checkmarble/marble-backend/usecases"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/cockroachdb/errors"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+)
+
+var freeformSearchPaginationDefaults = models.PaginationDefaults{
+	Limit:  25,
+	SortBy: models.SortingFieldCreatedAt,
+	Order:  models.SortingOrderDesc,
+}
+
+func handleScreeningDatasetFreshness(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+
+		dataset, err := uc.CheckDatasetFreshness(ctx)
+		if err != nil {
+			utils.LoggerFromContext(ctx).WarnContext(ctx,
+				"could not check OpenSanctions dataset freshness", "error", err.Error())
+
+			c.JSON(http.StatusOK, dto.CreateOpenSanctionsFreshnessFallback())
+			return
+		}
+
+		c.JSON(http.StatusOK, dto.AdaptScreeningDataset(dataset))
+	}
+}
+
+func handleScreeningDatasetCatalog(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+
+		catalog, err := uc.GetDatasetCatalog(ctx)
+
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusOK, dto.AdaptOpenSanctionsCatalog(catalog))
+	}
+}
+
+func handleGetAvailableFilters(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+		feature := models.ScreeningFeature(c.Query("feature"))
+
+		filters, err := uc.GetAvailableFilters(ctx, feature)
+
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusOK, filters)
+	}
+}
+
+func handleListScreenings(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		decisionId := c.Query("decision_id")
+		initialOnly := c.Query("initial_only") == "1"
+
+		if decisionId == "" {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+		screenings, err := uc.ListScreenings(ctx, decisionId, initialOnly)
+
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusOK, pure_utils.Map(screenings, dto.AdaptScreeningDto))
+	}
+}
+
+func handleUpdateScreeningMatchStatus(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		matchId := c.Param("id")
+
+		var payload dto.ScreeningMatchUpdateDto
+
+		if presentError(ctx, c, c.ShouldBindJSON(&payload)) {
+			return
+		}
+
+		creds, ok := utils.CredentialsFromCtx(ctx)
+
+		if !ok {
+			presentError(ctx, c, models.ErrUnknownUser)
+			return
+		}
+
+		update, err := dto.AdaptScreeningMatchUpdateInputDto(matchId, creds.ActorIdentity.UserId, payload)
+
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+
+		match, err := uc.UpdateMatchStatus(ctx, update)
+
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusOK, dto.AdaptScreeningMatchDto(match))
+	}
+}
+
+func handleUploadScreeningMatchFile(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		screeningId := c.Param("screeningId")
+
+		var form FileForm
+
+		if err := c.ShouldBind(&form); err != nil {
+			presentError(ctx, c, errors.Wrap(models.BadParameterError, err.Error()))
+			return
+		}
+
+		creds, ok := utils.CredentialsFromCtx(ctx)
+
+		if !ok {
+			presentError(ctx, c, models.ErrUnknownUser)
+			return
+		}
+
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+
+		files, err := uc.CreateFiles(ctx, creds, screeningId, form.Files)
+
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusCreated, pure_utils.Map(files, dto.AdaptScreeningFileDto))
+	}
+}
+
+func handleListScreeningMatchFiles(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		screeningId := c.Param("screeningId")
+
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+
+		files, err := uc.ListFiles(ctx, screeningId)
+
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusOK, pure_utils.Map(files, dto.AdaptScreeningFileDto))
+	}
+}
+
+func handleDownloadScreeningMatchFile(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		screeningId := c.Param("screeningId")
+		fileId := c.Param("fileId")
+
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+
+		url, err := uc.GetFileDownloadUrl(ctx, screeningId, fileId)
+
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"url": url})
+	}
+}
+
+//nolint:unused
+func handleCreateScreeningMatchComment(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		matchId := c.Param("id")
+
+		var payload dto.ScreeningMatchCommentDto
+
+		if presentError(ctx, c, c.ShouldBindJSON(&payload)) {
+			return
+		}
+
+		creds, ok := utils.CredentialsFromCtx(ctx)
+
+		if !ok {
+			presentError(ctx, c, models.ErrUnknownUser)
+			return
+		}
+
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+		comment, err := dto.AdaptScreeningMatchCommentInputDto(matchId, creds.ActorIdentity.UserId, payload)
+
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		comment, err = uc.MatchAddComment(ctx, matchId, comment)
+
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusCreated, dto.AdaptScreeningMatchCommentDto(comment))
+	}
+}
+
+func handleRefineScreening(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		var payload dto.ScreeningRefineDto
+
+		if presentError(ctx, c, c.ShouldBindJSON(&payload)) {
+			return
+		}
+
+		creds, ok := utils.CredentialsFromCtx(ctx)
+
+		if !ok {
+			presentError(ctx, c, models.ErrUnknownUser)
+			return
+		}
+
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+		screening, err := uc.Refine(ctx, dto.AdaptScreeningRefineDto(payload), &creds.ActorIdentity.UserId)
+
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusOK, dto.AdaptScreeningDto(screening))
+	}
+}
+
+func handleSearchScreening(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		var payload dto.ScreeningRefineDto
+
+		if presentError(ctx, c, c.ShouldBindJSON(&payload)) {
+			return
+		}
+
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+		screening, err := uc.Search(ctx, dto.AdaptScreeningRefineDto(payload))
+
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusOK, pure_utils.Map(dto.AdaptScreeningDto(screening).Matches, func(
+			match dto.ScreeningMatchDto,
+		) json.RawMessage {
+			return match.Payload
+		}))
+	}
+}
+
+func handleEnrichScreeningMatch(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		matchId := c.Param("id")
+
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+		newMatch, err := uc.EnrichMatch(ctx, matchId)
+
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusOK, dto.AdaptScreeningMatchDto(newMatch))
+	}
+}
+
+func handleGetScreeningEntity(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		entityId := c.Param("entityId")
+
+		screeningUsecase := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+
+		entity, err := screeningUsecase.GetEntity(ctx, entityId)
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusOK, json.RawMessage(entity))
+	}
+}
+
+const SCREENING_FREEFORM_SEARCH_LIMIT_MAX = 50
+
+func handleFreeformSearch(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		orgId, err := utils.OrganizationIdFromRequest(c.Request)
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		var payload dto.ScreeningFreeformDto
+
+		if presentError(ctx, c, c.ShouldBindJSON(&payload)) {
+			return
+		}
+
+		limit := 10
+
+		if l, err := strconv.Atoi(c.Query("limit")); err == nil {
+			limit = max(1, min(l, SCREENING_FREEFORM_SEARCH_LIMIT_MAX))
+		}
+
+		req := dto.FreeformSearchInput{
+			Type:  payload.Query.Type(),
+			Query: dto.AdaptRefineQueryDto(payload.Query),
+		}
+
+		config := models.FreeformSearchConfig{
+			Filters:   payload.Filters,
+			Threshold: payload.Threshold,
+			Limit:     limit,
+		}
+
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+
+		searchId, screening, err := uc.FreeformSearch(ctx, orgId, config, req.ToScreeningRefineRequest())
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusOK, dto.AdaptScreeningFreeformSearchResult(searchId, screening.Matches))
+	}
+}
+
+func handleListFreeformSearch(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		orgId, err := utils.OrganizationIdFromRequest(c.Request)
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		filters := dto.ScreeningFreeformSearchFilters{}
+		if presentError(ctx, c, c.ShouldBindQuery(&filters)) {
+			return
+		}
+
+		var paginationAndSortingDto dto.PaginationAndSorting
+		if err := c.ShouldBind(&paginationAndSortingDto); err != nil {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+		paginationAndSorting := models.WithPaginationDefaults(
+			dto.AdaptPaginationAndSorting(paginationAndSortingDto),
+			freeformSearchPaginationDefaults)
+
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+
+		searches, hasNextPage, err := uc.ListFreeformSearch(ctx, orgId, filters.ToModel(orgId), paginationAndSorting)
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusOK, dto.AdaptPaginatedScreeningFreeformSearches(searches, hasNextPage))
+	}
+}
+
+func handleSaveFreeformSearch(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		searchId, err := uuid.Parse(c.Param("id"))
+		if err != nil {
+			presentError(ctx, c, errors.Wrap(models.BadParameterError, "invalid freeform search id"))
+			return
+		}
+
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+
+		err = uc.SaveFreeformSearch(ctx, searchId)
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.Status(http.StatusOK)
+	}
+}
+
+func handleGetFreeformSearch(uc usecases.Usecases) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		searchId, err := uuid.Parse(c.Param("id"))
+		if err != nil {
+			presentError(ctx, c, errors.Wrap(models.BadParameterError, "invalid freeform search id"))
+			return
+		}
+
+		uc := usecasesWithCreds(ctx, uc).NewScreeningUsecase()
+
+		search, err := uc.GetFreeformSearch(ctx, searchId)
+		if presentError(ctx, c, err) {
+			return
+		}
+
+		c.JSON(http.StatusOK, dto.AdaptSavedScreeningFreeformSearch(search))
+	}
+}

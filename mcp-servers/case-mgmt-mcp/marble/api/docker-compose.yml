@@ -1,0 +1,109 @@
+services:
+  db:
+    container_name: postgres
+    image: postgis/postgis:18-3.6-alpine
+    platform: linux/x86_64
+    shm_size: 1g
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: marble
+      POSTGRES_DB: marble
+      PGDATA: /data/postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-db:/data/postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 1s
+      retries: 5
+  elasticsearch:
+    container_name: es
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.4.0
+    ports:
+      - "9200:9200"
+    environment:
+      - node.name=es
+      - cluster.name=marble-es
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - es:/usr/share/elasticsearch/data
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "curl -f http://localhost:9200/_cluster/health?wait_for_status=yellow
+          || exit 1"
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+  yente:
+    container_name: yente
+    image: ghcr.io/opensanctions/yente:5.3.0
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    volumes:
+      - ./contrib/screening-manifest.json:/app/manifests/manifest.json
+    environment:
+      YENTE_INDEX_TYPE: elasticsearch
+      YENTE_INDEX_URL: "http://es:9200"
+      YENTE_UPDATE_TOKEN: ""
+      MARBLE_SCREENING_INDEXER_TOKEN: "random-token"
+      YENTE_MANIFEST: "/app/manifests/manifest.json"
+    extra_hosts:
+      - "marble-backend:host-gateway"
+  worker-monitor:
+    container_name: worker-monitor
+    image: ghcr.io/riverqueue/riverui:latest
+    ports:
+      - "8001:8080"
+    environment:
+      DATABASE_URL: "postgresql://postgres:marble@db:5432/marble"
+      RIVER_BASIC_AUTH_USER: ${RIVER_BASIC_AUTH_USER:-}
+      RIVER_BASIC_AUTH_PASS: ${RIVER_BASIC_AUTH_PASS:-}
+    depends_on:
+      - db
+  redis:
+    container_name: redis
+    image: redis:8-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 1s
+      retries: 5
+  motiva:
+    container_name: motiva
+    image: ghcr.io/apognu/motiva:v0.10.1
+    platform: linux/x86_64
+    ports:
+      - "8000:8000"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      MANIFEST_URL: "/tmp/manifest.json"
+      INDEX_URL: "http://es:9200"
+      MARBLE_SCREENING_INDEXER_TOKEN: "random-token"
+    volumes:
+      - ./contrib/screening-manifest.json:/tmp/manifest.json
+    extra_hosts:
+      - "marble-backend:host-gateway"
+
+volumes:
+  postgres-db:
+    name: marble-backend-postgres-db
+    driver: local
+  es:
+    driver: local

@@ -1,0 +1,43 @@
+package models
+
+import (
+	"time"
+
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/google/uuid"
+)
+
+type CreatePhantomDecisionInput struct {
+	OrganizationId     uuid.UUID
+	Scenario           Scenario
+	ClientObject       ClientObject
+	TriggerObjectTable string
+}
+
+type PhantomDecision struct {
+	PhantomDecisionId   string
+	CreatedAt           time.Time
+	OrganizationId      uuid.UUID
+	Outcome             Outcome
+	ScenarioId          string
+	ScenarioIterationId string
+	Score               int
+	RuleExecutions      []RuleExecution
+	ScreeningExecutions []ScreeningWithMatches
+}
+
+func AdaptScenarExecToPhantomDecision(scenarioExecution ScenarioExecution) PhantomDecision {
+	decisionId := pure_utils.NewId()
+	return PhantomDecision{
+		PhantomDecisionId:   decisionId.String(),
+		CreatedAt:           time.Now(),
+		OrganizationId:      scenarioExecution.OrganizationId,
+		Outcome:             scenarioExecution.Outcome,
+		ScenarioId:          scenarioExecution.ScenarioId.String(),
+		ScenarioIterationId: scenarioExecution.ScenarioIterationId.String(),
+		Score:               scenarioExecution.Score,
+		RuleExecutions:      scenarioExecution.RuleExecutions,
+		ScreeningExecutions: pure_utils.Map(scenarioExecution.ScreeningExecutions,
+			MergeScreeningExecWithDefaults(decisionId, scenarioExecution.OrganizationId, nil)),
+	}
+}

@@ -1,0 +1,50 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, build with `go test -c`
+*.test
+
+.DS_Store
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+coverage.html
+coverage.txt
+*.out
+
+/bin/
+/lint-project.sh
+/gitleaks.tar.gz
+misspell*
+staticcheck*
+.golangci-lint-generated.yml
+
+# Generated files
+.tmp/
+openapi-generator*jar
+.idea
+
+*.db
+
+/libpostal/
+
+/cmd/ui/fyne_*.go
+/cmd/ui/wasm/*.css
+/cmd/ui/wasm/*.css
+/cmd/ui/wasm/*.gif
+/cmd/ui/wasm/*.html
+/cmd/ui/wasm/*.js
+/cmd/ui/wasm/*.png
+/cmd/ui/wasm/*.wasm
+
+makefile.dev
+
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/

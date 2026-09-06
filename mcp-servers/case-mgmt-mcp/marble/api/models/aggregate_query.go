@@ -1,0 +1,111 @@
+package models
+
+import (
+	"fmt"
+	"slices"
+
+	"github.com/hashicorp/go-set/v2"
+)
+
+type AggregateQueryFamily struct {
+	TableName               string
+	EqConditions            *set.Set[string]
+	IneqConditions          *set.Set[string]
+	SelectOrOtherConditions *set.Set[string]
+}
+
+func NewAggregateQueryFamily(tableName string) AggregateQueryFamily {
+	return AggregateQueryFamily{
+		TableName:               tableName,
+		EqConditions:            set.New[string](0),
+		IneqConditions:          set.New[string](0),
+		SelectOrOtherConditions: set.New[string](0),
+	}
+}
+
+func (family AggregateQueryFamily) Equal(other AggregateQueryFamily) bool {
+	return family.TableName == other.TableName &&
+		family.EqConditions.Equal(other.EqConditions) &&
+		family.IneqConditions.Equal(other.IneqConditions) &&
+		family.SelectOrOtherConditions.Equal(other.SelectOrOtherConditions)
+}
+
+func (family AggregateQueryFamily) Hash() string {
+	// Hash function is used for more easily creating a set of unique query families, taking care of deduplication
+	var eq, ineq, other string
+	if family.EqConditions == nil {
+		eq = ""
+	} else {
+		s := family.EqConditions.Slice()
+		slices.Sort(s)
+		eq = fmt.Sprintf("%v", s)
+	}
+	if family.IneqConditions == nil {
+		ineq = ""
+	} else {
+		s := family.IneqConditions.Slice()
+		slices.Sort(s)
+		ineq = fmt.Sprintf("%v", s)
+	}
+	if family.SelectOrOtherConditions == nil {
+		other = ""
+	} else {
+		s := family.SelectOrOtherConditions.Slice()
+		slices.Sort(s)
+		other = fmt.Sprintf("%v", s)
+	}
+	return fmt.Sprintf("%s - %s - %s - %s", family.TableName, eq, ineq, other)
+}
+
+func (family AggregateQueryFamily) ToIndexFamilies() *set.HashSet[IndexFamily, string] {
+	// we output a collection of index families, with the different combinations of "inequality filtering"
+	//  at the end of the index.
+	// E.g. if we have a query with conditions a = 1, b = 2, c > 3, d > 4, e > 5, we output:
+	// { Flex: {a,b}, Last: c, Included: {d,e} }  +  { Flex: {a,b}, Last: d, Included: {c,e} }   +  { Flex: {a,b}, Last: e, Included: {c,d} }
+	output := set.NewHashSet[IndexFamily](0)
+	if (family.EqConditions == nil || family.EqConditions.Size() == 0) &&
+		(family.IneqConditions == nil || family.IneqConditions.Size() == 0) {
+		// if there are no conditions that are indexable, we return an empty family
+		return output
+	}
+
+	// first iterate on equality conditions and colunms to include anyway
+	base := NewIndexFamily()
+	base.TableName = family.TableName
+	if family.EqConditions != nil {
+		family.EqConditions.ForEach(func(f string) bool {
+			base.Flex.Insert(f)
+			return true
+		})
+	}
+	if family.SelectOrOtherConditions != nil {
+		family.SelectOrOtherConditions.ForEach(func(f string) bool {
+			base.Included.Insert(f)
+			return true
+		})
+	}
+	if family.IneqConditions == nil || family.IneqConditions.Size() == 0 {
+		output.Insert(base)
+		return output
+	}
+
+	// If inequality conditions are involved, we need to create a family for each column involved
+	// in the inequality conditions (and complete the "other" columns)
+	family.IneqConditions.ForEach(func(f string) bool {
+		// we create a copy of the base family
+		fam := base.Copy()
+		// we add the current column as the "last" column
+		fam.Last = f
+		// we add all the other columns as "other" columns
+		family.IneqConditions.ForEach(func(o string) bool {
+			if o != f {
+				fam.Included.Insert(o)
+			}
+			return true
+		})
+		output.Insert(fam)
+		return true
+	})
+
+	return output
+}

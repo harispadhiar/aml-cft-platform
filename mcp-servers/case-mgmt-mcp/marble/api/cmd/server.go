@@ -1,0 +1,453 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/checkmarble/marble-backend/api"
+	"github.com/checkmarble/marble-backend/infra"
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/repositories"
+	"github.com/checkmarble/marble-backend/usecases"
+	"github.com/checkmarble/marble-backend/usecases/auth"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/google/uuid"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
+	"github.com/cockroachdb/errors"
+	"github.com/getsentry/sentry-go"
+)
+
+func RunServer(config CompiledConfig, mode api.ServerMode) error {
+	appName := fmt.Sprintf("marble-backend %s", config.Version)
+	logger := utils.NewLogger(utils.GetEnv("LOGGING_FORMAT", "text"))
+	ctx := utils.StoreLoggerInContext(context.Background(), logger)
+
+	isMarbleSaasProject := infra.IsMarbleSaasProject()
+	marbleAppUrl := utils.GetEnv("MARBLE_APP_URL", "")
+
+	authProvider := auth.ParseTokenProvider(utils.GetEnv("AUTH_PROVIDER", "firebase"))
+	oidcProvider := infra.OidcConfig{}
+	firebaseConfig := api.FirebaseConfig{}
+
+	_, firebaseConfigured := os.LookupEnv("FIREBASE_API_KEY")
+	gcpProjectId := utils.GetEnv("GOOGLE_CLOUD_PROJECT", "")
+	gcpConfig, ok := infra.NewGcpConfig(ctx, gcpProjectId, firebaseConfigured)
+	if !ok {
+		logger.InfoContext(ctx, "Could not initialize GCP config. This is not blocking unless you are deploying with Firebase Auth, or use GCP as a provider for blob storage, tracing or profiling.")
+	}
+	gcpProjectId = gcpConfig.ProjectId
+
+	switch authProvider {
+	case auth.TokenProviderOidc:
+		oidc, err := infra.InitializeOidc(ctx, marbleAppUrl)
+		if err != nil {
+			return err
+		}
+
+		oidcProvider = oidc
+	case auth.TokenProviderFirebase:
+		firebaseConfig = api.FirebaseConfig{
+			ProjectId:    utils.GetEnv("FIREBASE_PROJECT_ID", ""),
+			EmulatorHost: utils.GetEnv("FIREBASE_AUTH_EMULATOR_HOST", ""),
+			ApiKey:       utils.GetRequiredEnv[string]("FIREBASE_API_KEY"),
+			AuthDomain:   utils.GetEnv("FIREBASE_AUTH_DOMAIN", ""),
+		}
+		if firebaseConfig.ProjectId == "" {
+			logger.Info("FIREBASE_PROJECT_ID was not provided, falling back to Google Cloud project", "project", gcpProjectId)
+
+			firebaseConfig.ProjectId = gcpProjectId
+		}
+
+		if !firebaseConfig.IsEmulator() {
+			if firebaseConfig.AuthDomain == "" {
+				firebaseConfig.AuthDomain = fmt.Sprintf("%s.firebaseapp.com", firebaseConfig.ProjectId)
+				logger.Warn(fmt.Sprintf("no FIREBASE_AUTH_DOMAIN specified, defaulting to %s", firebaseConfig.AuthDomain))
+			}
+		} else {
+			// The auth domain, when using the emulator, is always the emulator host itself
+			firebaseConfig.AuthDomain = firebaseConfig.EmulatorHost
+		}
+
+		logger.Info("firebase project configured", "project", firebaseConfig.ProjectId)
+	default:
+		return errors.Newf("unsupported token provider: %s", authProvider)
+	}
+
+	// This is where we read the environment variables and set up the configuration for the application.
+	apiConfig := api.Configuration{
+		ServerMode:           mode,
+		Env:                  utils.GetEnv("ENV", "production"),
+		AppName:              "marble-backend",
+		AppVersion:           config.Version,
+		MarbleApiUrl:         utils.GetEnv("MARBLE_API_URL", ""),
+		MarbleApiInternalUrl: utils.GetEnv("MARBLE_API_INTERNAL_URL", ""),
+		MarbleAppUrl:         marbleAppUrl,
+		MarbleBackofficeUrl:  utils.GetEnv("MARBLE_BACKOFFICE_URL", ""),
+		Port:                 utils.GetRequiredEnv[string]("PORT"),
+		RequestLoggingLevel:  utils.GetEnv("REQUEST_LOGGING_LEVEL", "all"),
+		TokenLifetimeMinute:  utils.GetEnv("TOKEN_LIFETIME_MINUTE", 60*2),
+		SegmentWriteKey:      utils.GetEnv("SEGMENT_WRITE_KEY", config.SegmentWriteKey),
+		DisableSegment:       utils.GetEnv("DISABLE_SEGMENT", false),
+		BatchTimeout:         time.Duration(utils.GetEnv("BATCH_TIMEOUT_SECOND", 55)) * time.Second,
+		DecisionTimeout:      time.Duration(utils.GetEnv("DECISION_TIMEOUT_SECOND", 10)) * time.Second,
+		DefaultTimeout:       time.Duration(utils.GetEnv("DEFAULT_TIMEOUT_SECOND", 5)) * time.Second,
+		AnalyticsTimeout:     utils.GetEnvDuration("ANALYTICS_TIMEOUT", 15*time.Second),
+		AnalyticsProxyApiUrl: utils.GetEnv("ANALYTICS_PROXY_API_URL", ""),
+
+		GcpConfig: gcpConfig,
+
+		MetabaseConfig: infra.MetabaseConfiguration{
+			SiteUrl:             utils.GetEnv("METABASE_SITE_URL", ""),
+			JwtSigningKey:       []byte(utils.GetEnv("METABASE_JWT_SIGNING_KEY", "")),
+			TokenLifetimeMinute: utils.GetEnv("METABASE_TOKEN_LIFETIME_MINUTE", 10),
+			Resources: map[models.EmbeddingType]int{
+				models.GlobalDashboard: utils.GetEnv("METABASE_GLOBAL_DASHBOARD_ID", 0),
+			},
+		},
+
+		EnablePrometheus: utils.GetEnv("ENABLE_PROMETHEUS", false),
+
+		ScreeningIndexerToken: utils.GetEnv("SCREENING_INDEXER_TOKEN", ""),
+
+		TokenProvider:  authProvider,
+		FirebaseConfig: firebaseConfig,
+		OidcConfig:     oidcProvider,
+	}
+	if apiConfig.DisableSegment {
+		apiConfig.SegmentWriteKey = ""
+	}
+	if apiConfig.MarbleApiInternalUrl == "" {
+		// Fallback on the regular API URL if the internal one is not set
+		// Don't fail if the config is missing as some environment use the same URL
+		apiConfig.MarbleApiInternalUrl = apiConfig.MarbleApiUrl
+	}
+
+	pgConfig := infra.PgConfig{
+		ConnectionString:   utils.GetEnv("PG_CONNECTION_STRING", ""),
+		Database:           utils.GetEnv("PG_DATABASE", "marble"),
+		Hostname:           utils.GetEnv("PG_HOSTNAME", ""),
+		Password:           utils.GetEnv("PG_PASSWORD", ""),
+		Port:               utils.GetEnv("PG_PORT", "5432"),
+		User:               utils.GetEnv("PG_USER", ""),
+		MaxPoolConnections: utils.GetEnv("PG_MAX_POOL_SIZE", infra.DEFAULT_MAX_CONNECTIONS),
+		ClientDbConfigFile: utils.GetEnv("CLIENT_DB_CONFIG_FILE", ""),
+		SslMode:            utils.GetEnv("PG_SSL_MODE", "prefer"),
+		ImpersonateRole:    utils.GetEnv("PG_IMPERSONATE_ROLE", ""),
+	}
+	if pgConfig.ConnectionString != "" {
+		if u, err := url.Parse(pgConfig.ConnectionString); err != nil || !u.IsAbs() {
+			switch err {
+			case nil:
+				return errors.New("invalid database connection string")
+			default:
+				return errors.Wrap(err, "invalid database connection string")
+			}
+		}
+	}
+
+	openSanctionsConfig := infra.InitializeScreening(
+		ctx,
+		&http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)},
+		utils.GetEnv("SCREENING_OPENSANCTIONS_API_HOST", ""),
+		utils.GetEnv("SCREENING_OPENSANCTIONS_AUTH_METHOD", ""),
+		utils.GetEnv("SCREENING_OPENSANCTIONS_API_KEY", ""),
+	)
+
+	if scope := utils.GetEnv("SCREENING_OPENSANCTIONS_SCOPE", ""); scope != "" {
+		openSanctionsConfig.WithScope(scope)
+	}
+	if host := utils.GetEnv("SCREENING_LEXISNEXIS_API_HOST", ""); host != "" {
+		openSanctionsConfig.
+			WithLexisNexisHost(host, utils.GetEnv("SCREENING_LEXISNEXIS_TOKEN", "")).
+			WithLexisNexisScope(utils.GetEnv("SCREENING_LEXISNEXIS_SCOPE", ""))
+	}
+
+	if algo := utils.GetEnv("SCREENING_ALGORITHM", ""); algo != "" {
+		openSanctionsConfig.WithAlgorithm(algo)
+	}
+
+	if apiUrl := utils.GetEnv("NAME_RECOGNITION_API_URL", ""); apiUrl != "" {
+		openSanctionsConfig.WithNameRecognition(apiUrl,
+			utils.GetEnv("NAME_RECOGNITION_API_KEY", ""))
+	}
+
+	seedOrgConfig := models.SeedOrgConfiguration{
+		CreateGlobalAdminEmail: utils.GetEnv("CREATE_GLOBAL_ADMIN_EMAIL", ""),
+		CreateOrgName:          utils.GetEnv("CREATE_ORG_NAME", ""),
+		CreateOrgAdminEmail:    utils.GetEnv("CREATE_ORG_ADMIN_EMAIL", ""),
+	}
+	licenseConfig := models.LicenseConfiguration{
+		LicenseKey:             utils.GetEnv("LICENSE_KEY", ""),
+		KillIfReadLicenseError: utils.GetEnv("KILL_IF_READ_LICENSE_ERROR", false),
+	}
+	aiPromptsServingDir := utils.GetEnv("AI_PROMPTS_SERVING_DIR", "")
+	bigQueryConfig := infra.BigQueryConfig{
+		ProjectID:      utils.GetEnv("BIGQUERY_PROJECT_ID", gcpConfig.ProjectId),
+		MetricsDataset: utils.GetEnv("BIGQUERY_METRICS_DATASET", infra.MetricsDataset),
+		MetricsTable:   utils.GetEnv("BIGQUERY_METRICS_TABLE", infra.MetricsTable),
+	}
+	aiAgentConfig := infra.AIAgentConfiguration{
+		MainAgentProviderType: infra.AIAgentProviderTypeFromString(
+			utils.GetEnv("AI_AGENT_MAIN_AGENT_PROVIDER_TYPE", "openai"),
+		),
+		MainAgentURL: utils.GetEnv("AI_AGENT_MAIN_AGENT_URL", ""),
+		MainAgentKey: utils.GetEnv("AI_AGENT_MAIN_AGENT_KEY", ""),
+		MainAgentBackend: infra.AIAgentProviderBackendFromString(
+			utils.GetEnv("AI_AGENT_MAIN_AGENT_BACKEND", ""),
+		),
+		MainAgentProject:         utils.GetEnv("AI_AGENT_MAIN_AGENT_PROJECT", gcpConfig.ProjectId),
+		MainAgentLocation:        utils.GetEnv("AI_AGENT_MAIN_AGENT_LOCATION", ""),
+		PerplexityAPIKey:         utils.GetEnv("AI_AGENT_PERPLEXITY_API_KEY", ""),
+		ModelsConfigOverridePath: utils.GetEnv("AI_AGENT_MODELS_CONFIG_OVERRIDE_FILE", ""),
+	}
+
+	serverConfig := ServerConfig{
+		batchIngestionMaxSize:        utils.GetEnv("BATCH_INGESTION_MAX_SIZE", 0),
+		caseManagerBucket:            utils.GetEnv("CASE_MANAGER_BUCKET_URL", ""),
+		ingestionBucketUrl:           utils.GetEnv("INGESTION_BUCKET_URL", ""),
+		offloadingBucketUrl:          utils.GetEnv("OFFLOADING_BUCKET_URL", ""),
+		analyticsBucketUrl:           utils.GetEnv("ANALYTICS_BUCKET_URL", ""),
+		jwtSigningKey:                utils.GetEnv("AUTHENTICATION_JWT_SIGNING_KEY", ""),
+		jwtSigningKeyFile:            utils.GetEnv("AUTHENTICATION_JWT_SIGNING_KEY_FILE", ""),
+		sentryDsn:                    utils.GetEnv("SENTRY_DSN", ""),
+		telemetryExporter:            utils.GetEnv("TRACING_EXPORTER", "otlp"),
+		otelSamplingRates:            utils.GetEnv("TRACING_SAMPLING_RATES", ""),
+		similarityThreshold:          utils.GetEnv("SIMILARITY_THRESHOLD", models.DEFAULT_SIMILARITY_THRESHOLD),
+		enableTracing:                utils.GetEnv("ENABLE_TRACING", false),
+		continuousScreeningBucketUrl: utils.GetEnv("CONTINUOUS_SCREENING_BUCKET_URL", ""),
+		csServeFilesDirectly:         utils.GetEnv("CONTINUOUS_SCREENING_SERVE_FILES_DIRECTLY", false),
+	}
+	if err := serverConfig.Validate(); err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+		return err
+	}
+
+	if apiConfig.ScreeningIndexerToken == "" {
+		apiConfig.ScreeningIndexerToken = uuid.NewString()
+		logger.Info("SCREENING_INDEXER_TOKEN is not set, setting it to a random token")
+	}
+
+	marbleJwtSigningKey := infra.ReadParseOrGenerateSigningKey(ctx, serverConfig.jwtSigningKey, serverConfig.jwtSigningKeyFile)
+
+	infra.SetupSentry(serverConfig.sentryDsn, apiConfig.Env, config.Version)
+	defer sentry.Flush(3 * time.Second)
+
+	tracingConfig := infra.TelemetryConfiguration{
+		ApplicationName: apiConfig.AppName,
+		Enabled:         serverConfig.enableTracing,
+		ProjectID:       gcpConfig.ProjectId,
+		Exporter:        serverConfig.telemetryExporter,
+		SamplingMap:     infra.NewTelemetrySamplingMap(ctx, serverConfig.otelSamplingRates),
+	}
+	telemetryRessources, err := infra.InitTelemetry(tracingConfig, config.Version)
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+	}
+
+	pool, err := infra.NewPostgresConnectionPool(ctx, appName, pgConfig.GetConnectionString(),
+		telemetryRessources.TracerProvider, pgConfig.MaxPoolConnections, pgConfig.ImpersonateRole)
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+	}
+
+	// TODO: this is a temporary fixup until we can merge `repositories/postgres` into our usual
+	// repositories setup. As it is, it does not use the query injecter for audit events and would
+	// produce invalid values.
+	authPool, err := infra.NewPostgresConnectionPool(ctx, appName, pgConfig.GetConnectionString(),
+		telemetryRessources.TracerProvider, pgConfig.MaxPoolConnections, pgConfig.ImpersonateRole)
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+	}
+
+	clientDbConfig, err := infra.ParseClientDbConfig(pgConfig.ClientDbConfigFile)
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+		return err
+	}
+
+	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+		return err
+	}
+
+	redisConfig, err := infra.InitRedisConfig()
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+		return err
+	}
+
+	redisClient, err := repositories.NewRedisClient(redisConfig)
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+		return err
+	}
+
+	var bigQueryInfra *infra.BigQueryInfra
+	if isMarbleSaasProject {
+		bigQueryInfra, err = infra.InitializeBigQueryInfra(ctx, bigQueryConfig)
+		if err != nil {
+			utils.LogAndReportSentryError(ctx, err)
+			return err
+		}
+		defer bigQueryInfra.Close()
+	}
+
+	var analyticsConfig infra.AnalyticsConfig
+
+	if serverConfig.analyticsBucketUrl != "" {
+		analyticsConfig, err = infra.InitAnalyticsConfig(pgConfig, serverConfig.analyticsBucketUrl)
+		if err != nil {
+			return err
+		}
+
+		apiConfig.AnalyticsEnabled = true
+	}
+	if apiConfig.AnalyticsProxyApiUrl != "" {
+		u, err := url.Parse(apiConfig.AnalyticsProxyApiUrl)
+		if err != nil {
+			return errors.Newf("cannot parse analytics proxy URL: %s (%s)", u, err.Error())
+		}
+		if !u.IsAbs() {
+			return errors.Newf("cannot parse analytics proxy URL: %s", u)
+		}
+		apiConfig.AnalyticsEnabled = true
+	}
+
+	var lagoConfig infra.LagoConfig
+	if isMarbleSaasProject {
+		lagoConfig = infra.InitializeLago()
+		if err := lagoConfig.Validate(); err != nil {
+			// Only report Lago configuration errors for production, not staging
+			if infra.IsMarbleProductionProject() {
+				utils.LogAndReportSentryError(ctx, err)
+			}
+		}
+	}
+
+	repositories := repositories.NewRepositories(
+		pool,
+		gcpConfig,
+		repositories.WithRedisClient(redisClient),
+		repositories.WithMetabase(infra.InitializeMetabase(apiConfig.MetabaseConfig)),
+		repositories.WithOpenSanctions(openSanctionsConfig),
+		repositories.WithClientDbConfig(clientDbConfig),
+		repositories.WithTracerProvider(telemetryRessources.TracerProvider),
+		repositories.WithRiverClient(riverClient),
+		repositories.WithBigQueryInfra(bigQueryInfra),
+		repositories.WithCache(utils.GetEnv("CACHE_ENABLED", false)),
+		repositories.WithSimilarityThreshold(serverConfig.similarityThreshold),
+		repositories.WithLagoConfig(lagoConfig),
+	)
+
+	deps, err := api.InitDependencies(ctx, apiConfig, authPool, marbleJwtSigningKey)
+	if err != nil {
+		return err
+	}
+
+	deploymentMetadata, err := GetDeploymentMetadata(ctx, repositories)
+	if err != nil {
+		utils.LogAndReportSentryError(ctx, err)
+		return errors.Wrap(err, "failed to get deployment ID from Marble DB")
+	}
+	license := infra.VerifyLicense(licenseConfig, deploymentMetadata.Value)
+
+	if apiConfig.TokenProvider == auth.TokenProviderOidc && !license.Sso {
+		return errors.New("cannot use OpenID Connect configuration without the appropriate license entitlement")
+	}
+
+	ipEnrichmentDatabase, err := infra.InitIpEnrichmentDatabase(ctx, license)
+	if err != nil {
+		return errors.Wrap(err, "failed to open ip enrichment database")
+	}
+
+	aiPromptsFS, aiAgentModelConfig := configAiResources(ctx, license, licenseConfig, aiAgentConfig, aiPromptsServingDir, config.Version)
+
+	uc := usecases.NewUsecases(repositories,
+		usecases.WithAppName(appName),
+		usecases.WithApiVersion(config.Version),
+		usecases.WithBatchIngestionMaxSize(serverConfig.batchIngestionMaxSize),
+		usecases.WithIngestionBucketUrl(serverConfig.ingestionBucketUrl),
+		usecases.WithOffloadingBucketUrl(serverConfig.offloadingBucketUrl),
+		usecases.WithCaseManagerBucketUrl(serverConfig.caseManagerBucket),
+		usecases.WithLicense(license),
+		usecases.WithAnalyticsEnabled(analyticsConfig.Enabled),
+		usecases.WithAllowInsecureWebhookURLs(utils.GetEnv("ENV", "production") == "development"),
+		usecases.WithWebhookIPWhitelist(os.Getenv("WEBHOOK_IP_WHITELIST")),
+		usecases.WithOpensanctions(openSanctionsConfig.IsSet()),
+		usecases.WithNameRecognition(openSanctionsConfig.IsNameRecognitionSet()),
+		usecases.WithFirebaseAdmin(apiConfig.TokenProvider, deps.FirebaseAdmin),
+		usecases.WithAIAgentConfig(aiAgentConfig),
+		usecases.WithAnalyticsConfig(analyticsConfig),
+		usecases.WithContinuousScreeningBucketUrl(serverConfig.continuousScreeningBucketUrl),
+		usecases.WithCsServeFilesDirectly(serverConfig.csServeFilesDirectly),
+		usecases.WithMarbleApiInternalUrl(apiConfig.MarbleApiInternalUrl),
+		usecases.WithIpEnrichmentDatabase(ipEnrichmentDatabase),
+		usecases.WithScreeningOffloadingEnabled(utils.GetEnv("SCREENING_OFFLOADING_ENABLED", true)),
+		usecases.WithAIPromptsServingDir(aiPromptsServingDir),
+		usecases.WithAIPromptsFS(aiPromptsFS),
+		usecases.WithAIAgentModelConfig(aiAgentModelConfig),
+	)
+
+	////////////////////////////////////////////////////////////
+	// Seed the database
+	////////////////////////////////////////////////////////////
+	seedUsecase := uc.NewSeedUseCase()
+	marbleAdminEmail := seedOrgConfig.CreateGlobalAdminEmail
+	if marbleAdminEmail != "" {
+		if err := seedUsecase.SeedMarbleAdmins(ctx, marbleAdminEmail); err != nil {
+			utils.LogAndReportSentryError(ctx, err)
+			return err
+		}
+	}
+	if seedOrgConfig.CreateOrgName != "" {
+		if err := seedUsecase.CreateOrgAndUser(ctx, models.InitOrgInput{
+			OrgName:    seedOrgConfig.CreateOrgName,
+			AdminEmail: seedOrgConfig.CreateOrgAdminEmail,
+		}); err != nil {
+			utils.LogAndReportSentryError(ctx, err)
+			return err
+		}
+	}
+
+	router := api.InitRouterMiddlewares(ctx, apiConfig, apiConfig.DisableSegment,
+		deps.SegmentClient, telemetryRessources)
+	server := api.NewServer(router, apiConfig, uc, deps.Authentication, deps.TokenHandler, logger)
+
+	notify, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		logger.InfoContext(ctx, "starting server", slog.String("version", config.Version), slog.String("port", apiConfig.Port))
+		err := server.ListenAndServe()
+		if !errors.Is(err, http.ErrServerClosed) {
+			utils.LogAndReportSentryError(ctx, errors.Wrap(err, "Error while serving the app"))
+		}
+		logger.InfoContext(ctx, "server returned")
+	}()
+
+	<-notify.Done()
+	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	deps.SegmentClient.Close()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		utils.LogAndReportSentryError(
+			ctx,
+			errors.Wrap(err, "Error while shutting down the server"),
+		)
+		return err
+	}
+
+	return err
+}

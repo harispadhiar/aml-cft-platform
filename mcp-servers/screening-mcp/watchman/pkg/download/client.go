@@ -1,0 +1,235 @@
+// Copyright 2020 The Moov Authors
+// Use of this source code is governed by an Apache License
+// license that can be found in the LICENSE file.
+
+package download
+
+import (
+	"cmp"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/moov-io/base/log"
+	"github.com/moov-io/watchman"
+)
+
+var (
+	defaultTimeout = 60 * time.Second
+)
+
+var (
+	HTTPClient, _ = DefaultHTTPClient()
+)
+
+func DefaultHTTPClient() (*http.Client, error) {
+	timeout, err := time.ParseDuration(cmp.Or(os.Getenv("DOWNLOAD_TIMEOUT"), defaultTimeout.String()))
+	if err != nil {
+		return nil, fmt.Errorf("parsing download timeout: %w", err)
+	}
+
+	return &http.Client{
+		Timeout: timeout,
+	}, nil
+}
+
+type Option func(dl *Downloader)
+
+func WithAdditionalHeaders(headers map[string]string) Option {
+	return func(dl *Downloader) {
+		dl.withAdditionalHeaders(headers)
+	}
+}
+
+// New returns a Downloader configured with the provided options
+func New(logger log.Logger, httpClient *http.Client, options ...Option) *Downloader {
+	if httpClient == nil {
+		httpClient, _ = DefaultHTTPClient()
+	}
+	return &Downloader{
+		HTTP:              httpClient,
+		Logger:            logger,
+		additionalHeaders: make(map[string]string),
+	}
+}
+
+// Downloader will download and cache DPL files in a temp directory.
+//
+// If HTTP is nil then http.DefaultClient will be used (which has NO timeouts).
+//
+// See: https://www.treasury.gov/resource-center/sanctions/SDN-List/Pages/sdn_data.aspx
+type Downloader struct {
+	HTTP   *http.Client
+	Logger log.Logger
+
+	additionalHeaders map[string]string
+}
+
+func (dl *Downloader) withAdditionalHeaders(additional map[string]string) {
+	if dl != nil && dl.additionalHeaders == nil {
+		dl.additionalHeaders = make(map[string]string)
+	}
+	if additional == nil {
+		return
+	}
+
+	for k, v := range additional {
+		dl.additionalHeaders[k] = v
+	}
+}
+
+const (
+	HashKey = "hash:sha256"
+)
+
+type Files map[string]io.ReadCloser
+
+func (fs Files) Close() error {
+	if fs == nil {
+		return nil
+	}
+
+	for filename, rc := range fs {
+		if err := rc.Close(); err != nil {
+			return fmt.Errorf("closing %s failed: %w", filename, err)
+		}
+	}
+	return nil
+}
+
+// GetFiles will initiate download of all provided files, return an io.ReadCloser to their content
+//
+// initialDir is an optional filepath to look for files in before attempting to download.
+//
+// Callers are expected to call the io.Closer interface method when they are done with the file
+func (dl *Downloader) GetFiles(ctx context.Context, dir string, namesAndSources map[string]string) (Files, error) {
+	if dl == nil {
+		return nil, errors.New("nil Downloader")
+	}
+	if dl.HTTP == nil {
+		dl.HTTP = http.DefaultClient
+	}
+	if dl.Logger == nil {
+		dl.Logger = log.NewNopLogger()
+	}
+
+	// Check the initial directory for files we don't need to download
+	// do not treat an nonexisting directory as error
+	localFiles, _ := os.ReadDir(dir)
+
+	var mu sync.Mutex
+	out := make(Files)
+	var wg sync.WaitGroup
+	wg.Add(len(namesAndSources))
+
+findfiles:
+	for name, source := range namesAndSources {
+		// Check if we have the file locally first
+		for _, file := range localFiles {
+			if strings.EqualFold(filepath.Base(file.Name()), name) {
+				fn := filepath.Join(dir, file.Name())
+				fd, err := os.Open(fn)
+				if err != nil {
+					dl.Logger.Error().LogErrorf("could not read file from %v initialDir: %v", fn, err)
+					fd.Close()
+					continue
+				}
+				mu.Lock()
+				out[name] = fd
+				mu.Unlock()
+
+				dl.Logger.Info().Logf("found %s", file.Name())
+
+				// file is found, skip downloading
+				wg.Done()
+				continue findfiles
+			}
+		}
+
+		// Download missing files
+		go func(wg *sync.WaitGroup, filename, downloadURL string) {
+			defer wg.Done()
+
+			logger := dl.createDownloadLogger(filename, downloadURL)
+
+			startTime := time.Now().In(time.UTC)
+			content, err := dl.retryDownload(ctx, downloadURL)
+			dur := time.Now().In(time.UTC).Sub(startTime)
+
+			if err != nil {
+				logger.Error().LogErrorf("FAILURE after %v to download: %v", dur, err)
+				return
+			}
+
+			logger.Info().Logf("successful download after %v", dur)
+
+			mu.Lock()
+			out[filename] = content
+			mu.Unlock()
+		}(&wg, name, source)
+	}
+	wg.Wait()
+
+	return out, nil
+}
+
+func (dl *Downloader) createDownloadLogger(filename, downloadURL string) log.Logger {
+	var host string
+	u, _ := url.Parse(downloadURL)
+	if u != nil {
+		host = u.Host
+	}
+	return dl.Logger.With(log.Fields{
+		"host":     log.String(host),
+		"filename": log.String(filename),
+	})
+}
+
+func (dl *Downloader) retryDownload(ctx context.Context, downloadURL string) (io.ReadCloser, error) {
+	// Support file URIs
+	fileURI, found := strings.CutPrefix(downloadURL, "file://")
+	if found {
+		return os.Open(fileURI)
+	}
+
+	// Allow a couple retries for various sources (some are flakey)
+	for i := 0; i < 3; i++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+		if err != nil {
+			return nil, dl.Logger.Error().LogErrorf("error building HTTP request: %v", err).Err()
+		}
+		req.Header.Set("User-Agent", fmt.Sprintf("moov-io/watchman:%v", watchman.Version))
+		// in order to get passed europes 406 (Not Accepted)
+		req.Header.Set("accept-language", "en-US,en;q=0.9")
+
+		// Apply any additional headers
+		if dl.additionalHeaders != nil {
+			for k, v := range dl.additionalHeaders {
+				req.Header.Set(k, v)
+			}
+		}
+
+		// Make the request
+		resp, err := dl.HTTP.Do(req)
+
+		if err != nil {
+			dl.Logger.Error().LogErrorf("err while doing client request: %v", err)
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			continue
+		}
+		return resp.Body, nil
+	}
+	return nil, errors.New("error max retries reached while trying to obtain file")
+}

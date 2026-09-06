@@ -1,0 +1,47 @@
+import { OutcomeBadge } from '@app-builder/components/Decisions';
+import { type DecisionReviewedEvent } from '@app-builder/models/cases';
+import { useOrganizationUsers } from '@app-builder/services/organization/organization-users';
+import { getFullName } from '@app-builder/services/user';
+import { useMemo } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
+import { Icon } from 'ui-icons';
+
+import { casesI18n } from '../cases-i18n';
+import { EventTime } from './Time';
+
+export const DecisionReviewedDetail = ({ event }: { event: DecisionReviewedEvent }) => {
+  const { t } = useTranslation(casesI18n);
+  const { getOrgUserById } = useOrganizationUsers();
+  const user = useMemo(() => (event.userId ? getOrgUserById(event.userId) : undefined), [event.userId, getOrgUserById]);
+  const i18nKey = event.comment
+    ? 'cases:case_detail.history.event_detail.decision_reviewed_with_comment'
+    : 'cases:case_detail.history.event_detail.decision_reviewed';
+
+  return (
+    <div className="flex flex-col gap-sm">
+      <div key={event.id} className="flex w-full items-center gap-sm">
+        <div className="bg-surface-card border-grey-border flex size-6 shrink-0 grow-0 items-center justify-center rounded-full border">
+          <Icon icon="manage-search" className="text-grey-primary size-3" />
+        </div>
+        <span className="text-grey-primary inline-flex h-full items-center whitespace-pre text-xs">
+          <Trans
+            t={t}
+            i18nKey={i18nKey}
+            components={{
+              Actor: <span className="font-bold capitalize" />,
+              Status: <OutcomeBadge outcome={event.status} />,
+            }}
+            values={{ actor: user ? getFullName(user) : 'Workflow' }}
+          />
+        </span>
+        <EventTime time={event.createdAt} />
+      </div>
+      {event.comment && (
+        <div className="flex items-start gap-sm ps-xl">
+          <Icon icon="comment" className="text-grey-primary size-3 shrink-0 mt-xs" />
+          <div className="text-grey-primary text-xs italic">{event.comment}</div>
+        </div>
+      )}
+    </div>
+  );
+};

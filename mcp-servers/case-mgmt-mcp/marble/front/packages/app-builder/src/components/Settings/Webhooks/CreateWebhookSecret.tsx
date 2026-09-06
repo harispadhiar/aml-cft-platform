@@ -1,0 +1,105 @@
+import { FormErrorOrDescription } from '@app-builder/components/Form/Tanstack/FormErrorOrDescription';
+import { FormInput } from '@app-builder/components/Form/Tanstack/FormInput';
+import { FormLabel } from '@app-builder/components/Form/Tanstack/FormLabel';
+import { useLoaderRevalidator } from '@app-builder/contexts/LoaderRevalidatorContext';
+import {
+  type CreateWebhookSecretPayload,
+  createWebhookSecretPayloadSchema,
+  useCreateWebhookSecretMutation,
+} from '@app-builder/queries/settings/webhooks/create-webhook-secret';
+import { getFieldErrors } from '@app-builder/utils/form';
+import { useForm } from '@tanstack/react-form';
+import { type ReactElement, useState } from 'react';
+import toast from 'react-hot-toast';
+import { useTranslation } from 'react-i18next';
+import { Modal } from 'ui-design-system';
+
+export function CreateWebhookSecret({ webhookId, children }: { webhookId: string; children: ReactElement }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Modal.Root open={open} onOpenChange={setOpen}>
+      <Modal.Trigger asChild>{children}</Modal.Trigger>
+      <Modal.Content onClick={(e) => e.stopPropagation()}>
+        <CreateWebhookSecretContent webhookId={webhookId} onSuccess={() => setOpen(false)} />
+      </Modal.Content>
+    </Modal.Root>
+  );
+}
+
+function CreateWebhookSecretContent({ webhookId, onSuccess }: { webhookId: string; onSuccess: () => void }) {
+  const { t } = useTranslation(['common', 'settings']);
+  const createMutation = useCreateWebhookSecretMutation();
+  const revalidate = useLoaderRevalidator();
+
+  const form = useForm({
+    defaultValues: {
+      webhookId,
+      expireExistingInDays: undefined,
+    } as CreateWebhookSecretPayload,
+    onSubmit: ({ value, formApi }) => {
+      if (formApi.state.isValid) {
+        createMutation
+          .mutateAsync(value)
+          .then(() => {
+            onSuccess();
+            revalidate();
+          })
+          .catch(() => {
+            toast.error(t('common:errors.unknown'));
+          });
+      }
+    },
+    validators: {
+      onSubmit: createWebhookSecretPayloadSchema,
+    },
+  });
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        form.handleSubmit();
+      }}
+    >
+      <Modal.Title>{t('settings:webhooks.create_secret.title')}</Modal.Title>
+      <div className="flex flex-col gap-lg p-lg">
+        <form.Field
+          name="expireExistingInDays"
+          validators={{
+            onChange: createWebhookSecretPayloadSchema.shape.expireExistingInDays,
+          }}
+        >
+          {(field) => (
+            <div className="flex flex-col items-start gap-sm">
+              <FormLabel name={field.name}>{t('settings:webhooks.create_secret.expire_existing_in_days')}</FormLabel>
+              <FormInput
+                type="number"
+                name={field.name}
+                onBlur={field.handleBlur}
+                onChange={(e) => field.handleChange(e.currentTarget.value ? +e.currentTarget.value : undefined)}
+                defaultValue={field.state.value}
+                valid={field.state.meta.errors.length === 0}
+                className="w-full"
+              />
+              <FormErrorOrDescription
+                errors={getFieldErrors(field.state.meta.errors)}
+                description={t('settings:webhooks.create_secret.expire_existing_in_days.description')}
+              />
+            </div>
+          )}
+        </form.Field>
+      </div>
+      <Modal.Footer>
+        <Modal.FooterButton isCloseButton label={t('common:cancel')} />
+        <Modal.FooterButton
+          label={t('settings:webhooks.create_secret')}
+          type="submit"
+          isLoading={createMutation.isPending}
+          leadingIcon="plus"
+        />
+      </Modal.Footer>
+    </form>
+  );
+}

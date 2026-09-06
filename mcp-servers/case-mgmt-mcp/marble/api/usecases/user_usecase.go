@@ -1,0 +1,202 @@
+package usecases
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/pure_utils"
+	"github.com/checkmarble/marble-backend/repositories"
+	"github.com/checkmarble/marble-backend/repositories/idp"
+	"github.com/checkmarble/marble-backend/usecases/executor_factory"
+	"github.com/checkmarble/marble-backend/usecases/security"
+	"github.com/checkmarble/marble-backend/usecases/tracking"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/google/uuid"
+
+	"github.com/cockroachdb/errors"
+)
+
+type UserUseCase struct {
+	enforceUserSecurity security.EnforceSecurityUser
+	executorFactory     executor_factory.ExecutorFactory
+	transactionFactory  executor_factory.TransactionFactory
+	userRepository      repositories.UserRepository
+	firebaseAdmin       idp.Adminer
+}
+
+func (usecase *UserUseCase) AddUser(ctx context.Context, createUser models.CreateUser) (models.User, error) {
+	if err := usecase.enforceUserSecurity.CreateUser(createUser); err != nil {
+		return models.User{}, err
+	}
+	createdUser, err := executor_factory.TransactionReturnValue(
+		ctx,
+		usecase.transactionFactory,
+		func(tx repositories.Transaction) (models.User, error) {
+			// cleanup spaces
+			createUser.Email = strings.TrimSpace(createUser.Email)
+			// lowercase email to maintain uniqueness
+			createUser.Email = strings.ToLower(createUser.Email)
+
+			createdUserUuid, err := usecase.userRepository.CreateUser(ctx, tx, createUser)
+			if repositories.IsUniqueViolationError(err) {
+				return models.User{}, models.ConflictError
+			}
+			if err != nil {
+				return models.User{}, err
+			}
+
+			if usecase.firebaseAdmin != nil {
+				if err := usecase.firebaseAdmin.CreateUser(ctx, createUser.Email,
+					fmt.Sprintf("%s %s", createUser.FirstName, createUser.LastName)); err != nil {
+					return models.User{}, errors.Wrap(err, "could not create Firebase user")
+				}
+			}
+
+			return usecase.userRepository.UserById(ctx, tx, createdUserUuid)
+		},
+	)
+	if err != nil {
+		return models.User{}, err
+	}
+	tracking.TrackEvent(ctx, models.AnalyticsUserCreated, map[string]interface{}{
+		"user_id": createdUser.UserId,
+	})
+
+	return createdUser, nil
+}
+
+func (usecase *UserUseCase) UpdateUser(ctx context.Context, updateUser models.UpdateUser) (models.User, error) {
+	if updateUser.Role != nil && !slices.Contains(models.GetValidUserRoles(), *updateUser.Role) {
+		return models.User{}, errors.Wrap(models.BadParameterError, "Invalid role received")
+	}
+
+	updatedUser, err := executor_factory.TransactionReturnValue(
+		ctx,
+		usecase.transactionFactory,
+		func(tx repositories.Transaction) (models.User, error) {
+			user, err := usecase.userRepository.UserById(ctx, tx, updateUser.UserId)
+			if err != nil {
+				return models.User{}, err
+			}
+			if err := usecase.enforceUserSecurity.UpdateUser(user, updateUser); err != nil {
+				return models.User{}, err
+			}
+			if err := usecase.userRepository.UpdateUser(ctx, tx, updateUser); err != nil {
+				return models.User{}, err
+			}
+			return usecase.userRepository.UserById(ctx, tx, updateUser.UserId)
+		},
+	)
+	if err != nil {
+		return models.User{}, err
+	}
+	tracking.TrackEvent(ctx, models.AnalyticsUserUpdated, map[string]interface{}{
+		"user_id": updatedUser.UserId,
+	})
+
+	return updatedUser, nil
+}
+
+func (usecase *UserUseCase) DeleteUser(ctx context.Context, userId, currentUserId string) error {
+	if userId == currentUserId {
+		return errors.Wrap(models.ForbiddenError, "cannot delete yourself")
+	}
+	exec := usecase.executorFactory.NewExecutor()
+	user, err := usecase.userRepository.UserById(ctx, exec, userId)
+	if err != nil {
+		return err
+	}
+	if err := usecase.enforceUserSecurity.DeleteUser(user); err != nil {
+		return err
+	}
+	err = usecase.userRepository.DeleteUser(ctx, exec, models.UserId(userId))
+	if err != nil {
+		return err
+	}
+	tracking.TrackEvent(ctx, models.AnalyticsUserDeleted, map[string]interface{}{
+		"user_id": userId,
+	})
+
+	return nil
+}
+
+func (usecase *UserUseCase) ListUsers(ctx context.Context, organisationId *uuid.UUID, withTfa bool) ([]models.User, error) {
+	if err := usecase.enforceUserSecurity.ListUsers(organisationId); err != nil {
+		return nil, err
+	}
+
+	exec := usecase.executorFactory.NewExecutor()
+	users, err := usecase.userRepository.ListUsers(ctx, exec, organisationId)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, u := range users {
+		if err = usecase.enforceUserSecurity.ReadUser(u); err != nil {
+			return nil, err
+		}
+	}
+
+	if withTfa {
+		usecase.enrichWithTfa(ctx, users)
+	}
+
+	return users, nil
+}
+
+// enrichWithTfa populates the TfaEnabled field on each user from the identity
+// provider. It is a no-op when no Firebase admin client is configured (e.g.
+// OIDC deployments), where MFA enrollment is not tracked here. A provider
+// failure is logged and leaves TfaEnabled nil rather than failing the listing.
+func (usecase *UserUseCase) enrichWithTfa(ctx context.Context, users []models.User) {
+	if usecase.firebaseAdmin == nil {
+		return
+	}
+
+	enrollment, err := usecase.firebaseAdmin.ListMfaEnrollment(ctx, pure_utils.Map(users, func(u models.User) string { return u.Email }))
+	if err != nil {
+		utils.LoggerFromContext(ctx).WarnContext(ctx,
+			"could not fetch MFA enrollment from identity provider, omitting tfa_enabled",
+			"error", err.Error())
+		return
+	}
+
+	for i := range users {
+		enabled, found := enrollment[strings.ToLower(users[i].Email)]
+		if found {
+			users[i].TfaEnabled = &enabled
+		}
+	}
+}
+
+func (usecase *UserUseCase) GetUser(ctx context.Context, userID string) (models.User, error) {
+	user, err := usecase.userRepository.UserById(ctx, usecase.executorFactory.NewExecutor(), userID)
+	if err != nil {
+		return models.User{}, err
+	}
+
+	if err := usecase.enforceUserSecurity.ReadUser(user); err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
+func (usecase *UserUseCase) GetUserByEmail(ctx context.Context, email string) (models.User, error) {
+	user, err := usecase.userRepository.UserByEmail(ctx, usecase.executorFactory.NewExecutor(), email)
+	if err != nil {
+		return models.User{}, err
+	}
+	if user == nil {
+		return models.User{}, errors.Wrap(models.NotFoundError, "no user found with this email")
+	}
+
+	if err := usecase.enforceUserSecurity.ReadUser(*user); err != nil {
+		return models.User{}, err
+	}
+
+	return *user, nil
+}

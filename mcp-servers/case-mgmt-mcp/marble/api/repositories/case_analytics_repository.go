@@ -1,0 +1,436 @@
+package repositories
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/Masterminds/squirrel"
+	"github.com/checkmarble/marble-backend/models/analytics"
+	"github.com/checkmarble/marble-backend/repositories/dbmodels"
+	"github.com/cockroachdb/errors"
+	"github.com/jackc/pgx/v5"
+)
+
+func (repo MarbleDbRepository) CasesCreatedByTimeStats(
+	ctx context.Context,
+	exec Executor,
+	filters analytics.CaseAnalyticsFilter,
+) ([]analytics.CasesCreated, error) {
+	query := NewQueryBuilder().
+		Select(
+			fmt.Sprintf("(created_at + interval '%d s')::date as date", filters.TzOffsetSeconds),
+			"count(*) as count",
+		).
+		From(dbmodels.TABLE_CASES).
+		Where(squirrel.Eq{
+			"inbox_id": filters.InboxIds,
+			"org_id":   filters.OrgId,
+		}).
+		Where(squirrel.And{
+			squirrel.GtOrEq{"created_at": filters.Start},
+			squirrel.Lt{"created_at": filters.End},
+		}).
+		GroupBy("date").
+		OrderBy("date")
+
+	if filters.AssignedUserId != nil {
+		query = query.Where(squirrel.Eq{"assigned_to": *filters.AssignedUserId})
+	}
+
+	return SqlToListOfRow(ctx, exec, query, func(row pgx.CollectableRow) (analytics.CasesCreated, error) {
+		var res analytics.CasesCreated
+		err := row.Scan(&res.Date, &res.Count)
+		return res, err
+	})
+}
+
+func (repo MarbleDbRepository) CasesFalsePositiveRateByTimeStats(
+	ctx context.Context,
+	exec Executor,
+	filters analytics.CaseAnalyticsFilter,
+) ([]analytics.CasesFalsePositiveRate, error) {
+	query := NewQueryBuilder().
+		Select(
+			fmt.Sprintf("(created_at + interval '%d s')::date as date", filters.TzOffsetSeconds),
+			"count(*) as total_closed",
+			"count(*) filter (where outcome = 'false_positive') as false_positives",
+		).
+		From(dbmodels.TABLE_CASES).
+		Where(squirrel.Eq{
+			"inbox_id": filters.InboxIds,
+			"org_id":   filters.OrgId,
+			"status":   "closed",
+		}).
+		Where(squirrel.And{
+			squirrel.GtOrEq{"created_at": filters.Start},
+			squirrel.Lt{"created_at": filters.End},
+		}).
+		GroupBy("date").
+		OrderBy("date")
+
+	if filters.AssignedUserId != nil {
+		query = query.Where(squirrel.Eq{"assigned_to": *filters.AssignedUserId})
+	}
+
+	return SqlToListOfRow(ctx, exec, query, func(row pgx.CollectableRow) (
+		analytics.CasesFalsePositiveRate, error,
+	) {
+		var res analytics.CasesFalsePositiveRate
+		err := row.Scan(&res.Date, &res.TotalClosed, &res.FalsePositives)
+		return res, err
+	})
+}
+
+func (repo MarbleDbRepository) CasesDurationByTimeStats(
+	ctx context.Context,
+	exec Executor,
+	filters analytics.CaseAnalyticsFilter,
+) ([]analytics.CasesDuration, error) {
+	// Subquery: for each closed case, find the most recent "status_updated" event to "closed".
+	// Small gotcha: don't transform '?' to '$' with PlaceholderFormat in NewQueryBuilder in the subquery, as the raw query string is injected below.
+	// (the main query handles it)
+	subq := squirrel.
+		Select(
+			"ce.case_id",
+			"max(ce.created_at) as closed_at",
+		).
+		From(dbmodels.TABLE_CASE_EVENTS + " ce").
+		Where(squirrel.Eq{
+			"ce.event_type": "status_updated",
+			"ce.new_value":  "closed",
+		}).
+		GroupBy("ce.case_id")
+
+	closedAtSQL, closedAtArgs, err := subq.ToSql()
+	if err != nil {
+		return nil, err
+	}
+
+	query := NewQueryBuilder().
+		Select(
+			fmt.Sprintf("(c.created_at + interval '%d s')::date as date", filters.TzOffsetSeconds),
+			"sum(extract(epoch from (closed_at - c.created_at)) / 86400) as sum_days",
+			"count(*) as count_cases",
+			"max(extract(epoch from (closed_at - c.created_at)) / 86400) as max_days",
+		).
+		From(dbmodels.TABLE_CASES+" c").
+		Join(fmt.Sprintf("(%s) ce_agg on ce_agg.case_id = c.id", closedAtSQL), closedAtArgs...).
+		Where(squirrel.Eq{
+			"c.inbox_id": filters.InboxIds,
+			"c.org_id":   filters.OrgId,
+			"c.status":   "closed",
+		}).
+		Where(squirrel.And{
+			squirrel.GtOrEq{"c.created_at": filters.Start},
+			squirrel.Lt{"c.created_at": filters.End},
+		}).
+		GroupBy("date").
+		OrderBy("date")
+
+	if filters.AssignedUserId != nil {
+		query = query.Where(squirrel.Eq{"c.assigned_to": *filters.AssignedUserId})
+	}
+
+	return SqlToListOfRow(ctx, exec, query, func(row pgx.CollectableRow) (analytics.CasesDuration, error) {
+		var res analytics.CasesDuration
+		err := row.Scan(&res.Date, &res.SumDays, &res.CountCases, &res.MaxDays)
+		return res, err
+	})
+}
+
+func (repo MarbleDbRepository) SarCompletedCount(
+	ctx context.Context,
+	exec Executor,
+	filters analytics.CaseAnalyticsFilter,
+) (analytics.SarCompletedCount, error) {
+	query := NewQueryBuilder().
+		Select("count(*) as count").
+		From(dbmodels.TABLE_SUSPICIOUS_ACTIVITY_REPORTS + " sar").
+		Join(dbmodels.TABLE_CASES + " c on c.id = sar.case_id").
+		Where(squirrel.Eq{
+			"c.inbox_id":     filters.InboxIds,
+			"c.org_id":       filters.OrgId,
+			"sar.status":     "completed",
+			"sar.deleted_at": nil,
+		}).
+		Where(squirrel.And{
+			squirrel.GtOrEq{"sar.completed_at": filters.Start},
+			squirrel.Lt{"sar.completed_at": filters.End},
+		})
+
+	if filters.AssignedUserId != nil {
+		query = query.Where(squirrel.Eq{"c.assigned_to": *filters.AssignedUserId})
+	}
+
+	sql, args, err := query.ToSql()
+	if err != nil {
+		return analytics.SarCompletedCount{}, err
+	}
+
+	var res analytics.SarCompletedCount
+	err = exec.QueryRow(ctx, sql, args...).Scan(&res.Count)
+	return res, err
+}
+
+func (repo MarbleDbRepository) OpenCasesByAge(
+	ctx context.Context,
+	exec Executor,
+	filters analytics.CaseAnalyticsFilter,
+) ([]analytics.OpenCasesByAge, error) {
+	query := NewQueryBuilder().
+		Select(
+			`case
+				when now() - created_at < interval '3 days' then '0-2'
+				when now() - created_at < interval '10 days' then '3-10'
+				when now() - created_at < interval '30 days' then '11-30'
+				else '31+'
+			end as bracket`,
+			"count(*) as count",
+		).
+		From(dbmodels.TABLE_CASES).
+		Where(squirrel.Eq{
+			"inbox_id": filters.InboxIds,
+			"org_id":   filters.OrgId,
+		}).
+		Where(squirrel.NotEq{"status": "closed"}).
+		GroupBy("1")
+
+	if filters.AssignedUserId != nil {
+		query = query.Where(squirrel.Eq{"assigned_to": *filters.AssignedUserId})
+	}
+
+	return SqlToListOfRow(ctx, exec, query, func(row pgx.CollectableRow) (analytics.OpenCasesByAge, error) {
+		var res analytics.OpenCasesByAge
+		err := row.Scan(&res.Bracket, &res.Count)
+		return res, err
+	})
+}
+
+func (repo MarbleDbRepository) SarDelayByTimeStats(
+	ctx context.Context,
+	exec Executor,
+	filters analytics.CaseAnalyticsFilter,
+) ([]analytics.SarDelay, error) {
+	query := NewQueryBuilder().
+		Select(
+			fmt.Sprintf("(sar.completed_at + interval '%d s')::date as date", filters.TzOffsetSeconds),
+			"sum(extract(epoch from (sar.completed_at - c.created_at)) / 86400) as sum_days",
+			"max(extract(epoch from (sar.completed_at - c.created_at)) / 86400) as max_days",
+			"count(*) as count_sars",
+		).
+		From(dbmodels.TABLE_SUSPICIOUS_ACTIVITY_REPORTS + " sar").
+		Join(dbmodels.TABLE_CASES + " c on c.id = sar.case_id").
+		Where(squirrel.Eq{
+			"c.inbox_id":     filters.InboxIds,
+			"c.org_id":       filters.OrgId,
+			"sar.status":     "completed",
+			"sar.deleted_at": nil,
+		}).
+		Where(squirrel.And{
+			squirrel.GtOrEq{"sar.completed_at": filters.Start},
+			squirrel.Lt{"sar.completed_at": filters.End},
+		}).
+		GroupBy("date").
+		OrderBy("date")
+
+	if filters.AssignedUserId != nil {
+		query = query.Where(squirrel.Eq{"c.assigned_to": *filters.AssignedUserId})
+	}
+
+	return SqlToListOfRow(ctx, exec, query, func(row pgx.CollectableRow) (analytics.SarDelay, error) {
+		var res analytics.SarDelay
+		err := row.Scan(&res.Date, &res.SumDays, &res.MaxDays, &res.CountSars)
+		return res, err
+	})
+}
+
+func (repo MarbleDbRepository) SarDelayDistribution(
+	ctx context.Context,
+	exec Executor,
+	filters analytics.CaseAnalyticsFilter,
+) ([]analytics.SarDelayDistribution, error) {
+	query := NewQueryBuilder().
+		Select(
+			`case
+				when extract(epoch from (sar.completed_at - c.created_at)) / 86400 < 3 then '0-2'
+				when extract(epoch from (sar.completed_at - c.created_at)) / 86400 < 10 then '3-10'
+				when extract(epoch from (sar.completed_at - c.created_at)) / 86400 < 30 then '11-30'
+				else '31+'
+			end as bracket`,
+			"count(*) as count",
+		).
+		From(dbmodels.TABLE_SUSPICIOUS_ACTIVITY_REPORTS + " sar").
+		Join(dbmodels.TABLE_CASES + " c on c.id = sar.case_id").
+		Where(squirrel.Eq{
+			"c.inbox_id":     filters.InboxIds,
+			"c.org_id":       filters.OrgId,
+			"sar.status":     "completed",
+			"sar.deleted_at": nil,
+		}).
+		Where(squirrel.And{
+			squirrel.GtOrEq{"sar.completed_at": filters.Start},
+			squirrel.Lt{"sar.completed_at": filters.End},
+		}).
+		GroupBy("1")
+
+	if filters.AssignedUserId != nil {
+		query = query.Where(squirrel.Eq{"c.assigned_to": *filters.AssignedUserId})
+	}
+
+	return SqlToListOfRow(ctx, exec, query, func(row pgx.CollectableRow) (
+		analytics.SarDelayDistribution, error,
+	) {
+		var res analytics.SarDelayDistribution
+		err := row.Scan(&res.Bracket, &res.Count)
+		return res, err
+	})
+}
+
+func (repo MarbleDbRepository) CaseStatusByDate(
+	ctx context.Context,
+	exec Executor,
+	filters analytics.CaseAnalyticsFilter,
+) ([]analytics.CaseStatusByDate, error) {
+	query := NewQueryBuilder().
+		Select(
+			fmt.Sprintf("(created_at + interval '%d s')::date as date", filters.TzOffsetSeconds),
+			"count(*) filter (where snoozed_until is not null and snoozed_until > now()) as snoozed",
+			"count(*) filter (where not (snoozed_until is not null and snoozed_until > now()) and status = 'pending') as pending",
+			"count(*) filter (where not (snoozed_until is not null and snoozed_until > now()) and status = 'investigating') as investigating",
+			"count(*) filter (where not (snoozed_until is not null and snoozed_until > now()) and status = 'closed') as closed",
+		).
+		From(dbmodels.TABLE_CASES).
+		Where(squirrel.Eq{
+			"org_id":   filters.OrgId,
+			"inbox_id": filters.InboxIds,
+		}).
+		Where(squirrel.And{
+			squirrel.GtOrEq{"created_at": filters.Start},
+			squirrel.Lt{"created_at": filters.End},
+		}).
+		GroupBy("date").
+		OrderBy("date")
+
+	if filters.AssignedUserId != nil {
+		query = query.Where(squirrel.Eq{"assigned_to": *filters.AssignedUserId})
+	}
+
+	return SqlToListOfRow(ctx, exec, query, func(row pgx.CollectableRow) (analytics.CaseStatusByDate, error) {
+		var res analytics.CaseStatusByDate
+		err := row.Scan(&res.Date, &res.Snoozed, &res.Pending, &res.Investigating, &res.Closed)
+		return res, err
+	})
+}
+
+// buildCaseSlaStatusByDateQuery builds the SQL query for SLA status analytics.
+// This is a separate function to allow testing the query structure without a database.
+// Only includes inboxes with SLA configured (i.sla IS NOT NULL).
+func buildCaseSlaStatusByDateQuery(filters analytics.CaseAnalyticsFilter) (squirrel.SelectBuilder, error) {
+	// Same "closed_at" derivation as CasesDurationByTimeStats.
+	closedAtSubq := squirrel.
+		Select("ce.case_id", "max(ce.created_at) as closed_at").
+		From(dbmodels.TABLE_CASE_EVENTS + " ce").
+		Where(squirrel.Eq{
+			"ce.event_type": "status_updated",
+			"ce.new_value":  "closed",
+		}).
+		GroupBy("ce.case_id")
+
+	closedAtSQL, closedAtArgs, err := closedAtSubq.ToSql()
+	if err != nil {
+		return squirrel.SelectBuilder{}, errors.Wrap(err, "build closed-at subquery")
+	}
+
+	// dueAt calculates the SLA deadline: case created_at + inbox SLA duration (in days).
+	// All cases come from inboxes with sla IS NOT NULL, so this is always defined.
+	dueAt := "c.created_at + (i.sla || ' days')::interval"
+
+	query := NewQueryBuilder().
+		Select(
+			fmt.Sprintf("(c.created_at + interval '%d s')::date as date", filters.TzOffsetSeconds),
+			fmt.Sprintf(`count(*) filter (
+				where c.status = 'closed' and ce_agg.closed_at <= %s
+			) as completed_within_sla`, dueAt),
+			fmt.Sprintf(`count(*) filter (
+				where (c.status = 'closed' and ce_agg.closed_at > %s) or
+					(c.status != 'closed' and now() > %s)
+			) as sla_breached`, dueAt, dueAt),
+			fmt.Sprintf(`count(*) filter (
+				where c.status != 'closed' and now() <= %s
+			) as still_open_within_sla`, dueAt),
+		).
+		From(dbmodels.TABLE_CASES+" c").
+		Join(dbmodels.TABLE_INBOXES+" i on i.id = c.inbox_id").
+		LeftJoin(fmt.Sprintf("(%s) ce_agg on ce_agg.case_id = c.id", closedAtSQL), closedAtArgs...).
+		Where(squirrel.Eq{
+			"c.org_id":   filters.OrgId,
+			"c.inbox_id": filters.InboxIds,
+		}).
+		Where(squirrel.NotEq{"i.sla": nil}).
+		Where(squirrel.And{
+			squirrel.GtOrEq{"c.created_at": filters.Start},
+			squirrel.Lt{"c.created_at": filters.End},
+		}).
+		GroupBy("date").
+		OrderBy("date")
+
+	if filters.AssignedUserId != nil {
+		query = query.Where(squirrel.Eq{"c.assigned_to": *filters.AssignedUserId})
+	}
+
+	return query, nil
+}
+
+func (repo MarbleDbRepository) CaseSlaStatusByDate(
+	ctx context.Context,
+	exec Executor,
+	filters analytics.CaseAnalyticsFilter,
+) ([]analytics.CaseSlaStatusByDate, error) {
+	query, err := buildCaseSlaStatusByDateQuery(filters)
+	if err != nil {
+		return nil, err
+	}
+
+	return SqlToListOfRow(ctx, exec, query, func(row pgx.CollectableRow) (analytics.CaseSlaStatusByDate, error) {
+		var res analytics.CaseSlaStatusByDate
+		err := row.Scan(&res.Date, &res.CompletedWithinSla, &res.SlaBreached, &res.StillOpenWithinSla)
+		return res, err
+	})
+}
+
+func (repo MarbleDbRepository) CaseStatusByInbox(
+	ctx context.Context,
+	exec Executor,
+	filters analytics.CaseAnalyticsFilter,
+) ([]analytics.CaseStatusByInbox, error) {
+	sql := NewQueryBuilder().
+		Select(
+			"i.name as inbox",
+			"count(*) filter (where snoozed_until is not null and snoozed_until > now()) as snoozed",
+			"count(*) filter (where not (snoozed_until is not null and snoozed_until > now()) and c.status = 'pending') as pending",
+			"count(*) filter (where not (snoozed_until is not null and snoozed_until > now()) and c.status = 'investigating') as investigating",
+			"count(*) filter (where not (snoozed_until is not null and snoozed_until > now()) and c.status = 'closed') as closed",
+		).
+		From(dbmodels.TABLE_CASES+" c").
+		Join("inboxes i on i.id = c.inbox_id").
+		Where(squirrel.Eq{
+			"c.org_id":   filters.OrgId,
+			"c.inbox_id": filters.InboxIds,
+		}).
+		Where(squirrel.And{
+			squirrel.GtOrEq{"c.created_at": filters.Start},
+			squirrel.Lt{"c.created_at": filters.End},
+		}).
+		GroupBy("i.name").
+		OrderBy("count(*) desc", "i.name")
+
+	if filters.AssignedUserId != nil {
+		sql = sql.Where(squirrel.Eq{"c.assigned_to": *filters.AssignedUserId})
+	}
+
+	return SqlToListOfRow(ctx, exec, sql, func(row pgx.CollectableRow) (analytics.CaseStatusByInbox, error) {
+		var res analytics.CaseStatusByInbox
+		err := row.Scan(&res.Inbox, &res.Snoozed, &res.Pending, &res.Investigating, &res.Closed)
+		return res, err
+	})
+}

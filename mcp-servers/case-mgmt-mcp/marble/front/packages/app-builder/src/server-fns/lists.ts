@@ -1,0 +1,104 @@
+import { authMiddleware } from '@app-builder/middlewares/auth-middleware';
+import { isStatusConflictHttpError } from '@app-builder/models';
+import {
+  addValuePayloadSchema,
+  createListPayloadSchema,
+  deleteListPayloadSchema,
+  deleteValuePayloadSchema,
+  editListPayloadSchema,
+} from '@app-builder/schemas/lists';
+import { getServerEnv } from '@app-builder/utils/environment';
+import { getCustomListDataUploadEndpoint } from '@app-builder/utils/files';
+import { fromUUIDtoSUUID } from '@app-builder/utils/short-uuid';
+import { redirect } from '@tanstack/react-router';
+import { createServerFn } from '@tanstack/react-start';
+import { omit } from 'radash';
+
+export const getListsFn = createServerFn({ method: 'GET' })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    return context.authInfo.customListsRepository.listCustomLists();
+  });
+
+export const createListFn = createServerFn({ method: 'POST' })
+  .middleware([authMiddleware])
+  .validator(createListPayloadSchema)
+  .handler(async ({ context, data }) => {
+    try {
+      const result = await context.authInfo.customListsRepository.createCustomList(data);
+      throw redirect({ to: '/detection/lists/$listId', params: { listId: fromUUIDtoSUUID(result.id) } });
+    } catch (error) {
+      if (error instanceof Response && error.status >= 300 && error.status < 400) {
+        throw error;
+      }
+      if (isStatusConflictHttpError(error)) {
+        return { error: 'duplicate_list_name' as const };
+      }
+      throw new Error('Failed to create list');
+    }
+  });
+
+export const deleteListFn = createServerFn({ method: 'POST' })
+  .middleware([authMiddleware])
+  .validator(deleteListPayloadSchema)
+  .handler(async ({ context, data }) => {
+    await context.authInfo.customListsRepository.deleteCustomList(data.listId);
+    throw redirect({ to: '/detection/lists' });
+  });
+
+export const editListFn = createServerFn({ method: 'POST' })
+  .middleware([authMiddleware])
+  .validator(editListPayloadSchema)
+  .handler(async ({ context, data }) => {
+    await context.authInfo.customListsRepository.updateCustomList(data.listId, omit(data, ['listId']));
+  });
+
+export const addListValueFn = createServerFn({ method: 'POST' })
+  .middleware([authMiddleware])
+  .validator(addValuePayloadSchema)
+  .handler(async ({ context, data }) => {
+    await context.authInfo.customListsRepository.createCustomListValue(data.listId, {
+      value: data.value,
+    });
+  });
+
+export const deleteListValueFn = createServerFn({ method: 'POST' })
+  .middleware([authMiddleware])
+  .validator(deleteValuePayloadSchema)
+  .handler(async ({ context, data }) => {
+    await context.authInfo.customListsRepository.deleteCustomListValue(data.listId, data.listValueId);
+  });
+
+export const uploadListDataFileFn = createServerFn({ method: 'POST' })
+  .middleware([authMiddleware])
+  .validator((data: unknown) => {
+    if (!(data instanceof FormData)) throw new Error('Expected FormData');
+    return data;
+  })
+  .handler(async ({ context, data }) => {
+    const listId = data.get('listId') as string | null;
+    if (!listId) return new Response(null, { status: 400 });
+
+    const token = await context.authInfo.tokenService.getToken();
+
+    const backendData = new FormData();
+    for (const [key, value] of data.entries()) {
+      if (key !== 'listId') backendData.append(key, value);
+    }
+
+    const upstream = await fetch(`${getServerEnv('MARBLE_API_URL')}${getCustomListDataUploadEndpoint(listId)}`, {
+      body: backendData,
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const headers = new Headers(upstream.headers);
+    headers.delete('content-encoding');
+    headers.delete('content-length');
+    const body = [204, 205, 304].includes(upstream.status) ? null : await upstream.arrayBuffer();
+    return new Response(body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers,
+    });
+  });

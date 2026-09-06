@@ -1,0 +1,25 @@
+import { type ScreeningMatchPayload } from '@app-builder/models/screening';
+import { useTranslation } from 'react-i18next';
+import { Tag } from 'ui-design-system';
+
+import { screeningsI18n } from './screenings-i18n';
+
+export function MatchResult({ entity }: { entity: ScreeningMatchPayload }) {
+  const { t } = useTranslation(screeningsI18n);
+
+  const entitySchema = entity.schema.toLowerCase() as Lowercase<typeof entity.schema>;
+
+  return (
+    <div className="text-s bg-grey-background-light flex items-center rounded-sm">
+      <div className="flex items-center gap-sm p-md">
+        <span className="max-w-60 truncate font-semibold">{entity.caption}</span>
+        <span>{t(`screenings:entity.schema.${entitySchema}`, { defaultValue: entitySchema })}</span>
+        <Tag color="grey" className="shrink-0">
+          {t('screenings:match.similarity', {
+            percent: Math.round(entity.score * 100),
+          })}
+        </Tag>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,581 @@
+package ai_agent
+
+import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"encoding/csv"
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"io"
+	"io/fs"
+	"strings"
+	"sync"
+
+	"github.com/checkmarble/marble-backend/dto/agent_dto"
+	"github.com/checkmarble/marble-backend/infra"
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/models/ast"
+	"github.com/checkmarble/marble-backend/repositories"
+	"github.com/checkmarble/marble-backend/usecases/billing"
+	"github.com/checkmarble/marble-backend/usecases/executor_factory"
+	"github.com/checkmarble/marble-backend/usecases/inboxes"
+	"github.com/checkmarble/marble-backend/usecases/security"
+	"github.com/checkmarble/marble-backend/utils"
+
+	"github.com/checkmarble/llmberjack"
+	"github.com/checkmarble/llmberjack/llms/aistudio"
+	llmanthropic "github.com/checkmarble/llmberjack/llms/anthropic"
+	"github.com/checkmarble/llmberjack/llms/openai"
+	"github.com/google/uuid"
+	"github.com/pkg/errors"
+)
+
+type AiAgentUsecaseRepository interface {
+	GetCaseById(ctx context.Context, exec repositories.Executor, caseId string) (models.Case, error)
+	ListCaseEvents(ctx context.Context, exec repositories.Executor, caseId string) ([]models.CaseEvent, error)
+	GetRuleById(ctx context.Context, exec repositories.Executor, ruleId string) (models.Rule, error)
+	ListRulesByIterationId(ctx context.Context, exec repositories.Executor, iterationId string) ([]models.Rule, error)
+	UpdateRule(ctx context.Context, exec repositories.Executor, rule models.UpdateRuleInput) error
+	ListUsers(ctx context.Context, exec repositories.Executor, organizationIDFilter *uuid.UUID) ([]models.User, error)
+	DecisionsByCaseIdFromCursor(
+		ctx context.Context,
+		exec repositories.Executor,
+		req models.CaseDecisionsRequest,
+	) ([]models.DecisionWithRulesAndScreeningsBaseInfo, bool, error)
+	DecisionsWithRuleExecutionsByIds(
+		ctx context.Context,
+		exec repositories.Executor,
+		decisionIds []string,
+	) ([]models.DecisionWithRuleExecutions, error)
+	DecisionPivotValuesByCase(ctx context.Context, exec repositories.Executor, caseId string) ([]models.PivotDataWithCount, error)
+	GetCasesWithPivotValue(ctx context.Context, exec repositories.Executor,
+		orgId uuid.UUID, pivotValue string) ([]models.Case, error)
+	ListOrganizationTags(ctx context.Context, exec repositories.Executor, organizationId uuid.UUID,
+		target models.TagTarget, withCaseCount bool, pagination *models.PaginationAndSorting) ([]models.Tag, error)
+	GetScenarioIteration(ctx context.Context, exec repositories.Executor, scenarioIterationId string,
+		useCache bool) (models.ScenarioIteration, error)
+	GetScenarioById(ctx context.Context, exec repositories.Executor, scenarioId string, screeningProvider models.ScreeningProvider) (models.Scenario, error)
+	ListScreeningsForDecision(ctx context.Context, exec repositories.Executor, decisionId string,
+		initialOnly bool) ([]models.ScreeningWithMatches, error)
+	GetScreening(ctx context.Context, exec repositories.Executor, id string) (models.ScreeningWithMatches, error)
+	GetScreeningWithoutMatches(ctx context.Context, exec repositories.Executor, id string) (models.Screening, error)
+	DecisionsById(ctx context.Context, exec repositories.Executor, ids []string) ([]models.Decision, error)
+	UpdateAiCaseReviewFeedback(
+		ctx context.Context,
+		exec repositories.Executor,
+		reviewId uuid.UUID,
+		feedback models.AiCaseReviewFeedback,
+	) error
+	GetCaseReviewById(ctx context.Context, exec repositories.Executor, reviewId uuid.UUID) (models.AiCaseReview, error)
+	GetOrganizationById(ctx context.Context, exec repositories.Executor, organizationId uuid.UUID) (models.Organization, error)
+	GetAiSetting(ctx context.Context, exec repositories.Executor, organizationId uuid.UUID) (*models.AiSetting, error)
+	PutAiSetting(
+		ctx context.Context,
+		exec repositories.Executor,
+		orgId uuid.UUID,
+		setting models.UpsertAiSetting,
+	) (models.AiSetting, error)
+}
+
+type AiAgentUsecaseCustomListRepository interface {
+	AllCustomLists(ctx context.Context, exec repositories.Executor, organizationId uuid.UUID) ([]models.CustomList, error)
+}
+
+type AiAgentUsecaseCustomListUsecase interface {
+	GetCustomLists(ctx context.Context, organizationId uuid.UUID) ([]models.CustomList, error)
+}
+
+type AiAgentUsecaseBillingUsecase interface {
+	EnqueueBillingEventTask(ctx context.Context, event models.BillingEvent) error
+	GetSubscriptionsForEvent(ctx context.Context, orgId uuid.UUID, code billing.BillableMetric) ([]models.Subscription, error)
+	CheckIfEnoughFundsInWallet(ctx context.Context, orgId uuid.UUID, subscriptionExternalId string,
+		code billing.BillableMetric) (bool, error)
+	CheckEntitlement(
+		ctx context.Context,
+		subscriptionExternalId string,
+		entitlementCode billing.BillingEntitlementCode,
+	) (bool, error)
+}
+
+type AiAgentUsecaseScenarioUsecase interface {
+	ValidateScenarioAst(
+		ctx context.Context,
+		orgId uuid.UUID,
+		scenarioId string,
+		astNode *ast.Node,
+		expectedReturnType ...string,
+	) (models.AstValidation, error)
+}
+
+type AiAgentUsecaseIngestedDataReader interface {
+	GetIngestedObject(
+		ctx context.Context,
+		organizationId uuid.UUID,
+		dataModel *models.DataModel,
+		objectType string,
+		uniqueFieldValue string,
+		uniqueFieldName string,
+	) ([]models.ClientObjectDetail, error)
+	ReadPivotObjectsFromValues(
+		ctx context.Context,
+		organizationId uuid.UUID,
+		values []models.PivotDataWithCount,
+	) ([]models.PivotObject, error)
+	ReadIngestedClientObjects(
+		ctx context.Context,
+		orgId uuid.UUID,
+		objectType string,
+		input models.ClientDataListRequestBody,
+		fieldsToRead ...string,
+	) (objects []models.ClientObjectDetail, fieldStats []models.FieldStatistics,
+		pagination models.ClientDataListPagination, err error)
+}
+
+type AiAgentUsecaseDataModelUsecase interface {
+	GetDataModel(ctx context.Context, organizationID uuid.UUID, options models.DataModelReadOptions,
+		useCache bool) (models.DataModel, error)
+}
+
+type AiAgentUsecaseRuleUsecase interface {
+	GetRule(ctx context.Context, ruleId string) (models.Rule, error)
+}
+
+type caseReviewTaskEnqueuer interface {
+	EnqueueCaseReviewTask(
+		ctx context.Context,
+		tx repositories.Transaction,
+		organizationId uuid.UUID,
+		caseId uuid.UUID,
+		aiCaseReviewId uuid.UUID,
+	) error
+}
+
+type featureAccessReader interface {
+	GetOrganizationFeatureAccess(ctx context.Context, organizationId uuid.UUID, userId *models.UserId) (
+		models.OrganizationFeatureAccess, error)
+}
+
+type AiAgentScreeningUsecase interface {
+	EnrichMatchWithoutAuthorization(ctx context.Context, matchId string) (models.ScreeningMatch, error)
+}
+
+type screeningHitSuggestionTaskEnqueuer interface {
+	EnqueueScreeningHitSuggestionTask(
+		ctx context.Context,
+		organizationId uuid.UUID,
+		screeningId string,
+	) error
+}
+
+type AiAgentUsecase struct {
+	enforceSecurityCase                security.EnforceSecurityCase
+	enforceSecurityDecision            security.EnforceSecurityDecision
+	enforceSecurityScenario            security.EnforceSecurityScenario
+	enforceSecurityOrganization        security.EnforceSecurityOrganization
+	repository                         AiAgentUsecaseRepository
+	inboxReader                        inboxes.InboxReader
+	executorFactory                    executor_factory.ExecutorFactory
+	transactionFactory                 executor_factory.TransactionFactory
+	ingestedDataReader                 AiAgentUsecaseIngestedDataReader
+	dataModelUsecase                   AiAgentUsecaseDataModelUsecase
+	ruleUsecase                        AiAgentUsecaseRuleUsecase
+	customListUsecase                  AiAgentUsecaseCustomListUsecase
+	scenarioUsecase                    AiAgentUsecaseScenarioUsecase
+	billingUsecase                     AiAgentUsecaseBillingUsecase
+	caseReviewFileRepository           caseReviewWorkerRepository
+	blobRepository                     repositories.BlobRepository
+	offloadedReader                    repositories.OffloadedReadWriter
+	caseReviewTaskEnqueuer             caseReviewTaskEnqueuer
+	screeningHitSuggestionTaskEnqueuer screeningHitSuggestionTaskEnqueuer
+	screeningUsecase                   AiAgentScreeningUsecase
+	featureAccessReader                featureAccessReader
+	config                             infra.AIAgentConfiguration
+	caseManagerBucketUrl               string
+	promptsFS                          fs.FS
+	aiAgentModelConfig                 *models.AiAgentModelConfig
+
+	caseReviewAdapter *llmberjack.Llmberjack
+	enrichmentAdapter *llmberjack.Llmberjack
+	mu                sync.Mutex
+}
+
+func NewAiAgentUsecase(
+	enforceSecurityCase security.EnforceSecurityCase,
+	enforceSecurityDecision security.EnforceSecurityDecision,
+	enforceSecurityOrganization security.EnforceSecurityOrganization,
+	enforceSecurityScenario security.EnforceSecurityScenario,
+	repository AiAgentUsecaseRepository,
+	inboxReader inboxes.InboxReader,
+	executorFactory executor_factory.ExecutorFactory,
+	ingestedDataReader AiAgentUsecaseIngestedDataReader,
+	dataModelUsecase AiAgentUsecaseDataModelUsecase,
+	ruleUsecase AiAgentUsecaseRuleUsecase,
+	customListUsecase AiAgentUsecaseCustomListUsecase,
+	scenarioUsecase AiAgentUsecaseScenarioUsecase,
+	billingUsecase AiAgentUsecaseBillingUsecase,
+	caseReviewFileRepository caseReviewWorkerRepository,
+	blobRepository repositories.BlobRepository,
+	offloadedReader repositories.OffloadedReadWriter,
+	caseReviewTaskEnqueuer caseReviewTaskEnqueuer,
+	transactionFactory executor_factory.TransactionFactory,
+	featureAccessReader featureAccessReader,
+	screeningHitSuggestionTaskEnqueuer screeningHitSuggestionTaskEnqueuer,
+	screeningUsecase AiAgentScreeningUsecase,
+	config infra.AIAgentConfiguration,
+	caseManagerBucketUrl string,
+	promptsFS fs.FS,
+	aiAgentModelConfig *models.AiAgentModelConfig,
+) AiAgentUsecase {
+	return AiAgentUsecase{
+		enforceSecurityCase:                enforceSecurityCase,
+		enforceSecurityDecision:            enforceSecurityDecision,
+		enforceSecurityScenario:            enforceSecurityScenario,
+		enforceSecurityOrganization:        enforceSecurityOrganization,
+		repository:                         repository,
+		inboxReader:                        inboxReader,
+		executorFactory:                    executorFactory,
+		ingestedDataReader:                 ingestedDataReader,
+		dataModelUsecase:                   dataModelUsecase,
+		ruleUsecase:                        ruleUsecase,
+		customListUsecase:                  customListUsecase,
+		scenarioUsecase:                    scenarioUsecase,
+		billingUsecase:                     billingUsecase,
+		caseReviewFileRepository:           caseReviewFileRepository,
+		blobRepository:                     blobRepository,
+		offloadedReader:                    offloadedReader,
+		caseReviewTaskEnqueuer:             caseReviewTaskEnqueuer,
+		transactionFactory:                 transactionFactory,
+		screeningHitSuggestionTaskEnqueuer: screeningHitSuggestionTaskEnqueuer,
+		screeningUsecase:                   screeningUsecase,
+		featureAccessReader:                featureAccessReader,
+		config:                             config,
+		caseManagerBucketUrl:               caseManagerBucketUrl,
+		promptsFS:                          promptsFS,
+		aiAgentModelConfig:                 aiAgentModelConfig,
+	}
+}
+
+func (uc *AiAgentUsecase) createOpenAIProvider() (llmberjack.Llm, error) {
+	opts := []openai.Opt{}
+	if uc.config.MainAgentURL != "" {
+		opts = append(opts, openai.WithBaseUrl(uc.config.MainAgentURL))
+	}
+	if uc.config.MainAgentKey != "" {
+		opts = append(opts, openai.WithApiKey(uc.config.MainAgentKey))
+	}
+
+	provider, err := openai.New(opts...)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create OpenAI provider")
+	}
+	return provider, nil
+}
+
+func (uc *AiAgentUsecase) createAIStudioProvider() (llmberjack.Llm, error) {
+	opts := []aistudio.Opt{
+		aistudio.WithBackend(uc.config.MainAgentBackend),
+	}
+
+	if uc.config.MainAgentKey != "" {
+		opts = append(opts, aistudio.WithApiKey(uc.config.MainAgentKey))
+	}
+	if uc.config.MainAgentProject != "" {
+		opts = append(opts, aistudio.WithProject(uc.config.MainAgentProject))
+	}
+	if uc.config.MainAgentLocation != "" {
+		opts = append(opts, aistudio.WithLocation(uc.config.MainAgentLocation))
+	}
+
+	provider, err := aistudio.New(opts...)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create AI Studio provider")
+	}
+	return provider, nil
+}
+
+func (uc *AiAgentUsecase) createAnthropicVertexAIProvider() (llmberjack.Llm, error) {
+	opts := []llmanthropic.Opt{
+		llmanthropic.WithBackend(llmanthropic.BackendVertexAI),
+	}
+	if uc.config.MainAgentProject != "" {
+		opts = append(opts, llmanthropic.WithProject(uc.config.MainAgentProject))
+	}
+	if uc.config.MainAgentLocation != "" {
+		opts = append(opts, llmanthropic.WithRegion(uc.config.MainAgentLocation))
+	}
+
+	provider, err := llmanthropic.New(opts...)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create Anthropic VertexAI provider")
+	}
+	return provider, nil
+}
+
+func (uc *AiAgentUsecase) GetClient(ctx context.Context) (*llmberjack.Llmberjack, error) {
+	uc.mu.Lock()
+	defer uc.mu.Unlock()
+
+	if uc.caseReviewAdapter != nil {
+		return uc.caseReviewAdapter, nil
+	}
+
+	var adapter *llmberjack.Llmberjack
+
+	switch uc.config.MainAgentProviderType {
+	case infra.AIAgentProviderTypeOpenAI:
+		mainProvider, err := uc.createOpenAIProvider()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create OpenAI provider")
+		}
+		adapter, err = llmberjack.New(llmberjack.WithProvider("main", mainProvider))
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create LLM adapter")
+		}
+
+	case infra.AIAgentProviderTypeAIStudio:
+		mainProvider, err := uc.createAIStudioProvider()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create AI Studio provider")
+		}
+		// Also register an Anthropic provider for Claude models on VertexAI
+		anthropicProvider, err := uc.createAnthropicVertexAIProvider()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create Anthropic VertexAI provider")
+		}
+		adapter, err = llmberjack.New(
+			llmberjack.WithProvider("main", mainProvider),
+			llmberjack.WithProvider("anthropic", anthropicProvider),
+		)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create LLM adapter")
+		}
+
+	default:
+		return nil, errors.Errorf("unsupported provider type: %s", uc.config.MainAgentProviderType)
+	}
+
+	uc.caseReviewAdapter = adapter
+	return uc.caseReviewAdapter, nil
+}
+
+func (uc *AiAgentUsecase) GetCaseDataZip(ctx context.Context, caseId string) (io.Reader, error) {
+	caseDtos, relatedDataPerClient, err := uc.getCaseDataWithPermissions(ctx, caseId)
+	if err != nil {
+		return nil, errors.Wrap(err, "could not get case data")
+	}
+	writeMap := map[string]any{
+		"case.json":          caseDtos.case_,
+		"case_events.json":   caseDtos.events,
+		"decisions.json":     caseDtos.decisions,
+		"data_model.json":    caseDtos.dataModel,
+		"pivot_objects.json": caseDtos.pivotData,
+	}
+
+	pr, pw := io.Pipe()
+
+	// Start writing zip archive in a goroutine
+	go func() {
+		zipw := zip.NewWriter(pw)
+		defer func() {
+			// Close in reverse order
+			if r := recover(); r != nil {
+				logger := utils.LoggerFromContext(ctx)
+				logger.ErrorContext(ctx, "panic while writing zip archive", "error", r)
+			}
+			zipw.Close()
+			pw.Close()
+		}()
+
+		for fileName, data := range writeMap {
+			f, err := zipw.Create(fileName)
+			if err != nil {
+				pw.CloseWithError(errors.Wrapf(err, "could not create %s in zip", fileName))
+				return
+			}
+			if err := json.NewEncoder(f).Encode(data); err != nil {
+				pw.CloseWithError(errors.Wrapf(err, "could not write %s to zip", fileName))
+				return
+			}
+		}
+
+		for pivotObjectStr, ingestedData := range relatedDataPerClient.ingestedData {
+			pivotObjectFolder := fmt.Sprintf("related_data/%s/", pivotObjectStr)
+
+			fileStr := pivotObjectFolder + "related_cases.json"
+			f, err := zipw.Create(fileStr)
+			if err != nil {
+				pw.CloseWithError(errors.Wrapf(err, "could not create %s in zip", fileStr))
+				return
+			}
+
+			relatedCasesData, ok := relatedDataPerClient.relatedCases[pivotObjectStr]
+			if ok {
+				if err := json.NewEncoder(f).Encode(relatedCasesData); err != nil {
+					pw.CloseWithError(errors.Wrapf(err, "could not write %s to zip", fileStr))
+					return
+				}
+			}
+
+			for tableName, objects := range ingestedData {
+				if len(objects.Data) == 0 {
+					continue
+				}
+				fileStr := pivotObjectFolder + tableName + ".csv"
+				f, err := zipw.Create(fileStr)
+				if err != nil {
+					pw.CloseWithError(errors.Wrapf(err, "could not create %s in zip", fileStr))
+					return
+				}
+				csvFile := csv.NewWriter(f)
+				if err := agent_dto.WriteClientDataToCsv(objects.Data, csvFile); err != nil {
+					pw.CloseWithError(errors.Wrapf(err, "could not write %s to zip", fileStr))
+					return
+				}
+			}
+		}
+	}()
+
+	return pr, nil
+}
+
+// readPrompt reads a prompt file by name (root-relative, no leading "/") from the usecase's
+// injected prompts filesystem. Returns an error if no prompts filesystem was resolved at
+// process startup (see infra.InitAiPromptsFS).
+func (uc *AiAgentUsecase) readPrompt(name string) (string, error) {
+	if uc.promptsFS == nil {
+		return "", errors.Errorf("cannot read prompt %s: ai prompts filesystem is not available", name)
+	}
+
+	promptBytes, err := fs.ReadFile(uc.promptsFS, name)
+	if err != nil {
+		return "", errors.Wrapf(err, "could not read prompt file %s", name)
+	}
+	return string(promptBytes), nil
+}
+
+// Prepare the request for the LLM, the prompt comes from a file and need to be templated.
+// The file contains some variables that are replaced by the data provided by the caller.
+func (uc *AiAgentUsecase) preparePrompt(promptPath string, data map[string]any) (prompt string, err error) {
+	// Load prompt from file, do each time in case prompt configuration changes
+	promptContent, err := uc.readPrompt(promptPath)
+	if err != nil {
+		return "", errors.Wrap(err, "could not read prompt file")
+	}
+
+	// Build the prompt message with the data
+	// Prepare the data for the template execution
+	// Use template.HTML to prevent unwanted HTML escaping by the template engine
+	marshalledMap := make(map[string]template.HTML)
+	for k, v := range data {
+		switch value := v.(type) {
+		case string:
+			marshalledMap[k] = template.HTML(value)
+		case *string:
+			if value != nil {
+				marshalledMap[k] = template.HTML(*value)
+			} else {
+				marshalledMap[k] = template.HTML("null")
+			}
+		case agent_dto.AgentPrinter:
+			str, err := value.PrintForAgent()
+			if err != nil {
+				return "", errors.Wrapf(err, "could not print %s", k)
+			}
+			marshalledMap[k] = template.HTML(str)
+		default:
+			// Use json.Encoder with SetEscapeHTML(false) to prevent JSON from escaping HTML
+			var buf bytes.Buffer
+			encoder := json.NewEncoder(&buf)
+			encoder.SetEscapeHTML(false)
+			err := encoder.Encode(v)
+			if err != nil {
+				return "", errors.Wrapf(err, "could not marshal %s", k)
+			}
+			// Remove trailing newline added by encoder.Encode and cast to template.HTML
+			marshalledMap[k] = template.HTML(bytes.TrimSpace(buf.Bytes()))
+		}
+	}
+
+	t, err := template.New(promptPath).Funcs(templateFuncMap).Parse(promptContent)
+	if err != nil {
+		return "", errors.Wrapf(err, "could not parse template %s", promptPath)
+	}
+	buf := bytes.Buffer{}
+	err = t.Execute(&buf, marshalledMap)
+	if err != nil {
+		return "", errors.Wrap(err, "could not execute template")
+	}
+	prompt = buf.String()
+
+	return prompt, nil
+}
+
+// providerForModel returns the llmberjack provider name to use for a given model.
+// Claude models are routed to the "anthropic" provider (only relevant when using VertexAI);
+// all other models use the default "main" provider.
+func providerForModel(model string) string {
+	if strings.HasPrefix(model, "claude") {
+		return "anthropic"
+	}
+	return "main"
+}
+
+// Call preparePrompt and complete the model with the model configuration
+func (uc *AiAgentUsecase) preparePromptWithModel(spec promptSpec, data map[string]any) (provider string, model string, prompt string, err error) {
+	if uc.aiAgentModelConfig == nil {
+		return "", "", "", errors.Errorf("cannot resolve model for feature %s: ai agent model configuration is not available", spec.Feature)
+	}
+
+	model = uc.aiAgentModelConfig.GetModel(spec.Feature, spec.Tier)
+	if model == "" {
+		return "", "", "", errors.Errorf(
+			"cannot resolve model for feature %s at tier %s: no model configured", spec.Feature, spec.Tier)
+	}
+	provider = providerForModel(model)
+
+	prompt, err = uc.preparePrompt(spec.Path, data)
+	if err != nil {
+		return "", "", "", errors.Wrap(err, "could not prepare prompt")
+	}
+
+	return provider, model, prompt, nil
+}
+
+func (uc *AiAgentUsecase) getCaseWithPermissions(ctx context.Context, caseId string) (models.Case, error) {
+	exec := uc.executorFactory.NewExecutor()
+	c, err := uc.repository.GetCaseById(ctx, exec, caseId)
+	if err != nil {
+		return models.Case{}, err
+	}
+
+	inboxes, err := uc.inboxReader.ListInboxes(ctx, exec, c.OrganizationId, false)
+	if err != nil {
+		return models.Case{},
+			errors.Wrap(err, "failed to list available inboxes in AiAgentUsecase")
+	}
+	availableInboxIds := make([]uuid.UUID, len(inboxes))
+	for i, inbox := range inboxes {
+		availableInboxIds[i] = inbox.Id
+	}
+	if err := uc.enforceSecurityCase.ReadOrUpdateCase(c.GetMetadata(), availableInboxIds); err != nil {
+		return models.Case{}, err
+	}
+	return c, nil
+}
+
+// Get AI setting, merge default settings with repository settings if exists
+func (uc *AiAgentUsecase) getAiSetting(ctx context.Context, organizationId uuid.UUID) (models.AiSetting, error) {
+	aiSetting := models.DefaultAiSetting()
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Getting AI setting for organization", "organizationId", organizationId)
+	aiSettingRepo, err := uc.repository.GetAiSetting(ctx, uc.executorFactory.NewExecutor(), organizationId)
+	if err != nil {
+		return models.AiSetting{}, errors.Wrap(err, "could not get ai setting")
+	}
+	if aiSettingRepo != nil {
+		aiSetting = *aiSettingRepo
+	}
+	return aiSetting, nil
+}

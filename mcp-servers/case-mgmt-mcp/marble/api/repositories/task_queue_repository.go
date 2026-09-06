@@ -1,0 +1,1036 @@
+package repositories
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/google/uuid"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
+)
+
+const (
+	nbRetriesAsyncDecision       = 6 // at 1sec*attempt^4, that's 90min for the 6th attempt
+	priorityAsyncDecision        = 3 // nb: higher number is lower priority (between 1 and 4)
+	nbRetriesScheduledExecStatus = 7 // at 1sec*attempt^4, that's 6h for the 7th attempt
+	priorityScheduledExecStatus  = 2
+)
+
+type TaskQueueRepository interface {
+	EnqueueDecisionTask(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		decision models.DecisionToCreate,
+		scenarioIterationId string,
+	) error
+	EnqueueDecisionTaskMany(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		decisions []models.DecisionToCreate,
+		scenarioIterationId string,
+	) error
+	EnqueueScheduledExecStatusTask(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		scheduledExecutionId string,
+	) error
+	EnqueueCreateIndexTask(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		indices []models.ConcreteIndex,
+	) error
+	EnqueueMatchEnrichmentTask(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		screeningId string,
+	) error
+	EnqueueCaseReviewTask(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		caseId uuid.UUID,
+		aiCaseReviewId uuid.UUID,
+	) error
+	EnqueueRuleDescriptionTask(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		ruleId string,
+	) error
+	EnqueueAutoAssignmentTask(
+		ctx context.Context,
+		tx Transaction,
+		orgId uuid.UUID,
+		inboxId uuid.UUID,
+	) error
+	EnqueueDecisionWorkflowTask(
+		ctx context.Context,
+		tx Transaction,
+		orgId uuid.UUID,
+		decisionId string,
+	) error
+	EnqueueSendBillingEventTask(
+		ctx context.Context,
+		event models.BillingEvent,
+	) error
+	EnqueueContinuousScreeningDoScreeningTaskMany(
+		ctx context.Context,
+		tx Transaction,
+		orgId uuid.UUID,
+		objectType string,
+		enqueueObjectUpdateTasks []models.ContinuousScreeningEnqueueObjectUpdateTask,
+		triggerType models.ContinuousScreeningTriggerType,
+	) error
+	EnqueueContinuousScreeningRegisterObjectTaskMany(
+		ctx context.Context,
+		tx Transaction,
+		orgId uuid.UUID,
+		objectType string,
+		tasks []models.ContinuousScreeningRegisterObjectTask,
+		shouldScreen bool,
+	) error
+	EnqueueContinuousScreeningEnsureDeltaTrackTask(
+		ctx context.Context,
+		args models.ContinuousScreeningEnsureDeltaTrackArgs,
+	) error
+	EnqueueContinuousScreeningApplyDeltaFileTask(
+		ctx context.Context,
+		tx Transaction,
+		orgId uuid.UUID,
+		updateId uuid.UUID,
+	) error
+	EnqueueCsvIngestionTask(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		uploadLogId uuid.UUID,
+		ingestionOptions models.IngestionOptions,
+	) error
+	EnqueueAsyncUploadTask(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		objectType string,
+		key string,
+		ingestionOptions models.IngestionOptions,
+	) error
+	EnqueueScheduledExecutionTask(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		scheduledExecutionId string,
+	) error
+	EnqueueBatchExecutionCoordinator(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		scheduledExecutionId string,
+	) error
+	EnqueueContinuousScreeningMatchEnrichmentTask(
+		ctx context.Context,
+		tx Transaction,
+		orgId uuid.UUID,
+		continuousScreeningId uuid.UUID,
+	) error
+	EnqueueGenerateThumbnailTask(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		bucket, key string,
+	) error
+	EnqueueAsyncDecisionExecutions(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		executionIds []uuid.UUID,
+	) error
+	// New webhook delivery system
+	EnqueueWebhookDispatch(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		webhookEventId uuid.UUID,
+	) error
+	EnqueueWebhookDelivery(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		deliveryId uuid.UUID,
+	) error
+	EnqueueWebhookDeliveryAt(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		deliveryId uuid.UUID,
+		scheduledAt time.Time,
+	) error
+	EnqueueTriggerScoreComputation(
+		ctx context.Context,
+		tx Transaction,
+		score models.ScoringRecordRef,
+	) error
+	EnqueueManyTriggerScoreComputation(
+		ctx context.Context,
+		tx Transaction,
+		entities []models.ScoringRecordRef,
+	) error
+	EnqueueRulesetDryRun(
+		ctx context.Context,
+		tx Transaction,
+		orgId uuid.UUID,
+		dryRun models.ScoringDryRun,
+	) error
+	EnqueueScreeningHitSuggestionTask(
+		ctx context.Context,
+		organizationId uuid.UUID,
+		screeningId string,
+	) error
+	EnqueueDeleteIndexByNameTask(
+		ctx context.Context,
+		tx Transaction,
+		organizationId uuid.UUID,
+		indexNames []string,
+	) error
+}
+
+type riverRepository struct {
+	client *river.Client[pgx.Tx]
+}
+
+func NewTaskQueueRepository(client *river.Client[pgx.Tx]) TaskQueueRepository {
+	return riverRepository{client: client}
+}
+
+func (r riverRepository) EnqueueDecisionTask(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	decision models.DecisionToCreate,
+	scenarioIterationId string,
+) error {
+	res, err := r.client.InsertTx(ctx, tx.RawTx(), models.AsyncDecisionArgs{
+		DecisionToCreateId:   decision.Id,
+		ObjectId:             decision.ObjectId,
+		ScheduledExecutionId: decision.ScheduledExecutionId,
+		ScenarioIterationId:  scenarioIterationId,
+	}, &river.InsertOpts{
+		MaxAttempts: nbRetriesAsyncDecision,
+		Priority:    priorityAsyncDecision,
+		Queue:       organizationId.String(),
+		UniqueOpts: river.UniqueOpts{
+			ByArgs: true,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued decision task", "decision_id", decision.Id, "job_id", res.Job.ID)
+	return nil
+}
+
+func (r riverRepository) EnqueueDecisionTaskMany(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	decisions []models.DecisionToCreate,
+	scenarioIterationId string,
+) error {
+	logger := utils.LoggerFromContext(ctx)
+	logger.InfoContext(ctx, "start enqueueing batch of decision tasks")
+	t := time.Now()
+	params := make([]river.InsertManyParams, len(decisions))
+	for i, decision := range decisions {
+		params[i] = river.InsertManyParams{
+			Args: models.AsyncDecisionArgs{
+				DecisionToCreateId:   decision.Id,
+				ObjectId:             decision.ObjectId,
+				ScheduledExecutionId: decision.ScheduledExecutionId,
+				ScenarioIterationId:  scenarioIterationId,
+			},
+			InsertOpts: &river.InsertOpts{
+				MaxAttempts: nbRetriesAsyncDecision,
+				Priority:    priorityAsyncDecision,
+				Queue:       organizationId.String(),
+				UniqueOpts:  river.UniqueOpts{
+					// ByArgs: true,
+				},
+			},
+		}
+	}
+
+	pgtx := tx.RawTx()
+	res, err := r.client.InsertManyFastTx(ctx, pgtx, params)
+	if err != nil {
+		return err
+	}
+
+	utils.LoggerFromContext(ctx).
+		InfoContext(ctx, fmt.Sprintf("Enqueued %d decision tasks in %s", res, time.Since(t)))
+	return nil
+}
+
+func (r riverRepository) EnqueueScheduledExecStatusTask(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	scheduledExecutionId string,
+) error {
+	res, err := r.client.InsertTx(ctx, tx.RawTx(), models.ScheduledExecStatusSyncArgs{
+		ScheduledExecutionId: scheduledExecutionId,
+	}, &river.InsertOpts{
+		MaxAttempts: nbRetriesScheduledExecStatus,
+		Priority:    priorityScheduledExecStatus,
+		Queue:       organizationId.String(),
+		UniqueOpts: river.UniqueOpts{
+			ByArgs: true,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued scheduled execution status update task", "job_id", res.Job.ID)
+	return nil
+}
+
+func (r riverRepository) EnqueueCreateIndexTask(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	indices []models.ConcreteIndex,
+) error {
+	if len(indices) == 0 {
+		return nil
+	}
+	_, err := r.client.InsertTx(
+		ctx,
+		tx.RawTx(),
+		models.IndexCreationArgs{
+			OrgId:   organizationId,
+			Indices: indices,
+		},
+		&river.InsertOpts{
+			Queue: organizationId.String(),
+		})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r riverRepository) EnqueueDeleteIndexByNameTask(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	indexNames []string,
+) error {
+	if len(indexNames) == 0 {
+		return nil
+	}
+	_, err := r.client.InsertTx(
+		ctx,
+		tx.RawTx(),
+		models.IndexDeletionByNameArgs{
+			OrgId:      organizationId,
+			IndexNames: indexNames,
+		},
+		&river.InsertOpts{
+			Queue: organizationId.String(),
+		})
+	return err
+}
+
+func (r riverRepository) EnqueueMatchEnrichmentTask(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	screeningId string,
+) error {
+	res, err := r.client.InsertTx(
+		ctx,
+		tx.RawTx(),
+		models.MatchEnrichmentArgs{
+			OrgId:       organizationId,
+			ScreeningId: screeningId,
+		},
+		&river.InsertOpts{
+			Queue: organizationId.String(),
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued scheduled execution match enrichment task", "job_id", res.Job.ID)
+
+	return nil
+}
+
+func (r riverRepository) EnqueueCaseReviewTask(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	caseId uuid.UUID,
+	aiCaseReviewId uuid.UUID,
+) error {
+	res, err := r.client.InsertTx(
+		ctx,
+		tx.RawTx(),
+		models.CaseReviewArgs{
+			CaseId:         caseId,
+			AiCaseReviewId: aiCaseReviewId,
+		},
+		&river.InsertOpts{
+			Queue: organizationId.String(),
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued case review task", "job_id", res.Job.ID)
+	return nil
+}
+
+func (r riverRepository) EnqueueRuleDescriptionTask(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	ruleId string,
+) error {
+	res, err := r.client.InsertTx(
+		ctx,
+		tx.RawTx(),
+		models.RuleDescriptionArgs{
+			RuleId: ruleId,
+		},
+		&river.InsertOpts{
+			Queue: organizationId.String(),
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued rule description task", "job_id", res.Job.ID)
+
+	return nil
+}
+
+func (r riverRepository) EnqueueAutoAssignmentTask(
+	ctx context.Context,
+	tx Transaction,
+	orgId uuid.UUID,
+	inboxId uuid.UUID,
+) error {
+	res, err := r.client.InsertTx(
+		ctx,
+		tx.RawTx(),
+		models.AutoAssignmentArgs{
+			OrgId:   orgId,
+			InboxId: inboxId,
+		},
+		&river.InsertOpts{
+			Queue:       orgId.String(),
+			ScheduledAt: time.Now().Add(time.Minute),
+			UniqueOpts: river.UniqueOpts{
+				ByQueue:  true,
+				ByPeriod: 2 * time.Minute,
+			},
+		})
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued scheduled execution for case auto-assignment", "job_id", res.Job.ID)
+
+	return nil
+}
+
+func (r riverRepository) EnqueueDecisionWorkflowTask(
+	ctx context.Context,
+	tx Transaction,
+	orgId uuid.UUID,
+	decisionId string,
+) error {
+	res, err := r.client.InsertTx(
+		ctx,
+		tx.RawTx(),
+		models.DecisionWorkflowArgs{
+			DecisionId: decisionId,
+		},
+		&river.InsertOpts{
+			Queue: orgId.String(),
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued decision workflow task", "job_id", res.Job.ID)
+	return nil
+}
+
+func (r riverRepository) EnqueueSendBillingEventTask(
+	ctx context.Context,
+	event models.BillingEvent,
+) error {
+	logger := utils.LoggerFromContext(ctx)
+
+	res, err := r.client.Insert(
+		ctx,
+		models.SendBillingEventArgs{
+			Event: event,
+		},
+		&river.InsertOpts{
+			Queue: models.BILLING_QUEUE_NAME,
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	logger.DebugContext(ctx, "Enqueued send billing event task", "job_id", res.Job.ID)
+	return nil
+}
+
+func (r riverRepository) EnqueueContinuousScreeningDoScreeningTaskMany(
+	ctx context.Context,
+	tx Transaction,
+	orgId uuid.UUID,
+	objectType string,
+	enqueueObjectUpdateTasks []models.ContinuousScreeningEnqueueObjectUpdateTask,
+	triggerType models.ContinuousScreeningTriggerType,
+) error {
+	if len(enqueueObjectUpdateTasks) == 0 {
+		return nil
+	}
+
+	params := make([]river.InsertManyParams, len(enqueueObjectUpdateTasks))
+	for i, enqueueObjectUpdateTask := range enqueueObjectUpdateTasks {
+		params[i] = river.InsertManyParams{
+			Args: models.ContinuousScreeningDoScreeningArgs{
+				ObjectType:         objectType,
+				OrgId:              orgId,
+				TriggerType:        triggerType,
+				MonitoringId:       enqueueObjectUpdateTask.MonitoringId,
+				PreviousInternalId: enqueueObjectUpdateTask.PreviousInternalId,
+				NewInternalId:      enqueueObjectUpdateTask.NewInternalId,
+			},
+			InsertOpts: &river.InsertOpts{
+				Queue:    orgId.String(),
+				Priority: 4, // Low priority to avoid blocking other tasks
+			},
+		}
+	}
+
+	res, err := r.client.InsertManyFastTx(ctx, tx.RawTx(), params)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued continuous screening do screening tasks", "nb_tasks", res)
+	return nil
+}
+
+func (r riverRepository) EnqueueContinuousScreeningRegisterObjectTaskMany(
+	ctx context.Context,
+	tx Transaction,
+	orgId uuid.UUID,
+	objectType string,
+	tasks []models.ContinuousScreeningRegisterObjectTask,
+	shouldScreen bool,
+) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	params := make([]river.InsertManyParams, len(tasks))
+	for i, task := range tasks {
+		params[i] = river.InsertManyParams{
+			Args: models.ContinuousScreeningRegisterObjectArgs{
+				OrgId:          orgId,
+				ObjectType:     objectType,
+				ObjectId:       task.ObjectId,
+				ConfigStableId: task.ConfigStableId,
+				NewInternalId:  task.NewInternalId,
+				ShouldScreen:   shouldScreen,
+				UserId:         task.UserId,
+				ApiKeyId:       task.ApiKeyId,
+			},
+			InsertOpts: &river.InsertOpts{
+				Queue:    orgId.String(),
+				Priority: 4,
+			},
+		}
+	}
+
+	res, err := r.client.InsertManyFastTx(ctx, tx.RawTx(), params)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued continuous screening register object tasks", "nb_tasks", res)
+	return nil
+}
+
+// EnqueueContinuousScreeningEnsureDeltaTrackTask enqueues a delayed job that creates a missing
+// Add delta track if the original RegisterObjectWorker failed to commit it. The enqueue runs
+// against the marble pool directly (no client tx participation): callers should invoke it inside
+// the client-DB tx that creates the monitored_object so a failed enqueue rolls back the registration.
+func (r riverRepository) EnqueueContinuousScreeningEnsureDeltaTrackTask(
+	ctx context.Context,
+	args models.ContinuousScreeningEnsureDeltaTrackArgs,
+) error {
+	res, err := r.client.Insert(ctx, args, &river.InsertOpts{
+		Queue:       args.OrgId.String(),
+		Priority:    4,
+		ScheduledAt: time.Now().Add(5 * time.Minute),
+	})
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued continuous screening verify delta track existence task",
+		"job_id", res.Job.ID, "monitored_object_id", args.MonitoredObjectId)
+	return nil
+}
+
+func (r riverRepository) EnqueueContinuousScreeningApplyDeltaFileTask(
+	ctx context.Context,
+	tx Transaction,
+	orgId uuid.UUID,
+	updateId uuid.UUID,
+) error {
+	res, err := r.client.InsertTx(ctx, tx.RawTx(), models.ContinuousScreeningApplyDeltaFileArgs{
+		OrgId:    orgId,
+		UpdateId: updateId,
+	}, &river.InsertOpts{
+		Queue:    orgId.String(),
+		Priority: 4, // Low priority to avoid blocking other tasks
+	})
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued continuous screening process delta file task", "job_id", res.Job.ID)
+	return nil
+}
+
+func (r riverRepository) EnqueueCsvIngestionTask(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	uploadLogId uuid.UUID,
+	ingestionOptions models.IngestionOptions,
+) error {
+	res, err := r.client.InsertTx(ctx, tx.RawTx(), models.CsvIngestionArgs{
+		UploadLogId:      uploadLogId,
+		IngestionOptions: ingestionOptions,
+	}, &river.InsertOpts{
+		Queue: organizationId.String(),
+	})
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued CSV ingestion task", "upload_log_id", uploadLogId, "job_id", res.Job.ID)
+	return nil
+}
+
+func (r riverRepository) EnqueueAsyncUploadTask(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	objectType string,
+	key string,
+	ingestionOptions models.IngestionOptions,
+) error {
+	args := models.AsyncUploadArgs{
+		OrgId:            organizationId,
+		ObjectType:       objectType,
+		Key:              key,
+		IngestionOptions: ingestionOptions,
+	}
+
+	res, err := r.client.InsertTx(ctx, tx.RawTx(), args, &river.InsertOpts{
+		Queue:       organizationId.String(),
+		ScheduledAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued async upload task", "key", key, "job_id", res.Job.ID)
+
+	return nil
+}
+
+func (r riverRepository) EnqueueScheduledExecutionTask(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	scheduledExecutionId string,
+) error {
+	res, err := r.client.InsertTx(ctx, tx.RawTx(), models.ScheduledExecutionArgs{
+		ScheduledExecutionId: scheduledExecutionId,
+	}, &river.InsertOpts{
+		Queue: organizationId.String(),
+	})
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued scheduled execution task",
+		"scheduled_execution_id", scheduledExecutionId, "job_id", res.Job.ID)
+	return nil
+}
+
+func (r riverRepository) EnqueueBatchExecutionCoordinator(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	scheduledExecutionId string,
+) error {
+	res, err := r.client.InsertTx(ctx, tx.RawTx(), models.BatchExecutionCoordinatorArgs{
+		ScheduledExecutionId: scheduledExecutionId,
+	}, &river.InsertOpts{
+		// The coordinator loops to completion in a single run; errors are handled in-loop and
+		// it only returns an error on process shutdown, so a generous attempt count lets it
+		// resume from its committed offset across several deploys.
+		MaxAttempts: 30,
+		Queue:       organizationId.String(),
+		UniqueOpts: river.UniqueOpts{
+			ByArgs: true,
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued batch execution coordinator",
+		"scheduled_execution_id", scheduledExecutionId, "job_id", res.Job.ID)
+	return nil
+}
+
+func (r riverRepository) EnqueueContinuousScreeningMatchEnrichmentTask(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	continuousScreeningId uuid.UUID,
+) error {
+	res, err := r.client.InsertTx(
+		ctx,
+		tx.RawTx(),
+		models.ContinuousScreeningMatchEnrichmentArgs{
+			ContinuousScreeningId: continuousScreeningId,
+		},
+		&river.InsertOpts{
+			Queue: organizationId.String(),
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued continuous screening match enrichment task", "job_id", res.Job.ID)
+
+	return nil
+}
+
+func (r riverRepository) EnqueueGenerateThumbnailTask(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	bucket, key string,
+) error {
+	res, err := r.client.InsertTx(
+		ctx,
+		tx.RawTx(),
+		models.GenerateThumbnailArgs{
+			Bucket: bucket,
+			Key:    key,
+		},
+		&river.InsertOpts{
+			Queue: organizationId.String(),
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued thumbnail generation task", "job_id", res.Job.ID)
+	return nil
+}
+
+func (r riverRepository) EnqueueAsyncDecisionExecutions(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	executionIds []uuid.UUID,
+) error {
+	if len(executionIds) == 0 {
+		return nil
+	}
+
+	params := make([]river.InsertManyParams, len(executionIds))
+	for i, executionId := range executionIds {
+		params[i] = river.InsertManyParams{
+			Args: models.AsyncDecisionExecutionArgs{
+				AsyncDecisionExecutionId: executionId,
+			},
+			InsertOpts: &river.InsertOpts{
+				MaxAttempts: 10,
+				Queue:       organizationId.String(),
+			},
+		}
+	}
+
+	res, err := r.client.InsertManyFastTx(ctx, tx.RawTx(), params)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, fmt.Sprintf("Enqueued %d async decision execution tasks", res))
+	return nil
+}
+
+// New webhook delivery system
+
+func (r riverRepository) EnqueueWebhookDispatch(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	webhookEventId uuid.UUID,
+) error {
+	res, err := r.client.InsertTx(
+		ctx,
+		tx.RawTx(),
+		models.WebhookDispatchJobArgs{
+			WebhookEventId: webhookEventId,
+		},
+		&river.InsertOpts{
+			Queue:    organizationId.String(),
+			Priority: 4, // Low priority
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued webhook dispatch task", "webhook_event_id", webhookEventId, "job_id", res.Job.ID)
+	return nil
+}
+
+func (r riverRepository) EnqueueWebhookDelivery(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	deliveryId uuid.UUID,
+) error {
+	res, err := r.client.InsertTx(
+		ctx,
+		tx.RawTx(),
+		models.WebhookDeliveryJobArgs{
+			DeliveryId: deliveryId,
+		},
+		&river.InsertOpts{
+			Queue:    organizationId.String(),
+			Priority: 4, // Low priority
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued webhook delivery task", "delivery_id", deliveryId, "job_id", res.Job.ID)
+	return nil
+}
+
+func (r riverRepository) EnqueueWebhookDeliveryAt(
+	ctx context.Context,
+	tx Transaction,
+	organizationId uuid.UUID,
+	deliveryId uuid.UUID,
+	scheduledAt time.Time,
+) error {
+	res, err := r.client.InsertTx(
+		ctx,
+		tx.RawTx(),
+		models.WebhookDeliveryJobArgs{
+			DeliveryId: deliveryId,
+		},
+		&river.InsertOpts{
+			Queue:       organizationId.String(),
+			Priority:    4, // Low priority
+			ScheduledAt: scheduledAt,
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued webhook delivery task with schedule",
+		"delivery_id", deliveryId,
+		"scheduled_at", scheduledAt,
+		"job_id", res.Job.ID)
+	return nil
+}
+
+func (r riverRepository) EnqueueTriggerScoreComputation(
+	ctx context.Context,
+	tx Transaction,
+	record models.ScoringRecordRef,
+) error {
+	res, err := r.client.InsertTx(
+		ctx,
+		tx.RawTx(),
+		models.TriggeredScoreComputationArgs(record),
+		&river.InsertOpts{
+			Queue:    record.OrgId.String(),
+			Priority: 4, // Low priority
+			UniqueOpts: river.UniqueOpts{
+				ByArgs:   true,
+				ByPeriod: time.Hour,
+			},
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued triggered score computation",
+		"job_id", res.Job.ID)
+
+	return nil
+}
+
+func (r riverRepository) EnqueueManyTriggerScoreComputation(
+	ctx context.Context,
+	tx Transaction,
+	records []models.ScoringRecordRef,
+) error {
+	params := make([]river.InsertManyParams, len(records))
+
+	for idx, record := range records {
+		params[idx] = river.InsertManyParams{
+			Args: models.TriggeredScoreComputationArgs(record),
+			InsertOpts: &river.InsertOpts{
+				Queue:    record.OrgId.String(),
+				Priority: 4, // Low priority
+				UniqueOpts: river.UniqueOpts{
+					ByArgs:   true,
+					ByPeriod: time.Hour,
+				},
+			},
+		}
+	}
+
+	count, err := r.client.InsertManyFastTx(ctx, tx.RawTx(), params)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued many triggered score computation", "count", count)
+
+	return nil
+}
+
+func (r riverRepository) EnqueueRulesetDryRun(
+	ctx context.Context,
+	tx Transaction,
+	orgId uuid.UUID,
+	dryRun models.ScoringDryRun,
+) error {
+	res, err := r.client.InsertTx(
+		ctx,
+		tx.RawTx(),
+		models.RulesetDryRunArgs{
+			OrgId:     orgId,
+			RulesetId: dryRun.RulesetId,
+			DryRunId:  dryRun.Id,
+		},
+		&river.InsertOpts{
+			Queue:    orgId.String(),
+			Priority: 4, // Low priority
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued scoring ruleset dry run",
+		"job_id", res.Job.ID,
+		"dry_run_id", dryRun.Id,
+		"ruleset_id", dryRun.RulesetId)
+
+	return nil
+}
+
+func (r riverRepository) EnqueueScreeningHitSuggestionTask(
+	ctx context.Context,
+	organizationId uuid.UUID,
+	screeningId string,
+) error {
+	res, err := r.client.Insert(
+		ctx,
+		models.ScreeningHitSuggestionArgs{
+			ScreeningId: screeningId,
+		},
+		&river.InsertOpts{
+			Queue: organizationId.String(),
+			UniqueOpts: river.UniqueOpts{
+				ByArgs: true,
+				ByState: []rivertype.JobState{
+					rivertype.JobStateAvailable,
+					rivertype.JobStatePending,
+					rivertype.JobStateRunning,
+					rivertype.JobStateScheduled,
+					rivertype.JobStateRetryable,
+				},
+			},
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	logger := utils.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "Enqueued screening hit suggestion task",
+		"screening_id", screeningId, "job_id", res.Job.ID)
+	return nil
+}

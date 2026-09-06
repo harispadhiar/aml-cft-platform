@@ -1,0 +1,282 @@
+import {
+  type DataModel,
+  type DataType,
+  getDataTypeIcon,
+  getDataTypeTKey,
+  type IdLessAstNode,
+  type TableModel,
+} from '@app-builder/models';
+import {
+  type AggregationAstNode,
+  isAggregation,
+  isUnaryAggregationFilter,
+} from '@app-builder/models/astNode/aggregation';
+import { type CustomListAccessAstNode, isCustomListAccess } from '@app-builder/models/astNode/custom-list';
+import { type DataAccessorAstNode, isDataAccessorAstNode } from '@app-builder/models/astNode/data-accessor';
+import { isIpHasFlag } from '@app-builder/models/astNode/ip';
+import { isRecordRiskLevelCheckAstNode, RecordRiskLevelCheckAstNode } from '@app-builder/models/astNode/risk';
+import { type FuzzyMatchComparatorAstNode, isFuzzyMatchComparator } from '@app-builder/models/astNode/strings';
+import { isTimeAdd } from '@app-builder/models/astNode/time';
+import { type CustomList } from '@app-builder/models/custom-list';
+import { ComparatorFuzzyMatchConfig } from '@app-builder/models/fuzzy-match/comparatorFuzzyMatchConfig';
+import { getOperandTypeIcon, getOperandTypeTKey, type OperandType } from '@app-builder/models/operand-type';
+import { isMaxRiskLevelInRange, SCORING_LEVELS_COLORS, SCORING_LEVELS_LABEL_KEYS } from '@app-builder/models/scoring';
+import { getDataAccessorAstNodeField } from '@app-builder/services/ast-node/getDataAccessorAstNodeField';
+import { HoverCard, HoverCardContent, HoverCardPortal, HoverCardTrigger } from '@radix-ui/react-hover-card';
+import clsx from 'clsx';
+import { Fragment } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Icon } from 'ui-icons';
+import { AstBuilderDataSharpFactory } from './Provider';
+import { LogicalOperatorLabel } from './styles/LogicalOperatorLabel';
+import { ViewingAstBuilderOperand } from './viewing/ViewingOperand';
+import { ViewingOperator } from './viewing/ViewingOperator';
+
+const MAX_ENUM_VALUES = 50;
+
+type OperandInfosProps = {
+  node: IdLessAstNode;
+  dataType: DataType;
+  operandType: OperandType;
+  displayName: string;
+};
+
+const contentClassnames = clsx([
+  'flex flex-col w-full flex-1 overflow-hidden z-50',
+  'bg-surface-card border-grey-border rounded-sm border shadow-md outline-hidden',
+]);
+
+export function OperandInfos(props: OperandInfosProps) {
+  return (
+    <HoverCard openDelay={50} closeDelay={200}>
+      <HoverCardTrigger asChild>
+        <Icon
+          icon="tip"
+          className="hover:group-hover:text-purple-primary group-hover:text-purple-disabled data-[state=open]:text-purple-primary size-5 shrink-0 text-transparent"
+        />
+      </HoverCardTrigger>
+      <HoverCardPortal>
+        <HoverCardContent side="right" align="start" sideOffset={20} alignOffset={-8} className={contentClassnames}>
+          <div className="bg-surface-card flex flex-col gap-sm overflow-auto p-md">
+            <div className="flex flex-col gap-xs">
+              <TypeInfos operandType={props.operandType} dataType={props.dataType} />
+              <p className="text-grey-primary text-s text-ellipsis hyphens-auto font-normal">{props.displayName}</p>
+            </div>
+            <OperandDescription node={props.node} />
+          </div>
+        </HoverCardContent>
+      </HoverCardPortal>
+    </HoverCard>
+  );
+}
+
+type TypeInfosProps = Pick<OperandInfosProps, 'operandType' | 'dataType'>;
+function TypeInfos({ operandType, dataType }: TypeInfosProps) {
+  const { t } = useTranslation(['scenarios']);
+  const typeInfos = [
+    {
+      icon: getOperandTypeIcon(operandType),
+      tKey: getOperandTypeTKey(operandType),
+    },
+    {
+      icon: getDataTypeIcon(dataType),
+      tKey: getDataTypeTKey(dataType),
+    },
+  ];
+  if (typeInfos.filter(({ tKey }) => !!tKey).length === 0) return null;
+
+  return (
+    <div className="flex flex-row gap-sm">
+      {typeInfos.map(({ icon, tKey }) => {
+        if (!tKey) return null;
+        return (
+          <span key={tKey} className="text-purple-disabled inline-flex items-center gap-2xs text-xs font-normal">
+            {icon ? <Icon icon={icon} className="size-3" /> : null}
+            {t(tKey, { count: 1 })}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+type OperandDescriptionProps = Pick<OperandInfosProps, 'node'>;
+function OperandDescription({ node }: OperandDescriptionProps) {
+  const { t } = useTranslation(['scenarios']);
+  const dataSharp = AstBuilderDataSharpFactory.useSharp();
+  const data = dataSharp.select((s) => s.data);
+
+  if (isAggregation(node)) {
+    return <AggregatorDescription node={node} />;
+  }
+  if (isFuzzyMatchComparator(node)) {
+    return <FuzzyMatchComparatorDescription node={node} />;
+  }
+  if (isCustomListAccess(node)) {
+    return <CustomListAccessDescription node={node} customLists={data.customLists} />;
+  }
+  if (isDataAccessorAstNode(node)) {
+    return (
+      <DataAccessorDescription
+        node={node}
+        dataModel={data.dataModel}
+        triggerObjectTable={dataSharp.computed.triggerObjectTable.value}
+      />
+    );
+  }
+  if (isTimeAdd(node)) {
+    return <Description description={t('scenarios:edit_date.now.description')} />;
+  }
+  if (isIpHasFlag(node)) {
+    return <Description description={t('scenarios:edit_ip_has_flag.description')} />;
+  }
+  if (isRecordRiskLevelCheckAstNode(node) && node.children[0].constant.length > 0) {
+    return <RecordRiskLevelDescription node={node} />;
+  }
+}
+
+function Description({ description }: { description: string }) {
+  return description ? (
+    <p className="text-grey-secondary max-w-[300px] text-xs font-normal first-letter:capitalize">{description}</p>
+  ) : null;
+}
+
+function RecordRiskLevelDescription({ node }: { node: IdLessAstNode<RecordRiskLevelCheckAstNode> }) {
+  const { t } = useTranslation(['user-scoring']);
+  const scoringSettings = AstBuilderDataSharpFactory.select((s) => s.data.scoringSettings);
+
+  if (!scoringSettings || !isMaxRiskLevelInRange(scoringSettings.maxRiskLevel)) {
+    return null;
+  }
+
+  const levelColorsMap = SCORING_LEVELS_COLORS[scoringSettings.maxRiskLevel];
+  const levelLabelsMap = SCORING_LEVELS_LABEL_KEYS[scoringSettings.maxRiskLevel];
+
+  return (
+    <>
+      <div className="flex gap-xs items-center">
+        {node.children[0].constant.map((level) => (
+          <div
+            key={level}
+            className="flex gap-xs items-center border rounded-full px-sm py-xs text-small"
+            style={{ borderColor: levelColorsMap[level] }}
+          >
+            <div className="size-4 rounded-full" style={{ backgroundColor: levelColorsMap[level] }} />
+            <span>{t(levelLabelsMap[level])}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+type AggregatorDescriptionProps = {
+  node: IdLessAstNode<AggregationAstNode>;
+};
+function AggregatorDescription({ node }: AggregatorDescriptionProps) {
+  const { t } = useTranslation(['scenarios']);
+  const { aggregator, tableName, fieldName, filters, percentile } = node.namedChildren;
+  if (!tableName.constant && !fieldName.constant && filters.children.length === 0) return null;
+
+  const aggregatedFieldName = `${tableName.constant}.${fieldName.constant}`;
+  const percentileValue = percentile?.constant;
+
+  return (
+    <div className="grid grid-cols-[min-content_1fr] items-center gap-sm">
+      <span className="text-purple-primary text-center font-bold">{aggregator.constant}</span>
+      <span className="font-bold">{aggregatedFieldName}</span>
+      {percentileValue !== undefined && aggregator.constant === 'PCTILE' ? (
+        <>
+          <span className="text-grey-50 text-xs">{t('scenarios:edit_aggregation.percentile_value')}</span>
+          <span className="text-grey-00 text-xs font-medium">{percentileValue * 100}%</span>
+        </>
+      ) : null}
+      {filters.children.map((filter, index) => {
+        const { operator, fieldName } = filter.namedChildren;
+        return (
+          <Fragment key={`filter_${index}`}>
+            <LogicalOperatorLabel operator={index === 0 ? 'where' : 'and'} type="text" />
+            <div className="flex items-center gap-xs">
+              {/* TODO: replace with OperandLabel for consistency,
+              we may need to change the AggregatorEditableAstNode to register a valid Payload node (instead of the shorthand Constant)
+              but it can be cumbersome for api compatibility (notably when getting the astNode from the server)
+
+              Should be stringified as a "payload access" with :
+              - a field name (string) = fieldName?.constant
+              - a table name (string) = tableName?.constant
+              */}
+              <p className="bg-grey-background-light whitespace-nowrap p-sm text-end">{fieldName.constant ?? '...'}</p>
+              <ViewingOperator operator={operator.constant} isFilter />
+              {!isUnaryAggregationFilter(filter) ? (
+                <ViewingAstBuilderOperand node={filter.namedChildren.value} />
+              ) : null}
+            </div>
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+type FuzzyMatchComparatorDescriptionProps = {
+  node: IdLessAstNode<FuzzyMatchComparatorAstNode>;
+};
+function FuzzyMatchComparatorDescription({ node }: FuzzyMatchComparatorDescriptionProps) {
+  const { t } = useTranslation(['scenarios']);
+  const threshold = node.children[1]?.constant;
+  const level = threshold !== undefined ? ComparatorFuzzyMatchConfig.adaptLevel(threshold) : undefined;
+
+  if (!level) return null;
+
+  return (
+    <div className="flex items-center gap-sm">
+      <span className="text-grey-50 text-xs">{t('scenarios:edit_fuzzy_match.level.label')}</span>
+      <span className="text-grey-00 text-xs font-medium uppercase">
+        {t(`scenarios:edit_fuzzy_match.level.${level}`)}
+      </span>
+    </div>
+  );
+}
+
+type CustomListAccessDescriptionProps = {
+  node: IdLessAstNode<CustomListAccessAstNode>;
+  customLists: CustomList[];
+};
+function CustomListAccessDescription({ node, customLists }: CustomListAccessDescriptionProps) {
+  const customList = customLists.find((list) => list.id === node.namedChildren.customListId.constant);
+  if (!customList) return null;
+
+  return <Description description={customList.description} />;
+}
+
+type DataAccessorDescriptionProps = {
+  node: IdLessAstNode<DataAccessorAstNode>;
+  dataModel: DataModel;
+  triggerObjectTable: TableModel;
+};
+function DataAccessorDescription({ node, dataModel, triggerObjectTable }: DataAccessorDescriptionProps) {
+  const { t } = useTranslation(['scenarios']);
+  const field = getDataAccessorAstNodeField(node, { triggerObjectTable, dataModel });
+
+  return (
+    <>
+      <Description description={field.description} />
+      {field.isEnum && field.values && field.values.length > 0 ? (
+        <div className="text-grey-secondary flex max-w-[300px] flex-col gap-xs">
+          <p className="text-s">{t('scenarios:enum_options')}</p>
+          <ul className="flex flex-col">
+            {field.values
+              .slice(0, MAX_ENUM_VALUES)
+              .sort()
+              .map((value) => (
+                <li key={value} className="truncate text-xs font-normal">
+                  {value}
+                </li>
+              ))}
+            {field.values.length > MAX_ENUM_VALUES ? <li className="text-xs font-normal">...</li> : null}
+          </ul>
+        </div>
+      ) : null}
+    </>
+  );
+}

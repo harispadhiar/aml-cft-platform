@@ -1,0 +1,79 @@
+import { useLoaderRevalidator } from '@app-builder/contexts/LoaderRevalidatorContext';
+import { useDeleteListValueMutation } from '@app-builder/queries/lists/delete-value';
+import { DeleteValuePayload, deleteValuePayloadSchema } from '@app-builder/schemas/lists';
+import { handleSubmit } from '@app-builder/utils/form';
+import { useForm } from '@tanstack/react-form';
+import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { HiddenInputs, Modal, Typo } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+
+export function DeleteListValueModal({
+  listId,
+  listValueId,
+  value,
+  children,
+}: {
+  listId: string;
+  listValueId: string;
+  value: string;
+  children: React.ReactNode;
+}) {
+  const { t } = useTranslation(['lists', 'navigation', 'common']);
+  const deleteListValueMutation = useDeleteListValueMutation();
+  const revalidate = useLoaderRevalidator();
+  const [isOpen, setIsOpen] = useState(false);
+
+  const form = useForm({
+    defaultValues: {
+      listId,
+      listValueId,
+    } as DeleteValuePayload,
+    validators: {
+      onSubmit: deleteValuePayloadSchema,
+    },
+    onSubmit: ({ value, formApi }) => {
+      if (formApi.state.isValid) {
+        deleteListValueMutation.mutateAsync(value).then(() => {
+          revalidate();
+          setIsOpen(false);
+          form.reset();
+        });
+      }
+    },
+  });
+
+  return (
+    <Modal.Root open={isOpen} onOpenChange={setIsOpen}>
+      <Modal.Trigger asChild>{children}</Modal.Trigger>
+      <Modal.Content>
+        <form onSubmit={handleSubmit(form)}>
+          <HiddenInputs listId={listId} listValueId={listValueId} />
+          <div className="flex flex-col gap-lg p-lg">
+            <div className="flex flex-1 flex-col items-center justify-center gap-sm">
+              <div className="bg-red-background mb-lg box-border rounded-[90px] p-md">
+                <Icon icon="delete" className="text-red-primary size-16" />
+              </div>
+              <Typo variant="title1">{t('lists:delete_value.title')}</Typo>
+              <p className="pb-md text-center">
+                {t('lists:delete_value.value_content')} <br />
+                <b>{value}</b>
+              </p>
+              <p className="text-center">{t('lists:delete_value.no_return')}</p>
+            </div>
+          </div>
+          <Modal.Footer>
+            <Modal.FooterButton isCloseButton label={t('common:cancel')} />
+            <Modal.FooterButton
+              label={t('common:delete')}
+              type="submit"
+              name="delete"
+              variant="destructive"
+              leadingIcon="delete"
+            />
+          </Modal.Footer>
+        </form>
+      </Modal.Content>
+    </Modal.Root>
+  );
+}

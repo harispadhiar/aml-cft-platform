@@ -1,0 +1,174 @@
+import { UpdateInboxesSlaPayload } from '@app-builder/schemas/cases';
+import { type ParseKeys } from 'i18next';
+import {
+  type AddInboxUserBodyDto,
+  type InboxDto,
+  type InboxMetadataDto,
+  type InboxUserDto,
+  UpdateInboxesDto,
+} from 'marble-api';
+import invariant from 'tiny-invariant';
+
+export interface Inbox {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'active' | 'archived';
+  sla?: number | null;
+  users: InboxUser[];
+  escalationInboxId?: string;
+  autoAssignEnabled: boolean;
+  caseReviewManual: boolean;
+  caseReviewOnCaseCreated: boolean;
+  caseReviewOnEscalate: boolean;
+}
+
+export function adaptInbox(inbox: InboxDto): Inbox {
+  return {
+    id: inbox.id,
+    name: inbox.name,
+    createdAt: inbox.created_at,
+    updatedAt: inbox.updated_at,
+    status: inbox.status,
+    sla: inbox.sla,
+    users: (inbox.users ?? []).map(adaptInboxUser),
+    escalationInboxId: inbox.escalation_inbox_id,
+    autoAssignEnabled: inbox.auto_assign_enabled,
+    caseReviewManual: inbox.case_review_manual ?? false,
+    caseReviewOnCaseCreated: inbox.case_review_on_case_created ?? false,
+    caseReviewOnEscalate: inbox.case_review_on_escalate ?? false,
+  };
+}
+
+/**
+ * Whether SLA data is relevant for the given selection: the selected inbox has an SLA, or — when no
+ * inbox is selected — at least one of them does.
+ */
+export function hasSlaConfigured(inboxes: Inbox[], inboxId?: string): boolean {
+  if (!inboxId) return inboxes.some((inbox) => inbox.sla != null);
+  return inboxes.find((inbox) => inbox.id === inboxId)?.sla != null;
+}
+
+export interface InboxMetadata {
+  id: string;
+  name: string;
+}
+
+export function adaptInboxMetadata(inbox: InboxMetadataDto): InboxMetadata {
+  return {
+    id: inbox.id,
+    name: inbox.name,
+  };
+}
+
+export interface InboxWithCasesCount extends Inbox {
+  casesCount: number;
+}
+
+export function adaptInboxWithCasesCount(inbox: InboxDto): InboxWithCasesCount {
+  invariant(inbox.cases_count !== undefined, 'cases_count is required');
+  return {
+    ...adaptInbox(inbox),
+    casesCount: inbox.cases_count,
+  };
+}
+
+export interface InboxCreateBody {
+  name: string;
+}
+
+export interface InboxUpdateBody {
+  name: string;
+  escalationInboxId?: string | null;
+  autoAssignEnabled?: boolean;
+  caseReviewManual?: boolean;
+  caseReviewOnCaseCreated?: boolean;
+  caseReviewOnEscalate?: boolean;
+}
+
+export function adaptUpdateInboxDto(model: InboxUpdateBody): {
+  name: string;
+  escalation_inbox_id?: string | null;
+  auto_assign_enabled?: boolean;
+  case_review_manual?: boolean;
+  case_review_on_case_created?: boolean;
+  case_review_on_escalate?: boolean;
+} {
+  return {
+    name: model.name,
+    // Preserve null to allow removing escalation (undefined is omitted in JSON serialization)
+    escalation_inbox_id: model.escalationInboxId === undefined ? undefined : model.escalationInboxId,
+    auto_assign_enabled: model.autoAssignEnabled ?? undefined,
+    case_review_manual: model.caseReviewManual,
+    case_review_on_case_created: model.caseReviewOnCaseCreated,
+    case_review_on_escalate: model.caseReviewOnEscalate,
+  };
+}
+
+export type InboxUser = {
+  id: string;
+  inboxId: string;
+  userId: string;
+  role: string;
+  autoAssignable: boolean;
+};
+
+export function adaptInboxUser(inboxUser: InboxUserDto): InboxUser {
+  return {
+    id: inboxUser.id,
+    inboxId: inboxUser.inbox_id,
+    userId: inboxUser.user_id,
+    role: inboxUser.role,
+    autoAssignable: inboxUser.auto_assignable,
+  };
+}
+
+export interface InboxUserCreateBody {
+  userId: string;
+  role: string;
+  autoAssignable: boolean;
+}
+
+export function adaptInboxUserCreateBody({ userId, role, autoAssignable }: InboxUserCreateBody): AddInboxUserBodyDto {
+  return {
+    user_id: userId,
+    role,
+    auto_assignable: autoAssignable,
+  };
+}
+
+export interface InboxUserUpdateBody {
+  role?: string;
+  autoAssignable?: boolean;
+}
+
+export function adaptInboxUserUpdateBody(data: InboxUserUpdateBody): {
+  role?: string;
+  auto_assignable?: boolean;
+} {
+  return {
+    role: data.role,
+    auto_assignable: data.autoAssignable,
+  };
+}
+
+export function tKeyForInboxUserRole(role: string): ParseKeys<['settings']> {
+  switch (role) {
+    case 'admin':
+      return 'settings:inboxes.user_role.admin';
+    case 'member':
+      return 'settings:inboxes.user_role.member';
+    default:
+      return 'settings:inboxes.user_role.unknown';
+  }
+}
+
+export function adaptUpdateInboxesSla(inboxes: UpdateInboxesSlaPayload): UpdateInboxesDto {
+  return {
+    inboxes: inboxes.map((inbox) => ({
+      id: inbox.inboxId,
+      sla: inbox.sla,
+    })),
+  };
+}

@@ -1,0 +1,42 @@
+package dbmodels
+
+import (
+	"time"
+
+	"github.com/checkmarble/marble-backend/models"
+	"github.com/checkmarble/marble-backend/utils"
+	"github.com/google/uuid"
+)
+
+type DBScenarioPublication struct {
+	Id                  string    `db:"id"`
+	OrganizationId      uuid.UUID `db:"org_id"`
+	ScenarioId          string    `db:"scenario_id"`
+	ScenarioIterationId string    `db:"scenario_iteration_id"`
+	PublicationAction   string    `db:"publication_action"`
+	CreatedAt           time.Time `db:"created_at"`
+}
+
+const TABLE_SCENARIOS_PUBLICATIONS = "scenario_publications"
+
+var SelectScenarioPublicationColumns = utils.ColumnList[DBScenarioPublication]()
+
+func AdaptScenarioPublication(dto DBScenarioPublication) (models.ScenarioPublication, error) {
+	scenarioPublication := models.ScenarioPublication{
+		Id:                  dto.Id,
+		OrganizationId:      dto.OrganizationId,
+		ScenarioId:          dto.ScenarioId,
+		ScenarioIterationId: dto.ScenarioIterationId,
+		CreatedAt:           dto.CreatedAt,
+		PublicationAction:   models.PublicationActionFrom(dto.PublicationAction),
+	}
+
+	return scenarioPublication, nil
+}
+
+type PublishScenarioIterationInput struct {
+	OrganizationId      uuid.UUID
+	ScenarioIterationId string
+	ScenarioId          string
+	PublicationAction   models.PublicationAction
+}

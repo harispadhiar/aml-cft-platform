@@ -1,0 +1,122 @@
+import { Scenario } from '@app-builder/models/scenario';
+import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd';
+import { useTranslation } from 'react-i18next';
+import { Button, cn } from 'ui-design-system';
+import { Icon } from 'ui-icons';
+import { WorkflowRule } from './Rule';
+import { RuleProvider } from './RuleProvider';
+import { useWorkflow } from './WorkflowProvider';
+
+type WorkflowListProps = {
+  scenario: Scenario;
+};
+
+export function WorkflowList({ scenario }: WorkflowListProps) {
+  const { t } = useTranslation(['workflows']);
+  const {
+    rules,
+    isLoading,
+    isDragging,
+    setIsDragging,
+    reorderRules,
+    createRule,
+    editingRuleId,
+    setEditingRuleId,
+    scenarioId,
+  } = useWorkflow();
+
+  // Check if any rule is currently being modified - this will be handled by individual RuleProviders
+  const hasModifiedRules = editingRuleId !== null;
+
+  const handleDragStart = () => {
+    setIsDragging(true);
+  };
+
+  const handleDragEnd = async (result: DropResult) => {
+    setIsDragging(false);
+
+    if (!result.destination) {
+      return;
+    }
+
+    const sourceIndex = result.source.index;
+    const destinationIndex = result.destination.index;
+
+    if (sourceIndex === destinationIndex) {
+      return;
+    }
+
+    await reorderRules(sourceIndex, destinationIndex);
+  };
+
+  return (
+    <>
+      <DragDropContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <Droppable droppableId="workflow-rules" direction="vertical">
+          {(provided) => (
+            <div className="flex flex-col py-xl max-w-7xl ms-xl" {...provided.droppableProps} ref={provided.innerRef}>
+              {!isLoading && rules.length === 0 ? (
+                <div className="w-[min(800px,60vw)] text-center text-grey-60 italic py-xl">
+                  {t('workflows:empty_state.no_rule_yet')}
+                </div>
+              ) : null}
+              {rules.map((rule, index) => {
+                const isCurrentRuleEditing = editingRuleId === rule.id;
+                const isOtherRuleEditing = editingRuleId !== null && editingRuleId !== rule.id;
+
+                return (
+                  <Draggable key={rule.id} draggableId={rule.id} index={index} isDragDisabled={false}>
+                    {(provided, snapshot) => (
+                      <div
+                        ref={provided.innerRef}
+                        {...provided.draggableProps}
+                        className={`${isOtherRuleEditing ? 'opacity-40 pointer-events-none blur-xs' : ''}`}
+                      >
+                        <RuleProvider rule={rule} setEditingRuleId={setEditingRuleId} scenarioId={scenarioId}>
+                          <WorkflowRule scenario={scenario} rule={rule} provided={provided} snapshot={snapshot} />
+                        </RuleProvider>
+                        {/* Else arrow - appears after each rule except the last one */}
+                        {index < rules.length - 1 && (
+                          <div
+                            className={cn(
+                              'flex items-center w-[min(800px,60vw)] justify-center transition-all duration-300',
+                              isDragging ? 'opacity-0' : 'opacity-100',
+                              isCurrentRuleEditing ? 'opacity-40 pointer-events-none blur-xs' : '',
+                            )}
+                          >
+                            <div className="w-full flex justify-center items-center relative">
+                              <div className="w-0.5 h-16 bg-grey-disabled relative">
+                                <div className="absolute -bottom-0 left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-8 border-transparent border-t-grey-disabled"></div>
+                                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-grey-border px-md py-2xs rounded-sm z-10">
+                                  <span className="text-sm font-bold text-white uppercase tracking-wide">
+                                    {t('workflows:else_arrow.label')}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </Draggable>
+                );
+              })}
+              {provided.placeholder}
+            </div>
+          )}
+        </Droppable>
+      </DragDropContext>
+
+      <div
+        className={`flex flex-col items-center w-[min(800px,60vw)] ms-xl pb-xl transition-all duration-300 ${
+          hasModifiedRules ? 'opacity-40 pointer-events-none blur-xs' : ''
+        }`}
+      >
+        <Button variant="primary" onClick={createRule}>
+          <Icon icon="plus" className="size-4" />
+          {t('workflows:create_rule.label')}
+        </Button>
+      </div>
+    </>
+  );
+}
