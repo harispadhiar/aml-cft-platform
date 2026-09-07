@@ -19,7 +19,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Dict
 
 import gradio as gr
 
@@ -63,7 +63,7 @@ def append_audit_entry(payload: dict, tenant_id: str = "PILOT_BANK_PK", user_id:
     return entry_hash
 
 
-def verify_audit_chain() -> Tuple[bool, str, List[dict]]:
+def verify_audit_chain():
     if not AUDIT_LOG_FILE.is_file():
         return True, "Audit log is empty (Genesis valid).", []
 
@@ -190,7 +190,7 @@ CASE_MAP = {c["case_id"]: c for c in BENCHMARK_CASES}
 # ---------------------------------------------------------------------------
 # Business Logic
 # ---------------------------------------------------------------------------
-def run_case_investigation(case_id: str) -> Tuple[str, str, str, str, str, str]:
+def run_case_investigation(case_id: str):
     case = CASE_MAP.get(case_id, BENCHMARK_CASES[0])
 
     overview_md = f"""
@@ -292,7 +292,7 @@ def submit_hitl_decision(case_id: str, decision: str, notes: str, reviewer_role:
 - **Audit Verification:** Tamper-evident block committed to chain."""
 
 
-def generate_fmu_export(case_id: str, narrative: str) -> Tuple[str, str]:
+def generate_fmu_export(case_id: str, narrative: str):
     case = CASE_MAP.get(case_id, BENCHMARK_CASES[0])
 
     fmu_payload = {
@@ -494,12 +494,17 @@ Generates machine-readable payloads conforming to SBP circulars and FMU electron
 """)
 
 
-if __name__ == "__main__":
-    if not AUDIT_LOG_FILE.is_file():
-        append_audit_entry({"action": "GENESIS_INITIALIZATION", "system": "AML-CFT-PLATFORM"})
 
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=7860,
-        share=False
+
+
+# ---------------------------------------------------------------------------
+# Startup — initialize audit genesis block
+# ---------------------------------------------------------------------------
+if not AUDIT_LOG_FILE.is_file():
+    append_audit_entry({"action": "GENESIS_INITIALIZATION", "system": "AML-CFT-PLATFORM"})
+
+demo.launch(
+    server_name="0.0.0.0",
+    server_port=int(os.environ.get("PORT", 7860)),
+        share=True,
     )
